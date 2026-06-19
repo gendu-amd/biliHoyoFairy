@@ -1,0 +1,21 @@
+{
+  "app": "biliHoyoFairy",
+  "format": 1,
+  "meta": {
+    "title": "抗黑潮公共名单（示例）",
+    "description": "biliHoyoFairy 规则订阅示例。把本文件托管到公开 URL（GitHub raw / Gist raw），在「工具 → 规则订阅」填入即可；可同时订阅多份，规则自动合并去重。正则 /.../：keywords / partitions / tags / upBio 支持；upNames / uids / bvids 为精确匹配。",
+    "version": "2026.06.19",
+    "expires": "1d",
+    "homepage": "https://github.com/gendu-amd/biliHoyoFairy",
+    "minScriptVersion": "0.0.3"
+  },
+  "rules": {
+    "keywords": ["库洛", "鸣潮", "寄生社区", "四创", "/战双帕弥什|漂泊者/", "/这就是|接触wuwa后|大脑发生的异变/", "up:/.*工作室$/"],
+    "upNames": ["某营销号"],
+    "uids": ["12345678", "87654321"],
+    "partitions": ["资讯"],
+    "tags": ["/米哈一儿|一哭|二抄|三自爆/"],
+    "upBio": ["动漫领域大神", "单机阿三"],
+    "bvids": ["BV1xx411c7XX"]
+  }
+}

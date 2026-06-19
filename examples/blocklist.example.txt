@@ -1,0 +1,32 @@
+! app: biliHoyoFairy
+! format: 1
+! title: 抗黑潮公共名单（示例·文本）
+! description: 可同时订阅多份，规则自动合并去重
+! version: 2026.06.19
+! expires: 1d
+! homepage: https://github.com/gendu-amd/biliHoyoFairy
+! minScriptVersion: 0.0.3
+!
+! 用法：一行一条；行首前缀决定维度，无前缀 = 关键词；以 ! 开头的整行是注释。
+! 前缀：uid: / up: / kw: / part: / tag: / bio: / bv:
+! 正则 /.../：无前缀关键词、kw:、part:、tag:、bio: 支持；up: / uid: / bv: 为精确匹配。
+!
+! —— 关键词：匹配 标题 / UP名 / 分区（开「精确过滤」后也匹配视频标签）——
+库洛
+鸣潮
+寄生社区
+四创
+kw:/战双帕弥什|漂泊者/        # 用正则一次匹配多个
+kw:/这就是|接触wuwa后|大脑发生的异变/   # 引战话术正则
+kw:up:/.*工作室$/             # 仅按 UP 名做正则（keyword 的 up: 作用域）
+!
+! —— 精确维度（不支持正则）——
+uid:12345678                 # 锁定 UP（改名也跑不掉，最可靠）
+up:某营销号                  # 按 UP 名精确
+bv:BV1xx411c7XX              # 按 BV 号
+!
+! —— 其它（需开「精确过滤」联网取数）——
+part:资讯                    # 按分区
+tag:/米哈一儿|一哭|二抄|三自爆/   # 按视频标签（多个用正则）
+bio:动漫领域大神             # 按 UP 简介
+bio:单机阿三

@@ -1,29 +1,28 @@
 # 贡献指南 · Contributing
 
-感谢参与 **hoyoFairy · 抗击黑潮**。这是一个单文件 Tampermonkey 用户脚本，贡献门槛很低。
+感谢参与 **biliHoyoFairy · 抗击黑潮**。这是一个单文件 Tampermonkey 用户脚本，贡献门槛很低。
 
 ## 报告问题（Issue）
 
 提交前请先搜索是否已有相同 Issue。新建时请用对应模板，并尽量提供：
 
-- 页面类型：首页 / 热门 / 排行榜 / 搜索 / 播放页 / 动态
+- 页面类型：首页 / 热门 / 排行榜 / 搜索 / 播放页 / 动态 / 评论区
 - 复现步骤（越具体越好）
 - 期望行为 vs 实际行为
-- 控制台日志：F12 打开后筛 `[hoyoFairy]`；开启面板里的「调试模式」可逐卡打印拦/放原因
+- 控制台日志：F12 打开后筛 `[biliHoyoFairy]`；开启面板里的「调试模式」可逐卡打印拦/放原因
 - 环境：浏览器 + 版本、Tampermonkey 版本、脚本 `@version`
 
 ## 提交代码（Pull Request）
 
 ```
-Fork → 新建分支(feat/xxx 或 fix/xxx) → 改 hoyo-fairy.user.js → 本地验证 → 提 PR
+Fork → 新建分支(feat/xxx 或 fix/xxx) → 改 biliHoyoFairy.user.js → 本地验证 → 提 PR
 ```
 
 ### 本地开发与测试
 
-1. 克隆你的 fork：`git clone git@github.com:<you>/hoyo-fairy.git`
-2. 打开 Tampermonkey → 新建脚本，把 `hoyo-fairy.user.js` 内容粘进去保存；或把文件拖进浏览器安装。
-   - 想边改边测：可临时把已安装脚本的 `@require` 指向本地文件（各管理器支持不一），或每次改完覆盖粘贴。
-3. 打开 `https://www.bilibili.com/` 刷新，按 README 的「使用」步骤自测受影响的功能（覆盖首页/热门/排行榜/搜索/播放页/动态）。
+1. 克隆你的 fork：`git clone git@github.com:<you>/biliHoyoFairy.git`
+2. 打开 Tampermonkey → 新建脚本，把 `biliHoyoFairy.user.js` 内容粘进去保存；或把文件拖进浏览器安装。改动后覆盖粘贴并保存即可重新加载。
+3. 打开 `https://www.bilibili.com/` 刷新，按 README 的「使用」步骤自测受影响的功能（覆盖首页/热门/排行榜/搜索/播放页/动态/评论区）。
 4. 开「调试模式」对照控制台日志确认拦/放逻辑符合预期，且**无破版、无黑洞空位**。
 
 ### 代码约定

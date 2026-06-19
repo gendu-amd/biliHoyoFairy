@@ -41,7 +41,7 @@ body:
     id: logs
     attributes:
       label: 控制台日志
-      description: F12 控制台筛选 `[hoyoFairy]`，把相关日志贴这里（开调试模式更全）。
+      description: F12 控制台筛选 `[biliHoyoFairy]`，把相关日志贴这里（开调试模式更全）。
       render: text
   - type: input
     id: version

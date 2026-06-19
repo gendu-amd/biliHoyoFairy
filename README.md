@@ -2,12 +2,12 @@
 
 > 凯撒命你兵分五路抗击黑潮，此乃其一。
 
-[![Install](https://img.shields.io/badge/Tampermonkey-一键安装-fb7299)](https://raw.githubusercontent.com/gendu-amd/hoyo-fairy/main/hoyo-fairy.user.js)
+[![Install](https://img.shields.io/badge/Tampermonkey-一键安装-fb7299)](https://raw.githubusercontent.com/gendu-amd/biliHoyoFairy/main/biliHoyoFairy.user.js)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 🛡 一个净化 B 站（bilibili）推荐流的 Tampermonkey 用户脚本：在请求推荐数据时就按你的规则把命中项删掉（**渲染前拦截**，无遮罩、无留白、无闪烁），漏网的再 **DOM 兜底**隐藏，并能**一键拉黑**同步到账号黑名单——真正让黑流量、引战、广告与不想看的 UP 从推荐流消失。
 
-覆盖 **首页 / 热门 / 排行榜 / 搜索 / 播放页推荐 / 动态 / 评论区**，兼容 **Edge / Chrome / Firefox**（装 Tampermonkey 即可，无需单独扩展）。当前为 **pre-release v0.0.2**。
+覆盖 **首页 / 热门 / 排行榜 / 搜索 / 播放页推荐 / 动态 / 评论区**，兼容 **Edge / Chrome / Firefox**（装 Tampermonkey 即可，无需单独扩展）。当前为 **pre-release v0.0.3**。
 
 ## 目录
 
@@ -52,8 +52,9 @@ B 站自带的「关键词屏蔽 / 不感兴趣」只在展示环节藏标题命
 | 评论区过滤 | 关键词 / 用户名 / 等级 / 水军特征 / AI / 带货；UP·置顶·自己 白名单 | 关 |
 | 进阶（联网） | 视频标签 / 双标签治引战 / UP 简介 / 充电专属（缓存 + 限速 + 风控熔断） | 关 |
 | 导入 / 导出 | 规则与开关备份、分享、合并去重 | — |
+| 规则订阅 | 从 URL 拉取社区黑名单并自动合并刷新（JSON / 文本双格式） | 按需 |
 
-> 各功能的稳定 / 待验证状态见 [路线图](#路线图)；规则仅存浏览器本地（`GM_setValue`），不外传。
+> 各功能的稳定 / 待验证状态见 [路线图](#路线图)；规则仅存浏览器本地（`GM_setValue`），不外传。规则订阅格式（JSON / 文本）见 [`examples/`](examples/)。
 
 <details>
 <summary>工作原理（拦截优先 + DOM 兜底）</summary>
@@ -70,7 +71,7 @@ B 站自带的「关键词屏蔽 / 不感兴趣」只在展示环节藏标题命
 1. 安装 [Tampermonkey](https://www.tampermonkey.net/) 扩展。
 2. **Edge 用户**：在 `edge://extensions/` 启用「开发人员模式」（否则 MV3 下用户脚本可能不生效）。
 3. 安装脚本并在弹出页确认：
-   - **GitHub**：[安装](https://raw.githubusercontent.com/gendu-amd/hoyo-fairy/main/hoyo-fairy.user.js)
+   - **GitHub**：[安装](https://raw.githubusercontent.com/gendu-amd/biliHoyoFairy/main/biliHoyoFairy.user.js)
    - **Greasy Fork**（国内 / 打不开 GitHub 推荐）：[安装](https://greasyfork.org/zh-CN/scripts/582873)
 4. 打开 [bilibili.com](https://www.bilibili.com/)，右下角出现 🛡 角标即成功。
 
@@ -83,7 +84,7 @@ B 站自带的「关键词屏蔽 / 不感兴趣」只在展示环节藏标题命
 3. **手动加规则**：输入框打字 → 「添加」或回车，关键词支持 `/正则/` 与 `title:`·`up:`·`part:` 前缀。
 4. **右键操作**：在卡片或评论用户名上右键 → 屏蔽 / 拉黑 / 加白名单。
 5. **真·移除**：对反复出现的 UP 选「拉黑」，刷新后不再被推荐；喜欢的加白名单防误伤。
-6. **排查**：开「调试模式」看控制台 `[hoyoFairy]` 日志，或在「屏蔽记录」核对实际拦了什么。
+6. **排查**：开「调试模式」看控制台 `[biliHoyoFairy]` 日志，或在「屏蔽记录」核对实际拦了什么。
 
 ## 注意事项
 
@@ -102,11 +103,11 @@ B 站自带的「关键词屏蔽 / 不感兴趣」只在展示环节藏标题命
 - [ ] 进阶联网维度（视频标签 / 双标签 / UP 简介 / 充电专属）
 - [ ] 批量拉黑 / 联合投稿连带拉黑
 - [ ] 导入 / 导出、增大首页加载
+- [ ] 规则订阅（远程黑名单拉取 / 合并 / 自动刷新，JSON 与文本双格式）
 - [ ] 风控熔断（联网触发风控时自动退避）
 
 计划中、尚未实现：
 
-- [ ] 规则订阅（复用社区配置，自动更新）
 - [ ] 营销号自动识别（标题启发式 + 真实互动数据）
 - [ ] 跨标签页配置实时同步
 - [ ] 评论命中内联标记（像视频卡一样显示原因 + 放行）
@@ -115,8 +116,8 @@ B 站自带的「关键词屏蔽 / 不感兴趣」只在展示环节藏标题命
 
 欢迎提 Issue 反馈 bug / 建议，或提 Pull Request。完整流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-- 报告问题：用 [Issue 模板](.github/ISSUE_TEMPLATE/) 提交，附页面类型、复现步骤、控制台 `[hoyoFairy]` 日志（开调试模式更易定位）。
-- 本地测试：把 `hoyo-fairy.user.js` 拖进 Tampermonkey 安装 / 覆盖，刷新 B 站验证。
+- 报告问题：用 [Issue 模板](.github/ISSUE_TEMPLATE/) 提交，附页面类型、复现步骤、控制台 `[biliHoyoFairy]` 日志（开调试模式更易定位）。
+- 本地测试：把 `biliHoyoFairy.user.js` 拖进 Tampermonkey 安装 / 覆盖，刷新 B 站验证。
 - 发布：`@updateURL` 指向 `main` 分支，**仅在 `@version` 升高时**触发用户自动更新，故对外改动务必同步 +1。
 
 ## 致谢

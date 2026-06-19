@@ -1,15 +1,19 @@
 // ==UserScript==
 // @name         biliHoyoFairy · 抗击黑潮
-// @namespace    https://github.com/gendu-amd/hoyo-fairy
-// @version      0.0.2
+// @namespace    https://github.com/gendu-amd/biliHoyoFairy
+// @version      0.0.3
 // @description  B站(bilibili)推荐流净化：屏蔽黑流量、引战视频、商业广告与不想看的 UP 主。支持按 标签/UP主/UID/关键词(可正则)/分区/时长/播放量/BV 精准过滤；覆盖首页/热门/排行榜/搜索/播放页/动态/评论区；白名单优先防误伤；右键一键屏蔽/拉黑(同步账号黑名单)；内置预置关键词库。
 // @author       gendu-amd
 // @match        https://www.bilibili.com/*
 // @match        https://search.bilibili.com/*
 // @match        https://t.bilibili.com/*
-// @updateURL    https://raw.githubusercontent.com/gendu-amd/hoyo-fairy/main/hoyo-fairy.user.js
-// @downloadURL  https://raw.githubusercontent.com/gendu-amd/hoyo-fairy/main/hoyo-fairy.user.js
+// @updateURL    https://raw.githubusercontent.com/gendu-amd/biliHoyoFairy/main/biliHoyoFairy.user.js
+// @downloadURL  https://raw.githubusercontent.com/gendu-amd/biliHoyoFairy/main/biliHoyoFairy.user.js
 // @connect      api.bilibili.com
+// @connect      raw.githubusercontent.com
+// @connect      cdn.jsdelivr.net
+// @connect      gitee.com
+// @connect      *
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addStyle
@@ -37,6 +41,7 @@
   // 单一来源：直接读脚本头 @version，避免与常量双写漂移
   const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.0.1';
   const STORE_KEY = 'bfb_config_v2';
+  const SUB_STORE_KEY = 'bfb_subs_v1'; // 订阅拉取结果缓存：{ [url]: { meta, rules, lastSync, ok, count, error } }
   const BLACKLIST_MANAGE_URL = 'https://account.bilibili.com/account/blacklist';
   const BADGE = 'color:#fff;background:#fb7299;padding:0 4px;border-radius:3px'; // 控制台日志的品牌徽标样式
 
@@ -46,11 +51,11 @@
 
   // —— 统一日志 ——（debug 关时零开销；err 始终输出，便于线上排查）
   function log(...args) {
-    if (CONFIG.debug) console.log(`%c[hoyoFairy]%c`, BADGE, 'color:inherit', ...args);
+    if (CONFIG.debug) console.log(`%c[biliHoyoFairy]%c`, BADGE, 'color:inherit', ...args);
   }
   function logErr(where, e) {
     try {
-      console.warn(`%c[hoyoFairy]%c ${where}`, BADGE, 'color:#e74c3c', e);
+      console.warn(`%c[biliHoyoFairy]%c ${where}`, BADGE, 'color:#e74c3c', e);
     } catch (_) {}
   }
   // 错误边界：包装易抛错的回调/逐项处理，单点异常不拖垮整轮（B 站改版/异形 DOM 时尤其重要）
@@ -111,6 +116,8 @@
     debug: false,
     blockedCount: 0,
     uidNames: {}, // uid -> UP 名 缓存（仅用于面板按名称展示；拉黑仍用 uid）
+    // 规则订阅：每条 { url, name, enabled }。拉取到的规则数据另存于 SUB_STORE_KEY 缓存（不进 config，不外传）
+    subscriptions: [],
   };
 
   const PRESET_LIBRARY = {
@@ -169,11 +176,11 @@
   }
 
   // 导出：仅含可分享的规则与过滤开关，剔除统计/缓存/个人会话偏好
-  const NON_PORTABLE = ['blockedCount', 'uidNames', 'enabled', 'debug', 'reviewMode'];
+  const NON_PORTABLE = ['blockedCount', 'uidNames', 'enabled', 'debug', 'reviewMode', 'subscriptions'];
   function exportConfig() {
     const c = structuredClone(CONFIG);
     NON_PORTABLE.forEach((k) => delete c[k]);
-    return JSON.stringify({ app: 'hoyoFairy', version: VERSION, config: c }, null, 2);
+    return JSON.stringify({ app: 'biliHoyoFairy', version: VERSION, config: c }, null, 2);
   }
   // 导入合并：规则数组取并集（不丢已有），对象递归，标量以导入值为准
   function mergeImport(base, inc) {
@@ -193,6 +200,179 @@
 
   const CONFIG = loadConfig();
   let sessionBlocked = 0;
+
+  /* ===================== 0c. 规则订阅（数据层） ===================== */
+  // 订阅可携带的黑名单维度（白名单/开关/统计一律不接受）；未知维度忽略（向前兼容）
+  const SUB_DIMS = ['uids', 'upNames', 'keywords', 'partitions', 'tags', 'upBio', 'bvids'];
+  // 纯文本行前缀 → 维度；无前缀=关键词；未知前缀忽略。行匹配正则由前缀表派生（单一来源，避免两处重复）
+  const SUB_LINE_PREFIX = { uid: 'uids', up: 'upNames', kw: 'keywords', part: 'partitions', tag: 'tags', bio: 'upBio', bv: 'bvids' };
+  const SUB_PREFIX_RE = new RegExp('^(' + Object.keys(SUB_LINE_PREFIX).join('|') + ')\\s*:\\s*(.+)$', 'i');
+
+  function loadSubStore() {
+    try {
+      return JSON.parse(GM_getValue(SUB_STORE_KEY, '') || '{}') || {};
+    } catch (e) {
+      return {};
+    }
+  }
+  function saveSubStore(store) {
+    try {
+      GM_setValue(SUB_STORE_KEY, JSON.stringify(store));
+    } catch (e) {}
+  }
+  // 元数据大小写不敏感读取（JSON 用 camelCase，文本头可能用任意大小写）
+  function metaGet(meta, key) {
+    if (!meta) return undefined;
+    if (meta[key] != null) return meta[key];
+    const lk = key.toLowerCase();
+    for (const k in meta) if (k.toLowerCase() === lk) return meta[k];
+    return undefined;
+  }
+  function cmpVer(a, b) {
+    const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
+    const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const d = (pa[i] || 0) - (pb[i] || 0);
+      if (d) return d < 0 ? -1 : 1;
+    }
+    return 0;
+  }
+  const DAY_MS = 24 * 3600e3;
+  function parseExpires(s) {
+    const m = String(s ?? '').trim().match(/^(\d+)\s*([hd])?/i);
+    if (!m) return DAY_MS; // 默认 1 天
+    const n = Math.max(1, parseInt(m[1], 10) || 1);
+    return n * ((m[2] || 'd').toLowerCase() === 'h' ? 3600e3 : DAY_MS);
+  }
+  // 迁移层：把旧 format 的对象升级到当前结构（v1=identity；将来重命名/改维度在此加 case，旧订阅不破）
+  function migrateSub(obj) {
+    return obj || {};
+  }
+  // 清洗规则维度 → {dim: string[]}：未知维度忽略、去空去重、限量（防超大列表）
+  // 上限按维度区分：Set 精确维度(uid/UP名/bv)查找 O(1)，可承载大名单；正则维度合并成单条正则，保守些。
+  const SUB_CAP = { uids: 50000, upNames: 50000, bvids: 50000 };
+  const SUB_CAP_DEFAULT = 5000;
+  function sanitizeSubRules(rawRules) {
+    const out = {};
+    for (const dim of SUB_DIMS) {
+      const arr = rawRules && rawRules[dim];
+      if (!Array.isArray(arr)) continue;
+      const max = SUB_CAP[dim] || SUB_CAP_DEFAULT;
+      const seen = new Set();
+      const clean = [];
+      for (const x of arr) {
+        if (typeof x !== 'string') continue;
+        const v = x.trim();
+        if (!v || seen.has(v)) continue;
+        seen.add(v);
+        clean.push(v);
+        if (clean.length >= max) break;
+      }
+      if (clean.length) out[dim] = clean;
+    }
+    return out;
+  }
+  // 解析订阅文本 → { meta, rules }；以 { 开头按 JSON，否则按 uBlock 风格纯文本行
+  function parseSubscription(text) {
+    const t = (text || '').trim();
+    if (!t) throw new Error('空内容');
+    if (t[0] === '{') {
+      const obj = migrateSub(JSON.parse(t));
+      const meta = obj && obj.meta && typeof obj.meta === 'object' ? obj.meta : {};
+      // 优先 rules；兼容把「导出的配置文件」直接当订阅（从 config.block 取黑名单维度）
+      let rawRules = obj && obj.rules;
+      if (!rawRules && obj && obj.config && obj.config.block) rawRules = obj.config.block;
+      return { meta, rules: sanitizeSubRules(rawRules) };
+    }
+    const meta = {};
+    const buckets = {};
+    for (let line of t.split(/\r?\n/)) {
+      line = line.trim();
+      if (!line) continue;
+      if (line[0] === '!') {
+        const m = line.slice(1).match(/^\s*([a-zA-Z][\w-]*)\s*:\s*(.+)$/);
+        if (m) meta[m[1]] = m[2].trim();
+        continue; // 其余 ! 行=注释
+      }
+      line = line.replace(/\s+#.*$/, '').trim(); // 行内 # 注释（前有空白）
+      if (!line) continue;
+      const pm = !line.startsWith('/') && line.match(SUB_PREFIX_RE);
+      const dim = pm ? SUB_LINE_PREFIX[pm[1].toLowerCase()] : 'keywords';
+      const val = pm ? pm[2].trim() : line;
+      (buckets[dim] = buckets[dim] || []).push(val);
+    }
+    return { meta, rules: sanitizeSubRules(buckets) };
+  }
+  // 汇总所有【启用】订阅的规则 → {dim: string[]}，供 buildMatchers 并入黑名单
+  function collectSubRules() {
+    const store = loadSubStore();
+    const merged = {};
+    for (const sub of CONFIG.subscriptions || []) {
+      if (!sub || !sub.enabled || !sub.url) continue;
+      const e = store[sub.url];
+      if (!e || !e.ok || !e.rules) continue;
+      for (const dim of SUB_DIMS) {
+        const arr = e.rules[dim];
+        if (Array.isArray(arr) && arr.length) (merged[dim] = merged[dim] || []).push(...arr);
+      }
+    }
+    return merged;
+  }
+  function fetchSubText(url, cb) {
+    if (typeof GM_xmlhttpRequest !== 'function') return cb(null, '无 GM_xmlhttpRequest');
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url,
+      timeout: 15000,
+      onload: (r) => (r.status >= 200 && r.status < 300 && r.responseText ? cb(r.responseText, null) : cb(null, 'HTTP ' + r.status)),
+      onerror: () => cb(null, '网络错误'),
+      ontimeout: () => cb(null, '超时'),
+    });
+  }
+  // 拉取并解析一条订阅，写入缓存；cb(ok)
+  function syncSubscription(url, cb) {
+    fetchSubText(url, (text, err) => {
+      const store = loadSubStore();
+      const finish = (patch, ok) => {
+        store[url] = ok ? patch : Object.assign(store[url] || {}, patch);
+        saveSubStore(store);
+        cb && cb(ok);
+      };
+      if (err || !text) return finish({ lastSync: Date.now(), ok: false, error: err || '空内容' }, false);
+      try {
+        const { meta, rules } = parseSubscription(text);
+        const count = SUB_DIMS.reduce((n, d) => n + ((rules[d] && rules[d].length) || 0), 0);
+        finish({ meta, rules, lastSync: Date.now(), ok: true, count, error: null }, true);
+        const minV = metaGet(meta, 'minScriptVersion');
+        if (minV && cmpVer(VERSION, minV) < 0) toast(`订阅「${metaGet(meta, 'title') || url}」建议脚本升级到 ≥ ${minV}（部分规则可能未识别）`);
+      } catch (e) {
+        finish({ lastSync: Date.now(), ok: false, error: '解析失败' }, false);
+      }
+    });
+  }
+  // 刷新启用中的订阅；force=true 忽略 expires 间隔。完成后若有变更则重建规则+重扫
+  function refreshSubscriptions(force, done) {
+    const store = loadSubStore();
+    const due = (CONFIG.subscriptions || []).filter((s) => {
+      if (!s || !s.enabled || !s.url) return false;
+      if (force) return true;
+      const e = store[s.url];
+      if (!e || !e.ok) return true;
+      return Date.now() - (e.lastSync || 0) >= parseExpires(metaGet(e.meta, 'expires'));
+    });
+    if (!due.length) return done && done(0);
+    let pending = due.length;
+    let changed = 0;
+    due.forEach((s) =>
+      syncSubscription(s.url, (ok) => {
+        if (ok) changed++;
+        if (--pending === 0) {
+          if (changed) rescanAfterRuleChange();
+          done && done(changed);
+        }
+      })
+    );
+  }
 
   /* ===================== 1. 工具 ===================== */
   function getCookie(name) {
@@ -431,15 +611,18 @@
     // 精确匹配维度预编译成 Set，避免每张卡每次都 map/includes/some 重建数组（大黑名单下显著更快）
     const lcSet = (arr) => new Set((arr || []).map((x) => lc(x)).filter(Boolean));
     const strSet = (arr) => new Set((arr || []).map(String));
+    // 黑名单 = 用户规则 ∪ 已启用订阅规则（订阅只并入黑名单维度，不碰白名单/开关）
+    const sub = collectSubRules();
+    const u = (dim) => (CONFIG.block[dim] || []).concat(sub[dim] || []);
     const m = {
-      blockKw: compileScopedKeywords(CONFIG.block.keywords),
-      blockPartition: compileLines(CONFIG.block.partitions),
+      blockKw: compileScopedKeywords(u('keywords')),
+      blockPartition: compileLines(u('partitions')),
       allowKw: compileScopedKeywords(CONFIG.allow.keywords),
-      blockTag: compileLines(CONFIG.block.tags),
-      upBio: compileLines(CONFIG.block.upBio),
-      blockUidSet: strSet(CONFIG.block.uids),
-      blockBvidSet: new Set(CONFIG.block.bvids || []),
-      blockUpNameSet: lcSet(CONFIG.block.upNames),
+      blockTag: compileLines(u('tags')),
+      upBio: compileLines(u('upBio')),
+      blockUidSet: strSet(u('uids')),
+      blockBvidSet: new Set(u('bvids')),
+      blockUpNameSet: lcSet(u('upNames')),
       allowUidSet: strSet(CONFIG.allow.uids),
       allowUpNameSet: lcSet(CONFIG.allow.upNames),
       // 评论区维度（独立编译）
@@ -449,6 +632,9 @@
     };
     // 是否存在 UID 规则：决定扫描时要不要为缺 UID 的卡做昂贵的 innerHTML 兜底解析
     m.needUid = m.blockUidSet.size > 0 || m.allowUidSet.size > 0;
+    // API 维度是否需要拉取（含订阅并入的规则）：标签 = 有标签规则或无作用域关键词；简介 = 有简介词
+    m.tagActive = !m.blockTag.empty || !m.blockKw.all.empty;
+    m.upBioActive = !m.upBio.empty;
     return m;
   }
   // 规则版本号：每次重建自增；评论扫描据此判断某条评论是否需重新评估（避免重复处理 + 规则变更后能刷新）
@@ -507,7 +693,7 @@
     {
       source: 'tag',
       needs: 'tag',
-      active: () => CONFIG.block.tags.length || CONFIG.block.keywords.length,
+      active: () => M.tagActive, // 含订阅并入的标签/关键词
       match: (info, ctx) => {
         for (const t of ctx.tags) {
           if (textHit(t, M.blockTag)) return '标签:' + t;
@@ -537,7 +723,7 @@
     {
       source: 'card',
       needs: 'card',
-      active: () => CONFIG.block.upBio.length,
+      active: () => M.upBioActive, // 含订阅并入的简介词
       match: (info, ctx) => (!M.upBio.empty && textHit(ctx.sign, M.upBio) ? 'UP简介' : null),
     },
   ];
@@ -1244,7 +1430,7 @@
     if (reason) {
       if (CONFIG.reviewMode) {
         host.style.setProperty('outline', '2px solid #fb7299', 'important');
-        host.title = '[hoyoFairy] 命中：' + reason;
+        host.title = '[biliHoyoFairy] 命中：' + reason;
         host.style.removeProperty('display');
       } else {
         // 评论组件常带 :host{display:..!important}，必须用 important 内联才能压过
@@ -2379,7 +2565,7 @@
       const blob = new Blob([exportConfig()], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `hoyo-fairy-rules-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `biliHoyoFairy-rules-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 2000);
       toast('已导出规则配置文件');
@@ -2415,6 +2601,94 @@
         r.readAsText(f);
       };
       inp.click();
+    };
+
+    // —— 规则订阅 ——
+    const subSec = document.createElement('div');
+    subSec.className = 'sec';
+    subSec.innerHTML = `<label>规则订阅（从 URL 自动拉取并合并黑名单）</label>
+      <div class="addrow"><input type="text" id="bfb-sub-url" placeholder="订阅 URL（JSON 或文本，如 GitHub raw）"></div>
+      <div class="addrow" style="margin-top:6px"><input type="text" id="bfb-sub-name" placeholder="备注名（可选）"><button id="bfb-sub-add">添加</button></div>
+      <div class="hint">订阅只并入<b>黑名单</b>（UID/UP名/关键词/分区/标签/简介/BV），不影响你的白名单与开关；启用后按列表声明的周期自动刷新。</div>
+      <div class="toolbar" style="margin-top:8px"><button class="act ghost" id="bfb-sub-refresh">🔄 全部刷新</button></div>
+      <div id="bfb-sub-list" style="margin-top:8px"></div>`;
+    G.tools.appendChild(subSec);
+    const subListEl = subSec.querySelector('#bfb-sub-list');
+    const fmtSubTime = (t) => (t ? new Date(t).toLocaleString() : '从未');
+    const renderSubList = () => {
+      subListEl.innerHTML = '';
+      const store = loadSubStore();
+      const subs = CONFIG.subscriptions || [];
+      if (!subs.length) {
+        const e = document.createElement('div');
+        e.className = 'empty';
+        e.textContent = '（暂无订阅，添加 URL 后会显示在这里）';
+        subListEl.appendChild(e);
+        return;
+      }
+      subs.forEach((sub, idx) => {
+        const e = store[sub.url] || {};
+        const status = e.ok ? `✅ ${e.count || 0} 条 · ${fmtSubTime(e.lastSync)}` : e.error ? `⚠ ${e.error}` : '未同步';
+        const row = document.createElement('div');
+        row.style.cssText = 'border:1px solid #eee;border-radius:8px;padding:8px;margin-top:6px;background:#fafafa';
+        row.innerHTML = `
+          <label class="switch" style="margin:0"><input type="checkbox" class="sub-en" ${sub.enabled ? 'checked' : ''}> <b>${escapeHtml(sub.name || metaGet(e.meta, 'title') || '订阅')}</b></label>
+          <div style="font-size:11px;color:#aaa;word-break:break-all;margin-top:4px">${escapeHtml(sub.url)}</div>
+          <div style="font-size:11px;color:#888;margin-top:4px">${escapeHtml(status)}</div>
+          <div class="chip-bar"><button class="chip-act sub-refresh">刷新</button><button class="chip-act sub-del">删除</button></div>`;
+        row.querySelector('.sub-en').onchange = (ev) => {
+          sub.enabled = ev.target.checked;
+          saveConfig();
+          rescanAfterRuleChange();
+        };
+        row.querySelector('.sub-refresh').onclick = () => {
+          toast('刷新中…');
+          syncSubscription(sub.url, (ok) => {
+            rescanAfterRuleChange();
+            renderSubList();
+            toast(ok ? '已刷新' : '刷新失败');
+          });
+        };
+        row.querySelector('.sub-del').onclick = () => {
+          if (!confirm('删除该订阅？其规则将立即移除')) return;
+          CONFIG.subscriptions.splice(idx, 1);
+          const st = loadSubStore();
+          delete st[sub.url];
+          saveSubStore(st);
+          saveConfig();
+          rescanAfterRuleChange();
+          renderSubList();
+        };
+        subListEl.appendChild(row);
+      });
+    };
+    renderSubList();
+    subSec.querySelector('#bfb-sub-add').onclick = () => {
+      const urlEl = subSec.querySelector('#bfb-sub-url');
+      const nameEl = subSec.querySelector('#bfb-sub-name');
+      const url = (urlEl.value || '').trim();
+      const name = (nameEl.value || '').trim();
+      if (!/^https?:\/\//i.test(url)) return toast('请输入有效的 http(s) URL');
+      if ((CONFIG.subscriptions || []).some((s) => s.url === url)) return toast('该订阅已存在');
+      CONFIG.subscriptions = CONFIG.subscriptions || [];
+      CONFIG.subscriptions.push({ url, name, enabled: true });
+      saveConfig();
+      urlEl.value = '';
+      nameEl.value = '';
+      renderSubList();
+      toast('已添加，正在拉取…');
+      syncSubscription(url, (ok) => {
+        rescanAfterRuleChange();
+        renderSubList();
+        toast(ok ? '订阅已同步' : '拉取失败，请检查 URL');
+      });
+    };
+    subSec.querySelector('#bfb-sub-refresh').onclick = () => {
+      toast('刷新全部订阅…');
+      refreshSubscriptions(true, (n) => {
+        renderSubList();
+        toast(`已刷新（${n} 条有更新）`);
+      });
     };
 
     const batch = document.createElement('div');
@@ -2638,7 +2912,7 @@
   /* ===================== 10. 启动 ===================== */
   function start() {
     console.log(
-      `%c[hoyoFairy]%c v${VERSION} 已启动 | 页面:${pageType()} | 拦截:${CONFIG.enabled ? '开' : '关'}${CONFIG.debug ? ' | 调试' : ''}`,
+      `%c[biliHoyoFairy]%c v${VERSION} 已启动 | 页面:${pageType()} | 拦截:${CONFIG.enabled ? '开' : '关'}${CONFIG.debug ? ' | 调试' : ''}`,
       BADGE + ';font-weight:bold',
       'color:#fb7299'
     );
@@ -2647,6 +2921,8 @@
     harvestShadowRoots(document);
     scanAll();
     scanComments();
+    // 订阅：用缓存先生效（buildMatchers 已并入），再按 expires 后台刷新（到期才拉，完成自动重扫）
+    refreshSubscriptions(false);
     // 事件处理全部走错误边界，单次异常不致让监听器静默失效
     document.addEventListener('contextmenu', safe('onContextMenu', onContextMenu), true);
     document.addEventListener('mouseover', safe('onCardHover', onCardHover), true);
