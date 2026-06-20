@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         biliHoyoFairy · 抗击黑潮
 // @namespace    https://github.com/gendu-amd/biliHoyoFairy
-// @version      0.0.3
+// @version      0.0.4
 // @description  B站(bilibili)推荐流净化：屏蔽黑流量、引战视频、商业广告与不想看的 UP 主。支持按 标签/UP主/UID/关键词(可正则)/分区/时长/播放量/BV 精准过滤；覆盖首页/热门/排行榜/搜索/播放页/动态/评论区；白名单优先防误伤；右键一键屏蔽/拉黑(同步账号黑名单)；内置预置关键词库。
 // @author       gendu-amd
 // @match        https://www.bilibili.com/*
@@ -74,9 +74,10 @@
     reviewMode: false, // 审查模式：被拦视频不删/不隐，而是标记+就地放行，便于核对防误伤
     rightClickBlock: true,
     cardHoverBtn: false, // 悬停卡片时显示快捷「拉黑」浮层按钮（独立浮层，不改 B 站卡片 DOM）
+    fuzzyMatch: true, // 反绕过：普通关键词匹配前剔除分隔符（"原 神/原.神"也命中）；隐形字符始终剔除
     blacklistCollab: false, // 拉黑联合投稿时，是否把所有合作者一并拉黑
     block: {
-      keywords: [], // 命中 标题/UP名/分区（标签需开精确过滤）；普通词=包含，/.../ =正则
+      keywords: [], // 命中 标题/UP名/分区（纯本地，不联网；标签匹配请用 tags 维度）；普通词=包含，/.../ =正则
       partitions: [], // 视频分区(tname)黑名单；普通词=包含，/.../ =正则（网络拦截层最准）
       upNames: [],
       uids: [],
@@ -84,6 +85,8 @@
       minDuration: 0,
       maxDuration: 0,
       minViews: 0, // 万；>0 时播放量低于此值的视频被拦
+      spamLikeRatio: 0, // %；>0 时，点赞率(点赞/播放)低于此值且播放≥下方阈值的视频判为营销号/搬运号（仅 feed 有点赞数据时生效）
+      spamMinViews: 10, // 万；营销号识别的最低播放门槛（避免冤枉小/新视频）
       // —— 以下为需要读取接口数据的维度（仅在开启「精确过滤」后生效）——
       tags: [], // 视频标签黑名单（标题区看不到，需调接口；支持 /正则/）
       dualTags: [], // 双重标签，"原神+鸣潮" 形式，同时命中两组才拦（治引战）
@@ -112,6 +115,7 @@
       allowUp: true, // 白名单：UP 主本人的评论免过滤
       allowPin: true, // 白名单：置顶评论免过滤
       allowMe: true, // 白名单：自己发布/被 @ 的评论免过滤
+      collapse: true, // 命中后折叠为一行灰条（点击展开），而非直接隐藏
     },
     debug: false,
     blockedCount: 0,
@@ -120,15 +124,19 @@
     subscriptions: [],
   };
 
-  const PRESET_LIBRARY = {
-    营销号UP名: ['今日话题', '话题酱', '今日知乎', '大型纪录片'],
-    标题党: ['/(一口气|一次性|一天|分钟|分半|小时)(看完|带你看完|直接看完)/', '/震惊|竟然|万万没想到/'],
-    软传销: ['/(日入|日赚|月入|月赚)\\d+/', '/(小时|内耗).+为自己打工/'],
-    MBTI: ['/MBTI|[IE][SN][TF][JP]|I人|E人/'],
-    梗视频: ['科目三', '猫meme', '/是什么梗|梗百科|大型[纪记]录片/'],
-    含日语标题: ['/[ぁ-ヶ]/'],
-    寄生社蛆: ['库洛', '库洛游戏', '呜哇', '鸣潮', '战双', '战双帕弥什', '漂泊者', '漂泊神游', '寄生神游', '寄生社区'],
-  };
+  // 预置规则库 v2：内置"起步包"。每条 = { cat 大类, name, desc, rules:{维度:[...]} }，
+  // 点一下把 rules 各维度加进对应黑名单（多为关键词，也可投放标签等）。持续更新的大名单走「规则订阅」。
+  const PRESET_LIBRARY = [
+    { cat: '游戏黑水', name: '库洛系(鸣潮/库洛)', desc: '鸣潮 / 库洛 / 战双 等相关词', rules: { keywords: ['库洛', '库洛游戏', '呜哇', '鸣潮', '战双', '战双帕弥什', '漂泊者', '漂泊神游', '寄生神游', '寄生社区'] } },
+    { cat: '引战', name: '引战话术', desc: '挑动对立的话术片段（已收敛正则、防误伤）', rules: { keywords: ['/接触wuwa后|大脑发生的异变/'] } },
+    { cat: '引战', name: '引战标签', desc: '抹黑 / 拉踩类标签（需开「精确过滤」才匹配标签）', rules: { tags: ['/米哈一儿|一哭|二抄|三自爆/'] } },
+    { cat: '标题党 / 营销', name: '标题党', desc: '震惊体 + 一口气看完', rules: { keywords: ['/(一口气|一次性|一天|分钟|分半|小时)(看完|带你看完|直接看完)/', '/震惊|竟然|万万没想到/'] } },
+    { cat: '标题党 / 营销', name: '营销号UP名', desc: '常见营销号账号名', rules: { keywords: ['今日话题', '话题酱', '今日知乎', '大型纪录片'] } },
+    { cat: '标题党 / 营销', name: '软传销', desc: '日入月入 / 为自己打工', rules: { keywords: ['/(日入|日赚|月入|月赚)\\d+/', '/(小时|内耗).+为自己打工/'] } },
+    { cat: '其它', name: 'MBTI', rules: { keywords: ['/MBTI|[IE][SN][TF][JP]|I人|E人/'] } },
+    { cat: '其它', name: '梗视频', rules: { keywords: ['科目三', '猫meme', '/是什么梗|梗百科|大型[纪记]录片/'] } },
+    { cat: '其它', name: '含日语标题', rules: { keywords: ['/[ぁ-ヶ]/'] } },
+  ];
 
   // 评论区已知 AI 机器人账号名单（借鉴 bilibili-cleaner extra/bots）
   const COMMENT_BOTS = new Set([
@@ -389,6 +397,20 @@
   }
   const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+  // —— 反绕过归一 ——
+  // 隐形字符(零宽空格/方向控制符等)：纯绕过手段、零误伤，始终剔除。
+  const INVISIBLE_RE = /[\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]/g;
+  const stripInvisible = (s) => (s || '').toString().replace(INVISIBLE_RE, '');
+  // 分隔符：fuzzyMatch 开启时从文本与普通词两侧一并剔除，使"原 神 / 原.神 / 原·神"也命中。
+  // 只跨分隔符桥接、不跨文字，故几乎不误伤（"原创神作"中 创 非分隔符，不会命中"原神"）。
+  const SEP_RE = /[\s_.·・･﹒。,，、;；:：!！?？~～^*"'`|｜/\\()（）【】<>《》\[\]—-]+/g;
+  // 匹配前对文本的归一：全角→半角 + 小写 + 去隐形（+ fuzzy 时去分隔符）。普通词编译时用同一套，保证两侧一致。
+  function normMatch(s) {
+    let t = stripInvisible(toHalfWidth(s)).toLowerCase();
+    if (CONFIG.fuzzyMatch) t = t.replace(SEP_RE, '');
+    return t;
+  }
+
   // 把一组规则行编译成匹配器：普通词 → 归一/转义后合并成单条正则（性能更好，借鉴 cleaner）；
   // /.../ 行 → 各自独立编译（保留其原有 flags，如 m/s/g 语义不被合并破坏）。
   function compileLines(lines) {
@@ -404,7 +426,7 @@
           regexes.push(new RegExp(m[1], flags.includes('i') ? flags : flags + 'i'));
         } catch (e) {}
       } else {
-        const w = toHalfWidth(line).toLowerCase();
+        const w = normMatch(line); // 与 textHit 同一套归一（含反绕过），两侧一致
         if (w) plainParts.push(escapeRe(w));
       }
     }
@@ -418,8 +440,11 @@
   }
   function textHit(text, matcher) {
     if (!text || !matcher) return false;
-    if (matcher.plain && matcher.plain.test(toHalfWidth(text).toLowerCase())) return true;
-    for (const r of matcher.regexes) if (r.test(text)) return true;
+    if (matcher.plain && matcher.plain.test(normMatch(text))) return true;
+    if (matcher.regexes.length) {
+      const t = stripInvisible(text); // 正则按其原样匹配，仅去隐形字符防零宽绕过
+      for (const r of matcher.regexes) if (r.test(t)) return true;
+    }
     return false;
   }
 
@@ -529,7 +554,7 @@
 
   // deepUid: 是否为缺 UID 的卡做昂贵的 innerHTML 兜底解析（扫描热路径按需，拉黑场景强制 true）
   function extractCardInfo(card, deepUid = true) {
-    const info = { title: '', up: '', uid: '', partition: '', bvid: '', duration: null, views: null, isLive: false, isAd: false };
+    const info = { title: '', up: '', uid: '', partition: '', bvid: '', duration: null, views: null, likes: null, isLive: false, isAd: false };
 
     info.title = pickText(card, [
       '.bili-video-card__info--tit',
@@ -632,8 +657,9 @@
     };
     // 是否存在 UID 规则：决定扫描时要不要为缺 UID 的卡做昂贵的 innerHTML 兜底解析
     m.needUid = m.blockUidSet.size > 0 || m.allowUidSet.size > 0;
-    // API 维度是否需要拉取（含订阅并入的规则）：标签 = 有标签规则或无作用域关键词；简介 = 有简介词
-    m.tagActive = !m.blockTag.empty || !m.blockKw.all.empty;
+    // API 维度是否需要拉取（含订阅并入的规则）：标签 = 仅当有专门的「视频标签」规则；简介 = 有简介词。
+    // 注意：普通关键词只匹配 标题/UP名/分区（本地、免联网），不再隐式触发每张卡的标签请求。
+    m.tagActive = !m.blockTag.empty;
     m.upBioActive = !m.upBio.empty;
     return m;
   }
@@ -671,6 +697,15 @@
         return b.minViews > 0 && i.views != null && i.views < b.minViews * 1e4 ? `播放<${b.minViews}万` : null;
       },
     },
+    // 营销号/搬运号：高播放却极低赞（点赞率异常）。仅在拿得到点赞数(feed 层)时判定。
+    {
+      match: (i) => {
+        const b = CONFIG.block;
+        if (b.spamLikeRatio <= 0 || i.likes == null || !i.views) return null;
+        if (i.views < b.spamMinViews * 1e4) return null;
+        return (i.likes / i.views) * 100 < b.spamLikeRatio ? `营销号(赞率<${b.spamLikeRatio}%)` : null;
+      },
+    },
     // 关键词：标题 / UP名 / 分区任一命中即拦（标签维度在 matchApi 里补判）
     { match: (i) => (kwHit(M.blockKw, 'title', i.title) || (i.up && kwHit(M.blockKw, 'up', i.up)) || kwHit(M.blockKw, 'part', i.partition) ? '关键词' : null) },
     { match: (i) => (i.partition && textHit(i.partition, M.blockPartition) ? '分区:' + i.partition : null) },
@@ -693,11 +728,10 @@
     {
       source: 'tag',
       needs: 'tag',
-      active: () => M.tagActive, // 含订阅并入的标签/关键词
+      active: () => M.tagActive, // 含订阅并入的「视频标签」维度
       match: (info, ctx) => {
         for (const t of ctx.tags) {
           if (textHit(t, M.blockTag)) return '标签:' + t;
-          if (textHit(t, M.blockKw.all)) return '关键词:' + t; // 仅无作用域(all)的关键词对标签生效
         }
         return null;
       },
@@ -933,6 +967,7 @@
       link: it.uri || it.jump_url || adC.url || adC.jump_url || '',
       duration: typeof it.duration === 'number' ? it.duration : it.duration ? parseDuration(it.duration) : null,
       views: stat.view != null ? stat.view : stat.play != null ? stat.play : it.play != null ? it.play : null,
+      likes: stat.like != null ? stat.like : null, // 点赞数（feed JSON 才有；用于营销号低赞率识别）
       isLive: goto === 'live',
       isAd: goto === 'ad' || goto === 'cm' || !!it.ad_info || !!it.is_ad,
     };
@@ -1420,6 +1455,49 @@
     return null;
   }
 
+  // 折叠：把命中评论收成一行灰条（点击展开），而非直接隐藏。占位条插在宿主前，宿主仍 display:none。
+  // 占位条处于评论组件的 shadowRoot 内，文档级 CSS 够不着，样式必须全内联。
+  function collapseComment(host, reason) {
+    if (host.__bfbCmtPh && host.__bfbCmtPh.isConnected) {
+      // 已折叠：仅更新原因文案
+      const t = host.__bfbCmtPh.querySelector('.bfb-ph-txt');
+      if (t) t.textContent = '已折叠 · 命中：' + reason;
+      return;
+    }
+    const parent = host.parentNode;
+    if (!parent) {
+      host.style.setProperty('display', 'none', 'important');
+      return;
+    }
+    const ph = document.createElement('div');
+    ph.className = 'bfb-cmt-ph';
+    ph.style.cssText =
+      'display:flex;align-items:center;gap:8px;margin:4px 0;padding:6px 10px;border-radius:8px;' +
+      'background:rgba(251,114,153,.08);border:1px dashed rgba(251,114,153,.45);' +
+      'font-size:12px;color:#9499a0;cursor:pointer;user-select:none;line-height:1.5';
+    ph.innerHTML =
+      '<span class="bfb-ph-txt" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">已折叠 · 命中：' +
+      String(reason).replace(/[<>&]/g, '') +
+      '</span><span style="color:#fb7299;flex:none">点击展开 ▾</span>';
+    ph.addEventListener('click', function () {
+      ph.remove();
+      host.style.removeProperty('display');
+      host.__bfbCmtPh = null;
+      host.__bfbCmtExpanded = true; // 用户已手动展开，后续重扫不再折叠
+    });
+    parent.insertBefore(ph, host);
+    host.__bfbCmtPh = ph;
+    host.style.setProperty('display', 'none', 'important');
+  }
+  function removeCmtPlaceholder(host) {
+    if (host.__bfbCmtPh) {
+      try {
+        host.__bfbCmtPh.remove();
+      } catch (e) {}
+      host.__bfbCmtPh = null;
+    }
+  }
+
   // 处理单条评论宿主（错误边界 + 版本号去重）
   const processComment = safe('processComment', function (host, isSub) {
     if (host.__bfbCmtV === ruleVersion) return; // 本版本已评估过
@@ -1429,11 +1507,19 @@
     const reason = matchComment(c, isSub);
     if (reason) {
       if (CONFIG.reviewMode) {
+        removeCmtPlaceholder(host);
         host.style.setProperty('outline', '2px solid #fb7299', 'important');
         host.title = '[biliHoyoFairy] 命中：' + reason;
         host.style.removeProperty('display');
+      } else if (CONFIG.comment.collapse && !host.__bfbCmtExpanded) {
+        collapseComment(host, reason);
+      } else if (host.__bfbCmtExpanded) {
+        // 用户已展开过：保持可见，不再折叠/隐藏
+        removeCmtPlaceholder(host);
+        host.style.removeProperty('display');
       } else {
         // 评论组件常带 :host{display:..!important}，必须用 important 内联才能压过
+        removeCmtPlaceholder(host);
         host.style.setProperty('display', 'none', 'important');
       }
       if (!host.__bfbCmtHit) {
@@ -1441,11 +1527,13 @@
         recordBlock(reason, { up: c.uname, title: cmtCleanMsg(c.message, isSub).slice(0, 40) }, 'CMT');
       }
     } else {
-      // 不命中：撤销之前可能的隐藏/标记（规则放宽后恢复）
+      // 不命中：撤销之前可能的隐藏/折叠/标记（规则放宽后恢复）
+      removeCmtPlaceholder(host);
       host.style.removeProperty('display');
       host.style.removeProperty('outline');
       host.removeAttribute('title');
       host.__bfbCmtHit = false;
+      host.__bfbCmtExpanded = false;
     }
   });
 
@@ -1454,11 +1542,13 @@
     for (const root of shadowRoots) {
       const host = root && root.host;
       if (!host || CMT_TAGS[host.tagName] === undefined) continue;
-      if (host.__bfbCmtHit || host.style.display === 'none' || host.style.outline) {
+      if (host.__bfbCmtHit || host.__bfbCmtPh || host.style.display === 'none' || host.style.outline) {
+        removeCmtPlaceholder(host);
         host.style.removeProperty('display');
         host.style.removeProperty('outline');
         host.removeAttribute('title');
         host.__bfbCmtHit = false;
+        host.__bfbCmtExpanded = false;
         host.__bfbCmtV = undefined;
       }
     }
@@ -2336,7 +2426,7 @@
 
   // 列表型字段描述表：黑名单 / 进阶标签 / 白名单。新增一类过滤只需在此加一行。
   const BLACK_FIELDS = [
-    { key: 'keywords', label: '🎯 关键词', placeholder: '如：原神 或 /震惊.*竟然/', hint: '默认一次命中 标题 / UP主名 / 分区（开「精确过滤」后还会匹配视频标签）。普通词=包含即拦；/.../ 包裹=正则，如 /一口气.*看完/。可加作用域前缀只匹配某字段：title:词 / up:词 / part:词（如 up:营销号 只按 UP 名拦）。' },
+    { key: 'keywords', label: '🎯 关键词', placeholder: '如：原神 或 /震惊.*竟然/', hint: '一次命中 标题 / UP主名 / 分区（纯本地、免联网）。普通词=包含即拦；/.../ 包裹=正则，如 /一口气.*看完/。可加作用域前缀只匹配某字段：title:词 / up:词 / part:词（如 up:营销号 只按 UP 名拦）。想按视频标签拦截请用下方「视频标签」（需开精确过滤）。' },
     { kind: 'up', label: 'UP 主', hint: '输入 UP 名 或 UID（纯数字自动识别为 UID）；可一次粘贴多条，用逗号或换行分隔。' },
     { key: 'bvids', label: 'BV 号', placeholder: '如：BV1xx411c7XX', hint: '按视频 BV 号精确屏蔽单个视频。' },
     { key: 'partitions', label: '视频分区', placeholder: '如：资讯 或 /综艺|娱乐/', hint: '按视频分区(tname)屏蔽，网络拦截层最准。普通词=包含即拦；/.../ 包裹=正则。' },
@@ -2397,6 +2487,7 @@
       <div class="switch"><input type="checkbox" id="bfb-rclick"> 右键卡片弹菜单（屏蔽/拉黑/加白名单）</div>
       <div class="switch"><input type="checkbox" id="bfb-hoverbtn"> 悬停卡片显示快捷「拉黑」按钮</div>
       <div class="switch"><input type="checkbox" id="bfb-collab"> 联合投稿一并拉黑合作者</div>
+      <div class="switch"><input type="checkbox" id="bfb-fuzzy"> 反绕过模糊匹配（"原 神 / 原.神" 也拦；隐形字符始终拦）</div>
       <div class="switch"><input type="checkbox" id="bfb-debug"> 调试模式（控制台逐卡打印拦/放原因）</div>
       <div class="hint">所有开关与规则均<b>即时生效</b>，无需保存。<b>审查模式</b>切换后建议<b>刷新页面</b>以核对完整结果。真正“从推荐流消失”请用<b>拉黑</b>。</div>`;
     G.base.appendChild(sw);
@@ -2410,6 +2501,7 @@
     bindControl(sw, 'bfb-rclick', CONFIG, 'rightClickBlock');
     bindControl(sw, 'bfb-hoverbtn', CONFIG, 'cardHoverBtn', { after: hideHoverBtn });
     bindControl(sw, 'bfb-collab', CONFIG, 'blacklistCollab');
+    bindControl(sw, 'bfb-fuzzy', CONFIG, 'fuzzyMatch', { after: rescanAfterRuleChange });
     bindControl(sw, 'bfb-debug', CONFIG, 'debug', { after: rescanAfterRuleChange });
 
     const ct = document.createElement('div');
@@ -2433,11 +2525,14 @@
     num.innerHTML = `<label>播放量 / 时长</label>
       <div class="switch" style="margin-top:4px;font-weight:400">播放量低于 <input type="number" id="bfb-minviews" min="0" step="0.1" style="width:64px"> 万则屏蔽（0=不启用）</div>
       <div class="switch" style="margin-top:8px;font-weight:400">时长　最短 <input type="number" id="bfb-dmin" min="0" style="width:64px"> 秒　最长 <input type="number" id="bfb-dmax" min="0" style="width:64px"> 秒</div>
-      <div class="hint">填 0 表示该项不启用。</div>`;
+      <div class="switch" style="margin-top:8px;font-weight:400">营销号：点赞率低于 <input type="number" id="bfb-spamratio" min="0" max="100" step="0.1" style="width:56px"> % 且播放≥ <input type="number" id="bfb-spamviews" min="0" step="1" style="width:56px"> 万 则屏蔽</div>
+      <div class="hint">填 0 表示该项不启用。营销号/搬运号常"高播放、极低赞"。⚠ 点赞率<b>仅在接口返回点赞数时生效（主要是首页推荐流）</b>；拿不到点赞数的卡片（部分 SSR / 动态）会跳过此项，不影响其它规则。</div>`;
     G.api.appendChild(num);
     bindControl(num, 'bfb-minviews', CONFIG.block, 'minViews', { number: true, after: rescanAfterRuleChange });
     bindControl(num, 'bfb-dmin', CONFIG.block, 'minDuration', { number: true, int: true, after: rescanAfterRuleChange });
     bindControl(num, 'bfb-dmax', CONFIG.block, 'maxDuration', { number: true, int: true, after: rescanAfterRuleChange });
+    bindControl(num, 'bfb-spamratio', CONFIG.block, 'spamLikeRatio', { number: true, after: rescanAfterRuleChange });
+    bindControl(num, 'bfb-spamviews', CONFIG.block, 'spamMinViews', { number: true, int: true, after: rescanAfterRuleChange });
 
     const feed = document.createElement('div');
     feed.className = 'sec';
@@ -2487,6 +2582,7 @@
         <div class="switch"><input type="checkbox" id="bfb-cmt-ad"> 隐藏 带货 / 导流广告评论</div>
         <div class="switch"><input type="checkbox" id="bfb-cmt-callonly"> 隐藏 只含 @他人 的空评论</div>
         <div class="switch"><input type="checkbox" id="bfb-cmt-emoji"> 隐藏 纯表情评论</div>
+        <div class="switch"><input type="checkbox" id="bfb-cmt-collapse"> 命中后折叠为一行（点击展开），而非直接隐藏</div>
         <label style="margin-top:10px">⭐ 免过滤（白名单）</label>
         <div class="switch"><input type="checkbox" id="bfb-cmt-up"> UP 主的评论</div>
         <div class="switch"><input type="checkbox" id="bfb-cmt-pin"> 置顶评论</div>
@@ -2511,6 +2607,7 @@
     bindControl(cmt, 'bfb-cmt-ad', CONFIG.comment, 'hideAd', { after: rescanAfterRuleChange });
     bindControl(cmt, 'bfb-cmt-callonly', CONFIG.comment, 'hideCallOnly', { after: rescanAfterRuleChange });
     bindControl(cmt, 'bfb-cmt-emoji', CONFIG.comment, 'hideEmojiOnly', { after: rescanAfterRuleChange });
+    bindControl(cmt, 'bfb-cmt-collapse', CONFIG.comment, 'collapse', { after: rescanAfterRuleChange });
     bindControl(cmt, 'bfb-cmt-up', CONFIG.comment, 'allowUp', { after: rescanAfterRuleChange });
     bindControl(cmt, 'bfb-cmt-pin', CONFIG.comment, 'allowPin', { after: rescanAfterRuleChange });
     bindControl(cmt, 'bfb-cmt-me', CONFIG.comment, 'allowMe', { after: rescanAfterRuleChange });
@@ -2538,22 +2635,102 @@
 
     const preset = document.createElement('div');
     preset.className = 'sec';
-    preset.innerHTML = '<label>预置关键词库（点一下即加入关键词黑名单）</label><div class="toolbar" id="bfb-presets"></div>';
+    preset.innerHTML =
+      '<label>预置规则库（点一下加入对应黑名单，可叠加）</label>' +
+      '<div class="hint">这只是「一键灌词」入口，本身不是规则；点完后真正生效的规则在「黑名单」页可增删。需要持续更新的大名单请用「规则订阅」。</div>' +
+      '<div id="bfb-presets"></div>';
     G.tools.appendChild(preset);
     const presetBox = preset.querySelector('#bfb-presets');
-    Object.keys(PRESET_LIBRARY).forEach((name) => {
-      const btn = document.createElement('button');
-      btn.className = 'act ghost';
-      btn.textContent = '+ ' + name;
-      btn.onclick = () => {
-        let n = 0;
-        for (const kw of PRESET_LIBRARY[name]) if (addToList(CONFIG.block.keywords, kw)) n++;
-        toast(`已加入「${name}」${n} 条规则`);
-        renderPanel(p);
-        p.classList.add('open');
-      };
-      presetBox.appendChild(btn);
+    // 应用一条预置：把 rules 各维度去重加进 CONFIG.block，最后统一存盘+重扫（避免逐条重扫）
+    const applyPreset = (p2) => {
+      let n = 0;
+      for (const dim of Object.keys(p2.rules || {})) {
+        const arr = CONFIG.block[dim];
+        if (!Array.isArray(arr)) continue;
+        for (const v of p2.rules[dim]) {
+          const s = String(v).trim();
+          if (s && !arr.map(String).includes(s)) {
+            arr.push(s);
+            n++;
+          }
+        }
+      }
+      if (n) {
+        saveConfig();
+        rescanAfterRuleChange();
+      }
+      toast(n ? `已加入「${p2.name}」${n} 条` : `「${p2.name}」已全部存在`);
+      // 含需联网维度（标签 / 组合标签 / UP简介）的预置，未开「精确过滤」则静默失效——显式引导开启
+      const API_DIM_KEYS = ['tags', 'dualTags', 'upBio'];
+      const needsApi = Object.keys(p2.rules || {}).some((d) => API_DIM_KEYS.includes(d));
+      if (needsApi && !CONFIG.apiFilters && confirm(`「${p2.name}」含需联网读取（标签 / 简介）的规则，必须开启「精确过滤」才会生效。是否现在开启？`)) {
+        CONFIG.apiFilters = true;
+        saveConfig();
+        rescanAfterRuleChange();
+      }
+      renderPanel(p);
+      p.classList.add('open');
+    };
+    // 按大类分组渲染
+    const byCat = {};
+    PRESET_LIBRARY.forEach((pp) => (byCat[pp.cat] = byCat[pp.cat] || []).push(pp));
+    Object.keys(byCat).forEach((cat) => {
+      const cl = document.createElement('div');
+      cl.style.cssText = 'font-size:12px;color:#888;margin:8px 0 4px';
+      cl.textContent = cat;
+      presetBox.appendChild(cl);
+      const bar = document.createElement('div');
+      bar.className = 'toolbar';
+      byCat[cat].forEach((pp) => {
+        const btn = document.createElement('button');
+        btn.className = 'act ghost';
+        btn.textContent = '+ ' + pp.name;
+        if (pp.desc) btn.title = pp.desc;
+        btn.onclick = () => applyPreset(pp);
+        bar.appendChild(btn);
+      });
+      presetBox.appendChild(bar);
     });
+
+    // —— 正则测试器（仅调试，不影响规则）——
+    const retest = document.createElement('div');
+    retest.className = 'sec';
+    retest.innerHTML = `<label>🧪 正则测试器（仅调试用，不影响规则）</label>
+      <div class="addrow"><input type="text" id="bfb-re-pat" placeholder="正则或普通词，如 /一口气.*看完/i"></div>
+      <div class="addrow" style="margin-top:6px"><input type="text" id="bfb-re-txt" placeholder="样例文本（粘个标题来试）"></div>
+      <div class="hint" id="bfb-re-out" style="margin-top:6px">输入正则与样例文本，实时显示是否命中。/.../ 按正则，否则按普通词（包含即命中）。</div>`;
+    G.tools.appendChild(retest);
+    const rePat = retest.querySelector('#bfb-re-pat');
+    const reTxt = retest.querySelector('#bfb-re-txt');
+    const reOut = retest.querySelector('#bfb-re-out');
+    const runReTest = () => {
+      const pat = (rePat.value || '').trim();
+      const txt = reTxt.value || '';
+      if (!pat) {
+        reOut.textContent = '输入正则与样例文本，实时显示是否命中。';
+        reOut.style.color = '';
+        return;
+      }
+      let re;
+      const m = pat.match(/^\/(.*)\/([a-z]*)$/);
+      try {
+        re = m ? new RegExp(m[1], m[2].includes('i') ? m[2] : m[2] + 'i') : new RegExp(escapeRe(pat), 'i');
+      } catch (e) {
+        reOut.textContent = '⚠ 正则语法错误：' + e.message;
+        reOut.style.color = '#e74c3c';
+        return;
+      }
+      if (!txt) {
+        reOut.textContent = `已就绪（${m ? '正则' : '普通词'}），输入样例文本看是否命中。`;
+        reOut.style.color = '';
+        return;
+      }
+      const hit = re.test(txt);
+      reOut.textContent = hit ? '✅ 命中' : '✗ 未命中';
+      reOut.style.color = hit ? '#1b7a3d' : '#999';
+    };
+    rePat.oninput = runReTest;
+    reTxt.oninput = runReTest;
 
     const io = document.createElement('div');
     io.className = 'sec';
