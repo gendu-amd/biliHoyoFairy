@@ -1151,6 +1151,113 @@
     }
   }
 
+  // src/events.ts
+  var handler = () => {
+  };
+  function setRulesChangedHandler(fn) {
+    handler = fn;
+  }
+  function emitRulesChanged() {
+    handler();
+  }
+
+  // src/rules.ts
+  function addToList(arr, value) {
+    const v = (value ? String(value) : "").trim();
+    if (!v) return false;
+    if (arr.map(String).includes(v)) return false;
+    arr.push(v);
+    saveConfig();
+    emitRulesChanged();
+    return true;
+  }
+  function removeFromList(arr, value) {
+    const i = arr.map(String).indexOf(String(value));
+    if (i >= 0) {
+      arr.splice(i, 1);
+      saveConfig();
+      emitRulesChanged();
+    }
+  }
+
+  // src/subscriptions/refresh.ts
+  function metaGet(meta, key) {
+    if (!meta) return void 0;
+    if (meta[key] != null) return meta[key];
+    const lk = key.toLowerCase();
+    for (const k in meta) if (k.toLowerCase() === lk) return meta[k];
+    return void 0;
+  }
+  function cmpVer(a, b) {
+    const pa = String(a).split(".").map((n) => parseInt(n, 10) || 0);
+    const pb = String(b).split(".").map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const d = (pa[i] || 0) - (pb[i] || 0);
+      if (d) return d < 0 ? -1 : 1;
+    }
+    return 0;
+  }
+  var DAY_MS = 24 * 36e5;
+  function parseExpires(s) {
+    const m = String(s ?? "").trim().match(/^(\d+)\s*([hd])?/i);
+    if (!m) return DAY_MS;
+    const n = Math.max(1, parseInt(m[1], 10) || 1);
+    return n * ((m[2] || "d").toLowerCase() === "h" ? 36e5 : DAY_MS);
+  }
+  function fetchSubText(url, cb) {
+    if (typeof GM_xmlhttpRequest !== "function") return cb(null, "无 GM_xmlhttpRequest");
+    GM_xmlhttpRequest({
+      method: "GET",
+      url,
+      timeout: 15e3,
+      onload: (r) => r.status >= 200 && r.status < 300 && r.responseText ? cb(r.responseText, null) : cb(null, "HTTP " + r.status),
+      onerror: () => cb(null, "网络错误"),
+      ontimeout: () => cb(null, "超时")
+    });
+  }
+  function syncSubscription(url, cb) {
+    fetchSubText(url, (text, err) => {
+      const store = loadSubStore();
+      const finish = (patch, ok) => {
+        store[url] = ok ? patch : Object.assign(store[url] || {}, patch);
+        saveSubStore(store);
+        cb && cb(ok);
+      };
+      if (err || !text) return finish({ lastSync: Date.now(), ok: false, error: err || "空内容" }, false);
+      try {
+        const { meta, rules } = parseSubscription(text);
+        const count = SUB_DIMS.reduce((n, d) => n + (rules[d] && rules[d].length || 0), 0);
+        finish({ meta, rules, lastSync: Date.now(), ok: true, count, error: null }, true);
+        const minV = metaGet(meta, "minScriptVersion");
+        if (minV && cmpVer(VERSION, minV) < 0) toast(`订阅「${metaGet(meta, "title") || url}」建议脚本升级到 ≥ ${minV}（部分规则可能未识别）`);
+      } catch (e) {
+        finish({ lastSync: Date.now(), ok: false, error: "解析失败" }, false);
+      }
+    });
+  }
+  function refreshSubscriptions(force, done) {
+    const store = loadSubStore();
+    const due = (CONFIG.subscriptions || []).filter((s) => {
+      if (!s || !s.enabled || !s.url) return false;
+      if (force) return true;
+      const e = store[s.url];
+      if (!e || !e.ok) return true;
+      return Date.now() - (e.lastSync || 0) >= parseExpires(metaGet(e.meta, "expires"));
+    });
+    if (!due.length) return done && done(0);
+    let pending = due.length;
+    let changed = 0;
+    due.forEach(
+      (s) => syncSubscription(s.url, (ok) => {
+        if (ok) changed++;
+        if (--pending === 0) {
+          if (changed) emitRulesChanged();
+          done && done(changed);
+        }
+      })
+    );
+  }
+
   // src/main.ts
   (function() {
     "use strict";
@@ -1164,82 +1271,7 @@
       if (document.body) updateBadge();
       if (panelStatsRefresh && isPanelOpen()) panelStatsRefresh();
     });
-    function metaGet(meta, key) {
-      if (!meta) return void 0;
-      if (meta[key] != null) return meta[key];
-      const lk = key.toLowerCase();
-      for (const k in meta) if (k.toLowerCase() === lk) return meta[k];
-      return void 0;
-    }
-    function cmpVer(a, b) {
-      const pa = String(a).split(".").map((n) => parseInt(n, 10) || 0);
-      const pb = String(b).split(".").map((n) => parseInt(n, 10) || 0);
-      for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-        const d = (pa[i] || 0) - (pb[i] || 0);
-        if (d) return d < 0 ? -1 : 1;
-      }
-      return 0;
-    }
-    const DAY_MS = 24 * 36e5;
-    function parseExpires(s) {
-      const m = String(s ?? "").trim().match(/^(\d+)\s*([hd])?/i);
-      if (!m) return DAY_MS;
-      const n = Math.max(1, parseInt(m[1], 10) || 1);
-      return n * ((m[2] || "d").toLowerCase() === "h" ? 36e5 : DAY_MS);
-    }
-    function fetchSubText(url, cb) {
-      if (typeof GM_xmlhttpRequest !== "function") return cb(null, "无 GM_xmlhttpRequest");
-      GM_xmlhttpRequest({
-        method: "GET",
-        url,
-        timeout: 15e3,
-        onload: (r) => r.status >= 200 && r.status < 300 && r.responseText ? cb(r.responseText, null) : cb(null, "HTTP " + r.status),
-        onerror: () => cb(null, "网络错误"),
-        ontimeout: () => cb(null, "超时")
-      });
-    }
-    function syncSubscription(url, cb) {
-      fetchSubText(url, (text, err) => {
-        const store = loadSubStore();
-        const finish = (patch, ok) => {
-          store[url] = ok ? patch : Object.assign(store[url] || {}, patch);
-          saveSubStore(store);
-          cb && cb(ok);
-        };
-        if (err || !text) return finish({ lastSync: Date.now(), ok: false, error: err || "空内容" }, false);
-        try {
-          const { meta, rules } = parseSubscription(text);
-          const count = SUB_DIMS.reduce((n, d) => n + (rules[d] && rules[d].length || 0), 0);
-          finish({ meta, rules, lastSync: Date.now(), ok: true, count, error: null }, true);
-          const minV = metaGet(meta, "minScriptVersion");
-          if (minV && cmpVer(VERSION, minV) < 0) toast(`订阅「${metaGet(meta, "title") || url}」建议脚本升级到 ≥ ${minV}（部分规则可能未识别）`);
-        } catch (e) {
-          finish({ lastSync: Date.now(), ok: false, error: "解析失败" }, false);
-        }
-      });
-    }
-    function refreshSubscriptions(force, done) {
-      const store = loadSubStore();
-      const due = (CONFIG.subscriptions || []).filter((s) => {
-        if (!s || !s.enabled || !s.url) return false;
-        if (force) return true;
-        const e = store[s.url];
-        if (!e || !e.ok) return true;
-        return Date.now() - (e.lastSync || 0) >= parseExpires(metaGet(e.meta, "expires"));
-      });
-      if (!due.length) return done && done(0);
-      let pending = due.length;
-      let changed = 0;
-      due.forEach(
-        (s) => syncSubscription(s.url, (ok) => {
-          if (ok) changed++;
-          if (--pending === 0) {
-            if (changed) rescanAfterRuleChange();
-            done && done(changed);
-          }
-        })
-      );
-    }
+    setRulesChangedHandler(() => rescanAfterRuleChange());
     function installShadowHook() {
       if (Element.prototype.attachShadow.__bfb) return;
       const orig = Element.prototype.attachShadow;
@@ -1570,23 +1602,6 @@
         cmtTimer = null;
         scanComments();
       }, 300);
-    }
-    function addToList(arr, value) {
-      const v = (value || "").trim();
-      if (!v) return false;
-      if (arr.map(String).includes(v)) return false;
-      arr.push(v);
-      saveConfig();
-      rescanAfterRuleChange();
-      return true;
-    }
-    function removeFromList(arr, value) {
-      const i = arr.map(String).indexOf(String(value));
-      if (i >= 0) {
-        arr.splice(i, 1);
-        saveConfig();
-        rescanAfterRuleChange();
-      }
     }
     function resolveUidByBvid(bvid, cb) {
       fetchView(bvid, (d) => {

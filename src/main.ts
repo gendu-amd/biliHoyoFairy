@@ -23,6 +23,9 @@ import { shadowRoots, harvestShadowRoots } from './dom/shadow';
 import { blockedLog, sessionBlocked, setSessionBlocked, tallyLog, logBlocked, recordBlock, setStatsListener } from './stats';
 import { updateBadge, toast } from './ui/toast';
 import { setPanelHooks } from './ui/hooks';
+import { addToList, removeFromList } from './rules';
+import { refreshSubscriptions, syncSubscription, metaGet } from './subscriptions/refresh';
+import { setRulesChangedHandler } from './events';
 /*
  * 架构（拦截优先 + DOM 兜底）：
  *   1. 拦截层（主）：document-start 时 hook fetch / XHR，被动过滤 B 站自身请求的 JSON 列表
@@ -59,91 +62,16 @@ import { setPanelHooks } from './ui/hooks';
     if (document.body) updateBadge();
     if (panelStatsRefresh && isPanelOpen()) panelStatsRefresh();
   });
+  // 规则变更 seam：rules / subscriptions 发事件，这里落到 DOM 层的重建+重扫（打断 dom↔rules 环）。
+  setRulesChangedHandler(() => rescanAfterRuleChange());
 
   /* ===================== 0c. 规则订阅（数据层） ===================== */
   // SUB_DIMS / 文本前缀解析 / sanitizeSubRules / parseSubscription 已抽到 ./subscriptions/parse；
   // loadSubStore / saveSubStore / collectSubRules 已抽到 ./subscriptions/store（见顶部 import）。
   // 以下保留 订阅“刷新/同步”逻辑（联网，属 L4，后续再抽）。
 
-  // 元数据大小写不敏感读取（JSON 用 camelCase，文本头可能用任意大小写）
-  function metaGet(meta, key) {
-    if (!meta) return undefined;
-    if (meta[key] != null) return meta[key];
-    const lk = key.toLowerCase();
-    for (const k in meta) if (k.toLowerCase() === lk) return meta[k];
-    return undefined;
-  }
-  function cmpVer(a, b) {
-    const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
-    const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
-    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-      const d = (pa[i] || 0) - (pb[i] || 0);
-      if (d) return d < 0 ? -1 : 1;
-    }
-    return 0;
-  }
-  const DAY_MS = 24 * 3600e3;
-  function parseExpires(s) {
-    const m = String(s ?? '').trim().match(/^(\d+)\s*([hd])?/i);
-    if (!m) return DAY_MS; // 默认 1 天
-    const n = Math.max(1, parseInt(m[1], 10) || 1);
-    return n * ((m[2] || 'd').toLowerCase() === 'h' ? 3600e3 : DAY_MS);
-  }
-  function fetchSubText(url, cb) {
-    if (typeof GM_xmlhttpRequest !== 'function') return cb(null, '无 GM_xmlhttpRequest');
-    GM_xmlhttpRequest({
-      method: 'GET',
-      url,
-      timeout: 15000,
-      onload: (r) => (r.status >= 200 && r.status < 300 && r.responseText ? cb(r.responseText, null) : cb(null, 'HTTP ' + r.status)),
-      onerror: () => cb(null, '网络错误'),
-      ontimeout: () => cb(null, '超时'),
-    });
-  }
-  // 拉取并解析一条订阅，写入缓存；cb(ok)
-  function syncSubscription(url, cb) {
-    fetchSubText(url, (text, err) => {
-      const store = loadSubStore();
-      const finish = (patch, ok) => {
-        store[url] = ok ? patch : Object.assign(store[url] || {}, patch);
-        saveSubStore(store);
-        cb && cb(ok);
-      };
-      if (err || !text) return finish({ lastSync: Date.now(), ok: false, error: err || '空内容' }, false);
-      try {
-        const { meta, rules } = parseSubscription(text);
-        const count = SUB_DIMS.reduce((n, d) => n + ((rules[d] && rules[d].length) || 0), 0);
-        finish({ meta, rules, lastSync: Date.now(), ok: true, count, error: null }, true);
-        const minV = metaGet(meta, 'minScriptVersion');
-        if (minV && cmpVer(VERSION, minV) < 0) toast(`订阅「${metaGet(meta, 'title') || url}」建议脚本升级到 ≥ ${minV}（部分规则可能未识别）`);
-      } catch (e) {
-        finish({ lastSync: Date.now(), ok: false, error: '解析失败' }, false);
-      }
-    });
-  }
-  // 刷新启用中的订阅；force=true 忽略 expires 间隔。完成后若有变更则重建规则+重扫
-  function refreshSubscriptions(force, done) {
-    const store = loadSubStore();
-    const due = (CONFIG.subscriptions || []).filter((s) => {
-      if (!s || !s.enabled || !s.url) return false;
-      if (force) return true;
-      const e = store[s.url];
-      if (!e || !e.ok) return true;
-      return Date.now() - (e.lastSync || 0) >= parseExpires(metaGet(e.meta, 'expires'));
-    });
-    if (!due.length) return done && done(0);
-    let pending = due.length;
-    let changed = 0;
-    due.forEach((s) =>
-      syncSubscription(s.url, (ok) => {
-        if (ok) changed++;
-        if (--pending === 0) {
-          if (changed) rescanAfterRuleChange();
-          done && done(changed);
-        }
-      })
-    );
-  }
+  // metaGet / cmpVer / parseExpires / fetchSubText / syncSubscription / refreshSubscriptions
+  // 已抽到 ./subscriptions/refresh（rescanAfterRuleChange 改经 events.emitRulesChanged 触发）。
 
   /* ===================== 1. 工具 ===================== */
   // 本节已全部抽到 ./util（getCookie/parseDuration/parseCount/escapeHtml）
@@ -555,23 +483,7 @@ import { setPanelHooks } from './ui/hooks';
     }, 300);
   }
 
-  function addToList(arr, value) {
-    const v = (value || '').trim();
-    if (!v) return false;
-    if (arr.map(String).includes(v)) return false;
-    arr.push(v);
-    saveConfig();
-    rescanAfterRuleChange();
-    return true;
-  }
-  function removeFromList(arr, value) {
-    const i = arr.map(String).indexOf(String(value));
-    if (i >= 0) {
-      arr.splice(i, 1);
-      saveConfig();
-      rescanAfterRuleChange();
-    }
-  }
+  // addToList / removeFromList 已抽到 ./rules（改经 events.emitRulesChanged 通知，打断 dom↔rules 环）
 
   /* ===================== 6. 一键拉黑（relation/modify act=5） ===================== */
   // 用 BV 号反查 UP 的 uid/name（页面取不到 UID 时的兜底，走视频详情接口）
