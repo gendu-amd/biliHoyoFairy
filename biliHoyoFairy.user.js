@@ -709,11 +709,461 @@
     return null;
   }
 
+  // src/page.ts
+  var IS_SEARCH = location.host === "search.bilibili.com";
+  var IS_DYNAMIC = location.host === "t.bilibili.com";
+  function pageType() {
+    const h = location.href;
+    if (IS_DYNAMIC) return "动态";
+    if (h.includes("/v/popular/rank") || h.includes("/ranking")) return "排行榜";
+    if (h.includes("/v/popular")) return "热门";
+    if (IS_SEARCH) return "搜索页";
+    if (/^https:\/\/www\.bilibili\.com\/?($|\?|#)/.test(h)) return "首页";
+    if (h.includes("/video/")) return "播放页";
+    return "其他";
+  }
+  var VIDEO_CARD_SELECTOR = [
+    "div.bili-video-card",
+    // 首页 / 分区 / 搜索
+    "div.video-page-card-small",
+    // 播放页右侧推荐
+    "li.bili-rank-list-video__item",
+    // 分区右侧热门
+    "div.video-card",
+    // 综合热门 / 每周必看 / 入站必刷
+    "li.rank-item",
+    // 排行榜
+    "div.video-card-reco",
+    "div.video-card-common",
+    "div.bili-dyn-list__item",
+    // 动态信息流（t.bilibili.com）
+    "div.floor-card.single-card"
+    // 首页信息流里的「直播推荐」单卡（链向 live.bilibili.com）
+  ].join(",");
+  function cellOf(el) {
+    const fc = el.closest("div.feed-card, div.bili-feed-card, div.floor-single-card");
+    if (fc) return fc;
+    if (IS_SEARCH && el.parentElement && el.parentElement !== document.body) return el.parentElement;
+    return el;
+  }
+  function isUnsafeHideTarget(el) {
+    if (!el || el === document.body || el === document.documentElement) return true;
+    if (el.matches && el.matches(".container, .feed2, .bili-feed4, #i_cecream, #app, .bili-header")) return true;
+    try {
+      if (el.querySelectorAll(VIDEO_CARD_SELECTOR).length > 1) return true;
+    } catch (e) {
+    }
+    return false;
+  }
+
+  // src/stats.ts
+  var blockedLog = [];
+  var sessionBlocked = 0;
+  function setSessionBlocked(n) {
+    sessionBlocked = n;
+  }
+  function tallyLog() {
+    const t = {};
+    for (const b of blockedLog) t[b.reason] = (t[b.reason] || 0) + 1;
+    return t;
+  }
+  function logBlocked(reason, info, src) {
+    blockedLog.unshift({
+      title: info && info.title || "",
+      up: info && info.up || "",
+      uid: info && info.uid || "",
+      bvid: info && info.bvid || "",
+      link: info && info.link || "",
+      src: src || "DOM",
+      reason,
+      t: Date.now()
+    });
+    if (blockedLog.length > 300) blockedLog.pop();
+  }
+  var onRecorded = () => {
+  };
+  function setStatsListener(fn) {
+    onRecorded = fn;
+  }
+  function recordBlock(reason, info, src) {
+    logBlocked(reason, info, src);
+    sessionBlocked++;
+    CONFIG.blockedCount++;
+    onRecorded();
+    scheduleSave();
+    log(`拦截🚫 ${reason} ${info && info.up ? info.up + " · " : ""}${info && info.title || "(无标题)"}`);
+  }
+
+  // src/ui/hooks.ts
+  var _refreshPanelIfOpen = () => {
+  };
+  var _openPanel = () => {
+  };
+  var _isPanelOpen = () => false;
+  function setPanelHooks(h) {
+    if (h.refreshPanelIfOpen) _refreshPanelIfOpen = h.refreshPanelIfOpen;
+    if (h.openPanel) _openPanel = h.openPanel;
+    if (h.isPanelOpen) _isPanelOpen = h.isPanelOpen;
+  }
+  function openPanel() {
+    _openPanel();
+  }
+
+  // src/ui/toast.ts
+  function updateBadge() {
+    let b = document.getElementById("bfb-badge");
+    if (!b) {
+      b = document.createElement("div");
+      b.id = "bfb-badge";
+      b.title = "点击打开设置";
+      b.onclick = openPanel;
+      document.body.appendChild(b);
+    }
+    b.classList.toggle("off", !CONFIG.enabled);
+    b.textContent = CONFIG.enabled ? `🛡 已拦截 ${sessionBlocked}（共${CONFIG.blockedCount}）` : "🛡 已暂停";
+  }
+  function toastContainer() {
+    let c = document.getElementById("bfb-toasts");
+    if (!c) {
+      c = document.createElement("div");
+      c.id = "bfb-toasts";
+      document.body.appendChild(c);
+    }
+    return c;
+  }
+  function toast(msg) {
+    const t = document.createElement("div");
+    t.className = "bfb-toast";
+    t.textContent = msg;
+    toastContainer().appendChild(t);
+    setTimeout(() => t.remove(), 4e3);
+  }
+
+  // src/api.ts
+  var riskGuard = {
+    until: 0,
+    strikes: 0,
+    blocked() {
+      return Date.now() < this.until;
+    },
+    remaining() {
+      return Math.max(0, this.until - Date.now());
+    },
+    // 任何联网响应都喂进来：风控码→升级退避；正常码→冷却期过后清零。
+    note(code) {
+      if (code == null || !RISK_CODES.has(code)) {
+        if (code === 0 && this.strikes && !this.blocked()) this.strikes = 0;
+        return;
+      }
+      const wasBlocked = this.blocked();
+      this.strikes = Math.min(this.strikes + 1, 6);
+      const backoff = Math.min(6e4, 2e3 * 2 ** (this.strikes - 1));
+      this.until = Date.now() + backoff;
+      if (!wasBlocked) {
+        logErr("风控熔断", `code ${code}，暂停联网 ${Math.round(backoff / 1e3)}s`);
+        toast(`⚠️ 触发 B 站风控(code ${code})，已暂停联网 ${Math.round(backoff / 1e3)} 秒以保护账号`);
+      }
+    }
+  };
+  var API = {
+    view: /* @__PURE__ */ new Map(),
+    tag: /* @__PURE__ */ new Map(),
+    card: /* @__PURE__ */ new Map(),
+    queue: [],
+    active: 0,
+    waiting: false,
+    CONCURRENCY: 3,
+    DELAY: 120
+  };
+  function apiPump() {
+    if (riskGuard.blocked()) {
+      if (!API.waiting) {
+        API.waiting = true;
+        setTimeout(() => {
+          API.waiting = false;
+          apiPump();
+        }, riskGuard.remaining() + 50);
+      }
+      return;
+    }
+    while (API.active < API.CONCURRENCY && API.queue.length) {
+      const task = API.queue.shift();
+      API.active++;
+      task(() => {
+        setTimeout(() => {
+          API.active--;
+          apiPump();
+        }, API.DELAY);
+      });
+    }
+  }
+  function apiEnqueue(task) {
+    API.queue.push(task);
+    apiPump();
+  }
+  function gmGet(url, cb) {
+    if (typeof GM_xmlhttpRequest !== "function") {
+      cb(null);
+      return;
+    }
+    GM_xmlhttpRequest({
+      method: "GET",
+      url,
+      withCredentials: true,
+      timeout: 12e3,
+      onload: (r) => {
+        try {
+          const j = JSON.parse(r.responseText);
+          riskGuard.note(j && j.code);
+          cb(j);
+        } catch (e) {
+          cb(null);
+        }
+      },
+      onerror: () => cb(null),
+      ontimeout: () => cb(null)
+    });
+  }
+  function fetchView(bvid, cb) {
+    if (!bvid) return cb(null);
+    if (API.view.has(bvid)) return cb(API.view.get(bvid));
+    apiEnqueue((done) => {
+      gmGet("https://api.bilibili.com/x/web-interface/view?bvid=" + encodeURIComponent(bvid), (j) => {
+        const d = j && j.code === 0 ? j.data : null;
+        API.view.set(bvid, d);
+        if (d && d.owner && d.owner.mid && d.owner.name) {
+          CONFIG.uidNames[String(d.owner.mid)] = d.owner.name;
+          scheduleSave();
+        }
+        cb(d);
+        done();
+      });
+    });
+  }
+  function fetchTags(bvid, cb) {
+    if (!bvid) return cb(null);
+    if (API.tag.has(bvid)) return cb(API.tag.get(bvid));
+    apiEnqueue((done) => {
+      gmGet("https://api.bilibili.com/x/web-interface/view/detail/tag?bvid=" + encodeURIComponent(bvid), (j) => {
+        const arr = j && j.code === 0 && Array.isArray(j.data) ? j.data.map((x) => x.tag_name).filter(Boolean) : null;
+        API.tag.set(bvid, arr);
+        cb(arr);
+        done();
+      });
+    });
+  }
+  function fetchCard(mid, cb) {
+    if (!mid) return cb(null);
+    if (API.card.has(mid)) return cb(API.card.get(mid));
+    apiEnqueue((done) => {
+      gmGet("https://api.bilibili.com/x/web-interface/card?mid=" + encodeURIComponent(mid), (j) => {
+        const d = j && j.code === 0 ? j.data : null;
+        API.card.set(mid, d);
+        cb(d);
+        done();
+      });
+    });
+  }
+  function cachedUid(bvid) {
+    const d = bvid && API.view.get(bvid);
+    return d && d.owner && d.owner.mid ? String(d.owner.mid) : "";
+  }
+
+  // src/net.ts
+  var FEED_HOOKS = [
+    { re: /\/x\/web-interface\/wbi\/index\/top\/feed\/rcmd/, get: (d) => d && Array.isArray(d.item) ? d.item : null },
+    { re: /\/x\/web-interface\/index\/top\/feed\/rcmd/, get: (d) => d && Array.isArray(d.item) ? d.item : null },
+    { re: /\/x\/web-interface\/ranking\/v2/, get: (d) => d && Array.isArray(d.list) ? d.list : null },
+    { re: /\/x\/web-interface\/popular(\/|\?|$)/, get: (d) => d && Array.isArray(d.list) ? d.list : null },
+    { re: /\/x\/web-interface\/archive\/related/, get: (d) => Array.isArray(d) ? d : null },
+    // 搜索页：type=视频 时 data.result 直接是视频数组；综合(all/v2) 时 data.result 是分组，取 result_type==='video' 的 data
+    {
+      re: /\/x\/web-interface\/wbi\/search\/(type|all\/v2)/,
+      get: (d) => {
+        if (!d || !Array.isArray(d.result)) return null;
+        if (d.result.length && d.result[0] && d.result[0].result_type) {
+          const g = d.result.find((x) => x.result_type === "video");
+          return g && Array.isArray(g.data) ? g.data : null;
+        }
+        return d.result;
+      }
+    }
+  ];
+  var isFeedUrl = (url) => !!url && FEED_HOOKS.some((h) => h.re.test(url));
+  function filterFeedJson(url, json) {
+    if (!CONFIG.enabled || CONFIG.reviewMode || !json || json.code !== 0 || !json.data) return 0;
+    const hook = FEED_HOOKS.find((h) => h.re.test(url));
+    if (!hook) return 0;
+    const arr = hook.get(json.data);
+    if (!arr || !arr.length) return 0;
+    let removed = 0;
+    for (let i = arr.length - 1; i >= 0; i--) {
+      const info = normFeedItem(arr[i]);
+      if (!info) continue;
+      const reason = matchRule(info);
+      if (reason) {
+        recordBlock(reason, info, "NET");
+        arr.splice(i, 1);
+        removed++;
+      }
+    }
+    if (removed) log(`拦截层 删除 ${removed} 项 @ ${url.split("?")[0]}`);
+    return removed;
+  }
+  var NET = /* @__PURE__ */ (() => {
+    const preFns = [];
+    const postFns = [];
+    return {
+      addPre: (fn) => preFns.push(fn),
+      addPost: (fn) => postFns.push(fn),
+      hasPre: () => preFns.length > 0,
+      rewriteUrl(url) {
+        let u = url;
+        for (const fn of preFns) {
+          try {
+            const r = fn(u);
+            if (typeof r === "string" && r) u = r;
+          } catch (e) {
+          }
+        }
+        return u;
+      },
+      runJson(url, json) {
+        let removed = 0;
+        for (const fn of postFns) {
+          try {
+            removed += fn(url, json) || 0;
+          } catch (e) {
+          }
+        }
+        return removed;
+      }
+    };
+  })();
+  NET.addPost(filterFeedJson);
+  NET.addPre((url) => {
+    if (!CONFIG.boostFeedLoad) return;
+    if (/\/x\/web-interface\/(wbi\/)?index\/top\/feed\/rcmd/.test(url) && /[?&]ps=\d+/.test(url)) {
+      return url.replace(/([?&]ps=)\d+/, "$130");
+    }
+  });
+  function computeFilteredText(url, raw) {
+    try {
+      const json = JSON.parse(raw);
+      return NET.runJson(url, json) ? JSON.stringify(json) : raw;
+    } catch (e) {
+      return raw;
+    }
+  }
+  function installNetworkHooks() {
+    const W = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+    const RespCtor = W.Response || Response;
+    if (typeof W.fetch === "function" && !W.fetch.__bfb) {
+      const origFetch = W.fetch;
+      const wrapped = function(input, init) {
+        let input2 = input;
+        if (NET.hasPre() && typeof input === "string") input2 = NET.rewriteUrl(input);
+        const url = typeof input2 === "string" ? input2 : input2 && input2.url || "";
+        const p = origFetch.call(this, input2, init);
+        if (!isFeedUrl(url)) return p;
+        return p.then(
+          (resp) => resp.clone().json().then((json) => {
+            if (!NET.runJson(url, json)) return resp;
+            const h = new Headers(resp.headers);
+            h.delete("content-encoding");
+            h.delete("content-length");
+            return new RespCtor(JSON.stringify(json), { status: resp.status, statusText: resp.statusText, headers: h });
+          }).catch(() => resp)
+        );
+      };
+      wrapped.__bfb = true;
+      try {
+        W.fetch = wrapped;
+      } catch (e) {
+      }
+    }
+    const XHR = W.XMLHttpRequest;
+    if (XHR && XHR.prototype && !XHR.prototype.__bfb) {
+      const origOpen = XHR.prototype.open;
+      const dText = Object.getOwnPropertyDescriptor(XHR.prototype, "responseText");
+      const dResp = Object.getOwnPropertyDescriptor(XHR.prototype, "response");
+      XHR.prototype.open = function(method, url) {
+        const self = this;
+        const url2 = NET.hasPre() && typeof url === "string" ? NET.rewriteUrl(url) : url;
+        if (isFeedUrl(url2)) {
+          const filteredText = (getRaw) => {
+            if (self.__bfbText === void 0) self.__bfbText = computeFilteredText(url2, getRaw());
+            return self.__bfbText;
+          };
+          if (dText && dText.get) {
+            Object.defineProperty(self, "responseText", {
+              configurable: true,
+              get() {
+                if (self.readyState !== 4) return dText.get.call(self);
+                return filteredText(() => dText.get.call(self));
+              }
+            });
+          }
+          if (dResp && dResp.get) {
+            Object.defineProperty(self, "response", {
+              configurable: true,
+              get() {
+                if (self.readyState !== 4) return dResp.get.call(self);
+                const rt = self.responseType;
+                if (rt === "json") {
+                  if (self.__bfbResp === void 0) {
+                    const orig = dResp.get.call(self);
+                    try {
+                      if (orig && typeof orig === "object") NET.runJson(url2, orig);
+                      self.__bfbResp = orig;
+                    } catch (e) {
+                      self.__bfbResp = orig;
+                    }
+                  }
+                  return self.__bfbResp;
+                }
+                if (rt === "" || rt === "text") {
+                  const orig = dResp.get.call(self);
+                  return typeof orig === "string" ? filteredText(() => orig) : orig;
+                }
+                return dResp.get.call(self);
+              }
+            });
+          }
+        }
+        return origOpen.call(this, method, url2, arguments.length > 2 ? arguments[2] : true, arguments[3], arguments[4]);
+      };
+      XHR.prototype.__bfb = true;
+    }
+  }
+
+  // src/dom/shadow.ts
+  var shadowRoots = /* @__PURE__ */ new Set();
+  function harvestShadowRoots(root) {
+    if (!root || !root.querySelectorAll) return;
+    try {
+      for (const el of root.querySelectorAll("*")) {
+        if (el.shadowRoot && el.id !== "bfb-overlay-host" && !shadowRoots.has(el.shadowRoot)) {
+          shadowRoots.add(el.shadowRoot);
+        }
+      }
+    } catch (e) {
+    }
+  }
+
   // src/main.ts
   (function() {
     "use strict";
     configureCardDetect(() => ({ detectAd: CONFIG.hideAd, detectLive: CONFIG.hideLiveCard }));
-    let sessionBlocked = 0;
+    setPanelHooks({
+      refreshPanelIfOpen: () => refreshPanelIfOpen(),
+      openPanel: () => openPanel2(),
+      isPanelOpen: () => isPanelOpen()
+    });
+    setStatsListener(() => {
+      if (document.body) updateBadge();
+      if (panelStatsRefresh && isPanelOpen()) panelStatsRefresh();
+    });
     function metaGet(meta, key) {
       if (!meta) return void 0;
       if (meta[key] != null) return meta[key];
@@ -790,336 +1240,6 @@
         })
       );
     }
-    const IS_SEARCH = location.host === "search.bilibili.com";
-    const IS_DYNAMIC = location.host === "t.bilibili.com";
-    function pageType() {
-      const h = location.href;
-      if (IS_DYNAMIC) return "动态";
-      if (h.includes("/v/popular/rank") || h.includes("/ranking")) return "排行榜";
-      if (h.includes("/v/popular")) return "热门";
-      if (IS_SEARCH) return "搜索页";
-      if (/^https:\/\/www\.bilibili\.com\/?($|\?|#)/.test(h)) return "首页";
-      if (h.includes("/video/")) return "播放页";
-      return "其他";
-    }
-    const VIDEO_CARD_SELECTOR = [
-      "div.bili-video-card",
-      // 首页 / 分区 / 搜索
-      "div.video-page-card-small",
-      // 播放页右侧推荐
-      "li.bili-rank-list-video__item",
-      // 分区右侧热门
-      "div.video-card",
-      // 综合热门 / 每周必看 / 入站必刷
-      "li.rank-item",
-      // 排行榜
-      "div.video-card-reco",
-      "div.video-card-common",
-      "div.bili-dyn-list__item",
-      // 动态信息流（t.bilibili.com，选择器借鉴 bilibili-cleaner）
-      "div.floor-card.single-card"
-      // 首页信息流里的「直播推荐」单卡（链向 live.bilibili.com）
-    ].join(",");
-    function cellOf(el) {
-      const fc = el.closest("div.feed-card, div.bili-feed-card, div.floor-single-card");
-      if (fc) return fc;
-      if (IS_SEARCH && el.parentElement && el.parentElement !== document.body) return el.parentElement;
-      return el;
-    }
-    function isUnsafeHideTarget(el) {
-      if (!el || el === document.body || el === document.documentElement) return true;
-      if (el.matches && el.matches(".container, .feed2, .bili-feed4, #i_cecream, #app, .bili-header")) return true;
-      try {
-        if (el.querySelectorAll(VIDEO_CARD_SELECTOR).length > 1) return true;
-      } catch (e) {
-      }
-      return false;
-    }
-    const riskGuard = {
-      until: 0,
-      strikes: 0,
-      blocked() {
-        return Date.now() < this.until;
-      },
-      remaining() {
-        return Math.max(0, this.until - Date.now());
-      },
-      // 任何联网响应都喂进来：风控码→升级退避；正常码→冷却期过后清零
-      note(code) {
-        if (!RISK_CODES.has(code)) {
-          if (code === 0 && this.strikes && !this.blocked()) this.strikes = 0;
-          return;
-        }
-        const wasBlocked = this.blocked();
-        this.strikes = Math.min(this.strikes + 1, 6);
-        const backoff = Math.min(6e4, 2e3 * 2 ** (this.strikes - 1));
-        this.until = Date.now() + backoff;
-        if (!wasBlocked) {
-          logErr("风控熔断", `code ${code}，暂停联网 ${Math.round(backoff / 1e3)}s`);
-          toast(`⚠️ 触发 B 站风控(code ${code})，已暂停联网 ${Math.round(backoff / 1e3)} 秒以保护账号`);
-        }
-      }
-    };
-    const API = { view: /* @__PURE__ */ new Map(), tag: /* @__PURE__ */ new Map(), card: /* @__PURE__ */ new Map(), queue: [], active: 0, waiting: false, CONCURRENCY: 3, DELAY: 120 };
-    function apiPump() {
-      if (riskGuard.blocked()) {
-        if (!API.waiting) {
-          API.waiting = true;
-          setTimeout(() => {
-            API.waiting = false;
-            apiPump();
-          }, riskGuard.remaining() + 50);
-        }
-        return;
-      }
-      while (API.active < API.CONCURRENCY && API.queue.length) {
-        const task = API.queue.shift();
-        API.active++;
-        task(() => {
-          setTimeout(() => {
-            API.active--;
-            apiPump();
-          }, API.DELAY);
-        });
-      }
-    }
-    function apiEnqueue(task) {
-      API.queue.push(task);
-      apiPump();
-    }
-    function gmGet(url, cb) {
-      if (typeof GM_xmlhttpRequest !== "function") {
-        cb(null);
-        return;
-      }
-      GM_xmlhttpRequest({
-        method: "GET",
-        url,
-        withCredentials: true,
-        timeout: 12e3,
-        onload: (r) => {
-          try {
-            const j = JSON.parse(r.responseText);
-            riskGuard.note(j && j.code);
-            cb(j);
-          } catch (e) {
-            cb(null);
-          }
-        },
-        onerror: () => cb(null),
-        ontimeout: () => cb(null)
-      });
-    }
-    function fetchView(bvid, cb) {
-      if (!bvid) return cb(null);
-      if (API.view.has(bvid)) return cb(API.view.get(bvid));
-      apiEnqueue((done) => {
-        gmGet("https://api.bilibili.com/x/web-interface/view?bvid=" + encodeURIComponent(bvid), (j) => {
-          const d = j && j.code === 0 ? j.data : null;
-          API.view.set(bvid, d);
-          if (d && d.owner && d.owner.mid && d.owner.name) {
-            CONFIG.uidNames[String(d.owner.mid)] = d.owner.name;
-            scheduleSave();
-          }
-          cb(d);
-          done();
-        });
-      });
-    }
-    function fetchTags(bvid, cb) {
-      if (!bvid) return cb(null);
-      if (API.tag.has(bvid)) return cb(API.tag.get(bvid));
-      apiEnqueue((done) => {
-        gmGet("https://api.bilibili.com/x/web-interface/view/detail/tag?bvid=" + encodeURIComponent(bvid), (j) => {
-          const arr = j && j.code === 0 && Array.isArray(j.data) ? j.data.map((x) => x.tag_name).filter(Boolean) : null;
-          API.tag.set(bvid, arr);
-          cb(arr);
-          done();
-        });
-      });
-    }
-    function fetchCard(mid, cb) {
-      if (!mid) return cb(null);
-      if (API.card.has(mid)) return cb(API.card.get(mid));
-      apiEnqueue((done) => {
-        gmGet("https://api.bilibili.com/x/web-interface/card?mid=" + encodeURIComponent(mid), (j) => {
-          const d = j && j.code === 0 ? j.data : null;
-          API.card.set(mid, d);
-          cb(d);
-          done();
-        });
-      });
-    }
-    function cachedUid(bvid) {
-      const d = bvid && API.view.get(bvid);
-      return d && d.owner && d.owner.mid ? String(d.owner.mid) : "";
-    }
-    const FEED_HOOKS = [
-      { re: /\/x\/web-interface\/wbi\/index\/top\/feed\/rcmd/, get: (d) => d && Array.isArray(d.item) ? d.item : null },
-      { re: /\/x\/web-interface\/index\/top\/feed\/rcmd/, get: (d) => d && Array.isArray(d.item) ? d.item : null },
-      { re: /\/x\/web-interface\/ranking\/v2/, get: (d) => d && Array.isArray(d.list) ? d.list : null },
-      { re: /\/x\/web-interface\/popular(\/|\?|$)/, get: (d) => d && Array.isArray(d.list) ? d.list : null },
-      { re: /\/x\/web-interface\/archive\/related/, get: (d) => Array.isArray(d) ? d : null },
-      // 搜索页：type=视频 时 data.result 直接是视频数组；综合(all/v2) 时 data.result 是分组，取 result_type==='video' 的 data
-      {
-        re: /\/x\/web-interface\/wbi\/search\/(type|all\/v2)/,
-        get: (d) => {
-          if (!d || !Array.isArray(d.result)) return null;
-          if (d.result.length && d.result[0] && d.result[0].result_type) {
-            const g = d.result.find((x) => x.result_type === "video");
-            return g && Array.isArray(g.data) ? g.data : null;
-          }
-          return d.result;
-        }
-      }
-    ];
-    const isFeedUrl = (url) => !!url && FEED_HOOKS.some((h) => h.re.test(url));
-    function filterFeedJson(url, json) {
-      if (!CONFIG.enabled || CONFIG.reviewMode || !json || json.code !== 0 || !json.data) return 0;
-      const hook = FEED_HOOKS.find((h) => h.re.test(url));
-      if (!hook) return 0;
-      const arr = hook.get(json.data);
-      if (!arr || !arr.length) return 0;
-      let removed = 0;
-      for (let i = arr.length - 1; i >= 0; i--) {
-        const info = normFeedItem(arr[i]);
-        if (!info) continue;
-        const reason = matchRule(info);
-        if (reason) {
-          recordBlock(reason, info, "NET");
-          arr.splice(i, 1);
-          removed++;
-        }
-      }
-      if (removed) log(`拦截层 删除 ${removed} 项 @ ${url.split("?")[0]}`);
-      return removed;
-    }
-    const NET = /* @__PURE__ */ (() => {
-      const preFns = [];
-      const postFns = [];
-      return {
-        addPre: (fn) => preFns.push(fn),
-        addPost: (fn) => postFns.push(fn),
-        hasPre: () => preFns.length > 0,
-        rewriteUrl(url) {
-          let u = url;
-          for (const fn of preFns) {
-            try {
-              const r = fn(u);
-              if (typeof r === "string" && r) u = r;
-            } catch (e) {
-            }
-          }
-          return u;
-        },
-        runJson(url, json) {
-          let removed = 0;
-          for (const fn of postFns) {
-            try {
-              removed += fn(url, json) || 0;
-            } catch (e) {
-            }
-          }
-          return removed;
-        }
-      };
-    })();
-    NET.addPost(filterFeedJson);
-    NET.addPre((url) => {
-      if (!CONFIG.boostFeedLoad) return;
-      if (/\/x\/web-interface\/(wbi\/)?index\/top\/feed\/rcmd/.test(url) && /[?&]ps=\d+/.test(url)) {
-        return url.replace(/([?&]ps=)\d+/, "$130");
-      }
-    });
-    function computeFilteredText(url, raw) {
-      try {
-        const json = JSON.parse(raw);
-        return NET.runJson(url, json) ? JSON.stringify(json) : raw;
-      } catch (e) {
-        return raw;
-      }
-    }
-    function installNetworkHooks() {
-      const W = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
-      const RespCtor = W.Response || Response;
-      if (typeof W.fetch === "function" && !W.fetch.__bfb) {
-        const origFetch = W.fetch;
-        const wrapped = function(input, init) {
-          let input2 = input;
-          if (NET.hasPre() && typeof input === "string") input2 = NET.rewriteUrl(input);
-          const url = typeof input2 === "string" ? input2 : input2 && input2.url || "";
-          const p = origFetch.call(this, input2, init);
-          if (!isFeedUrl(url)) return p;
-          return p.then(
-            (resp) => resp.clone().json().then((json) => {
-              if (!NET.runJson(url, json)) return resp;
-              const h = new Headers(resp.headers);
-              h.delete("content-encoding");
-              h.delete("content-length");
-              return new RespCtor(JSON.stringify(json), { status: resp.status, statusText: resp.statusText, headers: h });
-            }).catch(() => resp)
-          );
-        };
-        wrapped.__bfb = true;
-        try {
-          W.fetch = wrapped;
-        } catch (e) {
-        }
-      }
-      const XHR = W.XMLHttpRequest;
-      if (XHR && XHR.prototype && !XHR.prototype.__bfb) {
-        const origOpen = XHR.prototype.open;
-        const dText = Object.getOwnPropertyDescriptor(XHR.prototype, "responseText");
-        const dResp = Object.getOwnPropertyDescriptor(XHR.prototype, "response");
-        XHR.prototype.open = function(method, url) {
-          const self = this;
-          const url2 = NET.hasPre() && typeof url === "string" ? NET.rewriteUrl(url) : url;
-          if (isFeedUrl(url2)) {
-            const filteredText = (getRaw) => {
-              if (self.__bfbText === void 0) self.__bfbText = computeFilteredText(url2, getRaw());
-              return self.__bfbText;
-            };
-            if (dText && dText.get) {
-              Object.defineProperty(self, "responseText", {
-                configurable: true,
-                get() {
-                  if (self.readyState !== 4) return dText.get.call(self);
-                  return filteredText(() => dText.get.call(self));
-                }
-              });
-            }
-            if (dResp && dResp.get) {
-              Object.defineProperty(self, "response", {
-                configurable: true,
-                get() {
-                  if (self.readyState !== 4) return dResp.get.call(self);
-                  const rt = self.responseType;
-                  if (rt === "json") {
-                    if (self.__bfbResp === void 0) {
-                      const orig = dResp.get.call(self);
-                      try {
-                        if (orig && typeof orig === "object") NET.runJson(url2, orig);
-                        self.__bfbResp = orig;
-                      } catch (e) {
-                        self.__bfbResp = orig;
-                      }
-                    }
-                    return self.__bfbResp;
-                  }
-                  if (rt === "" || rt === "text") {
-                    const orig = dResp.get.call(self);
-                    return typeof orig === "string" ? filteredText(() => orig) : orig;
-                  }
-                  return dResp.get.call(self);
-                }
-              });
-            }
-          }
-          return origOpen.call(this, method, url2, arguments.length > 2 ? arguments[2] : true, arguments[3], arguments[4]);
-        };
-        XHR.prototype.__bfb = true;
-      }
-    }
     function installShadowHook() {
       if (Element.prototype.attachShadow.__bfb) return;
       const orig = Element.prototype.attachShadow;
@@ -1138,28 +1258,8 @@
       } catch (e) {
       }
     }
-    const blockedLog = [];
     const countedEls = /* @__PURE__ */ new WeakSet();
-    function tallyLog() {
-      const t = {};
-      for (const b of blockedLog) t[b.reason] = (t[b.reason] || 0) + 1;
-      return t;
-    }
     let panelStatsRefresh = null;
-    function logBlocked(reason, info, src) {
-      blockedLog.unshift({
-        title: info && info.title || "",
-        up: info && info.up || "",
-        uid: info && info.uid || "",
-        bvid: info && info.bvid || "",
-        link: info && info.link || "",
-        src: src || "DOM",
-        // NET=网络拦截层（渲染前删项）/ DOM=兜底隐藏
-        reason,
-        t: Date.now()
-      });
-      if (blockedLog.length > 300) blockedLog.pop();
-    }
     function clearVisual(card) {
       card.style.display = "";
       card.classList.remove("bfb-review");
@@ -1194,15 +1294,6 @@
         tag.appendChild(pass);
       }
       card.appendChild(tag);
-    }
-    function recordBlock(reason, info, src) {
-      logBlocked(reason, info, src);
-      sessionBlocked++;
-      CONFIG.blockedCount++;
-      if (document.body) updateBadge();
-      if (panelStatsRefresh && isPanelOpen()) panelStatsRefresh();
-      scheduleSave();
-      log(`拦截🚫 ${reason} ${info && info.up ? info.up + " · " : ""}${info && info.title || "(无标题)"}`);
     }
     function blockVideo(card, reason, info) {
       if (CONFIG.reviewMode) {
@@ -1276,21 +1367,6 @@
           pending--;
           finish();
         });
-      }
-    }
-    const shadowRoots = /* @__PURE__ */ new Set();
-    function harvestShadowRoots(root) {
-      if (!root || !root.querySelectorAll) return;
-      let nodes;
-      try {
-        nodes = root.querySelectorAll("*");
-      } catch (e) {
-        return;
-      }
-      for (const el of nodes) {
-        if (el.shadowRoot && el.id !== "bfb-overlay-host" && !shadowRoots.has(el.shadowRoot)) {
-          shadowRoots.add(el.shadowRoot);
-        }
       }
     }
     function queryCards() {
@@ -1797,7 +1873,7 @@
           blockVideo(card, "手动", info);
         }
       });
-      items.push({ label: "⚙️ 打开设置面板", act: openPanel });
+      items.push({ label: "⚙️ 打开设置面板", act: openPanel2 });
       renderCtxMenu(e, items);
     }
     function renderCtxMenu(e, items) {
@@ -1981,34 +2057,6 @@
     @keyframes bfb-fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
     #bfb-panel .grp-tip{padding:8px 16px;font-size:11px;color:#aaa;background:#fafafa;border-bottom:1px solid #f0f0f0}
   `);
-    function updateBadge() {
-      let b = document.getElementById("bfb-badge");
-      if (!b) {
-        b = document.createElement("div");
-        b.id = "bfb-badge";
-        b.title = "点击打开设置";
-        b.onclick = openPanel;
-        document.body.appendChild(b);
-      }
-      b.classList.toggle("off", !CONFIG.enabled);
-      b.textContent = CONFIG.enabled ? `🛡 已拦截 ${sessionBlocked}（共${CONFIG.blockedCount}）` : "🛡 已暂停";
-    }
-    function toastContainer() {
-      let c = document.getElementById("bfb-toasts");
-      if (!c) {
-        c = document.createElement("div");
-        c.id = "bfb-toasts";
-        document.body.appendChild(c);
-      }
-      return c;
-    }
-    function toast(msg) {
-      const t = document.createElement("div");
-      t.className = "bfb-toast";
-      t.textContent = msg;
-      toastContainer().appendChild(t);
-      setTimeout(() => t.remove(), 4e3);
-    }
     const collapseState = {};
     let activeTab = "base";
     function renderListField(host, o) {
@@ -2907,7 +2955,7 @@
       G.tools.appendChild(tool);
       tool.querySelector("#bfb-clearcount").onclick = () => {
         CONFIG.blockedCount = 0;
-        sessionBlocked = 0;
+        setSessionBlocked(0);
         blockedLog.length = 0;
         saveConfig();
         updateBadge();
@@ -3003,7 +3051,7 @@
       const p = panelEl();
       return !!(p && p.classList.contains("open"));
     }
-    function openPanel() {
+    function openPanel2() {
       buildPanel();
       const p = panelEl();
       renderPanel(p);
@@ -3086,7 +3134,7 @@
         const top = Object.entries(tallyLog()).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, v]) => `${k}×${v}`).join("、");
         toast(`🛡 本次加载已拦截 ${sessionBlocked} 个：${top}（点右下角🛡看明细 / 放行）`);
       }, 3500);
-      GM_registerMenuCommand("打开设置面板", openPanel);
+      GM_registerMenuCommand("打开设置面板", openPanel2);
       GM_registerMenuCommand("暂停/启用拦截", () => {
         CONFIG.enabled = !CONFIG.enabled;
         saveConfig();

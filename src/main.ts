@@ -16,6 +16,13 @@ import { parseSubscription, SUB_DIMS } from './subscriptions/parse';
 import { loadSubStore, saveSubStore } from './subscriptions/store';
 import { extractCardInfo, normFeedItem, configureCardDetect } from './cardinfo';
 import { M, ruleVersion, rebuildRules, isWhitelisted, matchRule, matchApi, apiNeeds, apiRulesActive, buildApiCtx, buildMatchers, SYNC_DIMS, API_DIMS } from './match/engine';
+import { IS_SEARCH, IS_DYNAMIC, pageType, VIDEO_CARD_SELECTOR, cellOf, isUnsafeHideTarget } from './page';
+import { riskGuard, fetchView, fetchTags, fetchCard, cachedUid } from './api';
+import { installNetworkHooks } from './net';
+import { shadowRoots, harvestShadowRoots } from './dom/shadow';
+import { blockedLog, sessionBlocked, setSessionBlocked, tallyLog, logBlocked, recordBlock, setStatsListener } from './stats';
+import { updateBadge, toast } from './ui/toast';
+import { setPanelHooks } from './ui/hooks';
 /*
  * 架构（拦截优先 + DOM 兜底）：
  *   1. 拦截层（主）：document-start 时 hook fetch / XHR，被动过滤 B 站自身请求的 JSON 列表
@@ -41,7 +48,17 @@ import { M, ruleVersion, rebuildRules, isWhitelisted, matchRule, matchApi, apiNe
   // 匹配引擎 ./match/engine 在自身模块加载时已绑定 fuzzy 取值器并构建首个 M；
   // 此处仅把卡片广告/直播检测开关注入 ./cardinfo（保持 cardinfo 不直接依赖 CONFIG）。
   configureCardDetect(() => ({ detectAd: CONFIG.hideAd, detectLive: CONFIG.hideLiveCard }));
-  let sessionBlocked = 0;
+  // 注入 UI 回调桥：低层模块（stats 等）经此回调到面板/角标，避免 import 面板成环。
+  setPanelHooks({
+    refreshPanelIfOpen: () => refreshPanelIfOpen(),
+    openPanel: () => openPanel(),
+    isPanelOpen: () => isPanelOpen(),
+  });
+  // stats 命中记账后回调：更新角标 + 面板打开时刷新计数（document.body 未就绪时跳过角标）。
+  setStatsListener(() => {
+    if (document.body) updateBadge();
+    if (panelStatsRefresh && isPanelOpen()) panelStatsRefresh();
+  });
 
   /* ===================== 0c. 规则订阅（数据层） ===================== */
   // SUB_DIMS / 文本前缀解析 / sanitizeSubRules / parseSubscription 已抽到 ./subscriptions/parse；
@@ -135,50 +152,7 @@ import { M, ruleVersion, rebuildRules, isWhitelisted, matchRule, matchApi, apiNe
   // fuzzy 开关经 configureFuzzy 注入（在 CONFIG 就绪后、首次 buildMatchers 前绑定，见下）。
 
   /* ===================== 2. 页面模型 ===================== */
-  const IS_SEARCH = location.host === 'search.bilibili.com';
-  const IS_DYNAMIC = location.host === 't.bilibili.com';
-
-  function pageType() {
-    const h = location.href;
-    if (IS_DYNAMIC) return '动态';
-    if (h.includes('/v/popular/rank') || h.includes('/ranking')) return '排行榜';
-    if (h.includes('/v/popular')) return '热门';
-    if (IS_SEARCH) return '搜索页';
-    if (/^https:\/\/www\.bilibili\.com\/?($|\?|#)/.test(h)) return '首页';
-    if (h.includes('/video/')) return '播放页';
-    return '其他';
-  }
-
-  // 「内层视频卡」选择器（兼容首页 / 热门 / 排行榜 / 搜索 / 播放页）
-  const VIDEO_CARD_SELECTOR = [
-    'div.bili-video-card', // 首页 / 分区 / 搜索
-    'div.video-page-card-small', // 播放页右侧推荐
-    'li.bili-rank-list-video__item', // 分区右侧热门
-    'div.video-card', // 综合热门 / 每周必看 / 入站必刷
-    'li.rank-item', // 排行榜
-    'div.video-card-reco',
-    'div.video-card-common',
-    'div.bili-dyn-list__item', // 动态信息流（t.bilibili.com，选择器借鉴 bilibili-cleaner）
-    'div.floor-card.single-card', // 首页信息流里的「直播推荐」单卡（链向 live.bilibili.com）
-  ].join(',');
-
-  // 定位要隐藏的网格格子：显式有序链，避免破坏布局。
-  function cellOf(el) {
-    // 直播推荐卡：外层 .floor-single-card 是带宽高占位的容器，只隐内层会留黑框，故上移到它
-    const fc = el.closest('div.feed-card, div.bili-feed-card, div.floor-single-card');
-    if (fc) return fc;
-    if (IS_SEARCH && el.parentElement && el.parentElement !== document.body) return el.parentElement;
-    return el;
-  }
-  // 护栏：隐藏时别误删大容器/含多卡的元素（会连带删掉加载哨兵）
-  function isUnsafeHideTarget(el) {
-    if (!el || el === document.body || el === document.documentElement) return true;
-    if (el.matches && el.matches('.container, .feed2, .bili-feed4, #i_cecream, #app, .bili-header')) return true;
-    try {
-      if (el.querySelectorAll(VIDEO_CARD_SELECTOR).length > 1) return true;
-    } catch (e) {}
-    return false;
-  }
+  // IS_SEARCH / IS_DYNAMIC / pageType / VIDEO_CARD_SELECTOR / cellOf / isUnsafeHideTarget 已抽到 ./page
 
   /* ===================== 3. 卡片信息抽取 ===================== */
   // pickText / extractCardInfo / normFeedItem 已抽到 ./cardinfo（见顶部 import）。
@@ -189,335 +163,12 @@ import { M, ruleVersion, rebuildRules, isWhitelisted, matchRule, matchApi, apiNe
   // SYNC_DIMS / API_DIMS / matchRule / matchApi / apiNeeds / apiRulesActive / buildApiCtx（见顶部 import）。
   // 维度注册表（SYNC_DIMS/API_DIMS）即扩展点：加维度=往对应数组加一条，三处派生自动生效。
 
-  /* ===================== 4b. 接口层（缓存 + 限速队列 + 风控熔断，避免频繁请求） ===================== */
-  // 风控熔断：B 站返回风控码时全局暂停联网并指数退避，保护账号（API 取数 + 批量拉黑共用）。
-  // RISK_CODES 已抽到 ./constants
-  const riskGuard = {
-    until: 0,
-    strikes: 0,
-    blocked() {
-      return Date.now() < this.until;
-    },
-    remaining() {
-      return Math.max(0, this.until - Date.now());
-    },
-    // 任何联网响应都喂进来：风控码→升级退避；正常码→冷却期过后清零
-    note(code) {
-      if (!RISK_CODES.has(code)) {
-        if (code === 0 && this.strikes && !this.blocked()) this.strikes = 0;
-        return;
-      }
-      const wasBlocked = this.blocked();
-      this.strikes = Math.min(this.strikes + 1, 6);
-      const backoff = Math.min(60000, 2000 * 2 ** (this.strikes - 1)); // 2s→4s→…→封顶 60s
-      this.until = Date.now() + backoff;
-      if (!wasBlocked) {
-        logErr('风控熔断', `code ${code}，暂停联网 ${Math.round(backoff / 1000)}s`);
-        toast(`⚠️ 触发 B 站风控(code ${code})，已暂停联网 ${Math.round(backoff / 1000)} 秒以保护账号`);
-      }
-    },
-  };
-
-  // 小并发 + 较短冷却：兼顾速度与风控。每个请求完成后冷却 DELAY 再释放并发位。
-  const API = { view: new Map(), tag: new Map(), card: new Map(), queue: [], active: 0, waiting: false, CONCURRENCY: 3, DELAY: 120 };
-  function apiPump() {
-    // 熔断中：不派发新请求，等退避窗口结束再恢复（已入队任务保持排队，不丢）
-    if (riskGuard.blocked()) {
-      if (!API.waiting) {
-        API.waiting = true;
-        setTimeout(() => {
-          API.waiting = false;
-          apiPump();
-        }, riskGuard.remaining() + 50);
-      }
-      return;
-    }
-    while (API.active < API.CONCURRENCY && API.queue.length) {
-      const task = API.queue.shift();
-      API.active++;
-      task(() => {
-        setTimeout(() => {
-          API.active--;
-          apiPump();
-        }, API.DELAY);
-      });
-    }
-  }
-  function apiEnqueue(task) {
-    API.queue.push(task);
-    apiPump();
-  }
-  function gmGet(url, cb) {
-    if (typeof GM_xmlhttpRequest !== 'function') {
-      cb(null);
-      return;
-    }
-    GM_xmlhttpRequest({
-      method: 'GET',
-      url,
-      withCredentials: true,
-      timeout: 12000,
-      onload: (r) => {
-        try {
-          const j = JSON.parse(r.responseText);
-          riskGuard.note(j && j.code); // 风控码喂给熔断器
-          cb(j);
-        } catch (e) {
-          cb(null);
-        }
-      },
-      onerror: () => cb(null),
-      ontimeout: () => cb(null),
-    });
-  }
-  function fetchView(bvid, cb) {
-    if (!bvid) return cb(null);
-    if (API.view.has(bvid)) return cb(API.view.get(bvid));
-    apiEnqueue((done) => {
-      gmGet('https://api.bilibili.com/x/web-interface/view?bvid=' + encodeURIComponent(bvid), (j) => {
-        const d = j && j.code === 0 ? j.data : null;
-        API.view.set(bvid, d); // d.owner.mid 即可反查 uid，无需另设缓存
-        if (d && d.owner && d.owner.mid && d.owner.name) {
-          CONFIG.uidNames[String(d.owner.mid)] = d.owner.name; // 持久化：面板按名展示
-          scheduleSave();
-        }
-        cb(d);
-        done();
-      });
-    });
-  }
-  function fetchTags(bvid, cb) {
-    if (!bvid) return cb(null);
-    if (API.tag.has(bvid)) return cb(API.tag.get(bvid));
-    apiEnqueue((done) => {
-      gmGet('https://api.bilibili.com/x/web-interface/view/detail/tag?bvid=' + encodeURIComponent(bvid), (j) => {
-        const arr = j && j.code === 0 && Array.isArray(j.data) ? j.data.map((x) => x.tag_name).filter(Boolean) : null;
-        API.tag.set(bvid, arr);
-        cb(arr);
-        done();
-      });
-    });
-  }
-  function fetchCard(mid, cb) {
-    if (!mid) return cb(null);
-    if (API.card.has(mid)) return cb(API.card.get(mid));
-    apiEnqueue((done) => {
-      gmGet('https://api.bilibili.com/x/web-interface/card?mid=' + encodeURIComponent(mid), (j) => {
-        const d = j && j.code === 0 ? j.data : null;
-        API.card.set(mid, d);
-        cb(d);
-        done();
-      });
-    });
-  }
-  // 从 view 缓存里同步取 uid（已请求过的 bvid 才有；否则返回空串）
-  function cachedUid(bvid) {
-    const d = bvid && API.view.get(bvid);
-    return d && d.owner && d.owner.mid ? String(d.owner.mid) : '';
-  }
+  /* ===================== 4b. 接口层（缓存 + 限速队列 + 风控熔断） ===================== */
+  // 已抽到 ./api：riskGuard / fetchView / fetchTags / fetchCard / cachedUid（见顶部 import）
 
   /* ===================== 4c. 网络拦截层（数据层过滤，主路径） ===================== */
-  // hook fetch / XHR，被动过滤 B 站自身请求的 JSON 列表：把命中本地规则的项从数组删掉，
-  // 让页面只渲染保留项。只读不发——不重发请求、不需 WBI 签名、不触发风控。
-  // 进阶维度（标签 / 简介 / 等级，需额外接口）与首屏 SSR 漏网仍由 DOM 兜底层处理。
-
-  // normFeedItem 已抽到 ./cardinfo（见顶部 import）
-
-  // 接口注册：re=URL 匹配，get=从 data 里取出可过滤的数组（就地 splice 即生效）
-  const FEED_HOOKS = [
-    { re: /\/x\/web-interface\/wbi\/index\/top\/feed\/rcmd/, get: (d) => (d && Array.isArray(d.item) ? d.item : null) },
-    { re: /\/x\/web-interface\/index\/top\/feed\/rcmd/, get: (d) => (d && Array.isArray(d.item) ? d.item : null) },
-    { re: /\/x\/web-interface\/ranking\/v2/, get: (d) => (d && Array.isArray(d.list) ? d.list : null) },
-    { re: /\/x\/web-interface\/popular(\/|\?|$)/, get: (d) => (d && Array.isArray(d.list) ? d.list : null) },
-    { re: /\/x\/web-interface\/archive\/related/, get: (d) => (Array.isArray(d) ? d : null) },
-    // 搜索页：type=视频 时 data.result 直接是视频数组；综合(all/v2) 时 data.result 是分组，取 result_type==='video' 的 data
-    {
-      re: /\/x\/web-interface\/wbi\/search\/(type|all\/v2)/,
-      get: (d) => {
-        if (!d || !Array.isArray(d.result)) return null;
-        if (d.result.length && d.result[0] && d.result[0].result_type) {
-          const g = d.result.find((x) => x.result_type === 'video');
-          return g && Array.isArray(g.data) ? g.data : null;
-        }
-        return d.result;
-      },
-    },
-  ];
-  const isFeedUrl = (url) => !!url && FEED_HOOKS.some((h) => h.re.test(url));
-
-  // 就地过滤一个已解析的 JSON 响应：命中项从 json.data 的数组里原地 splice 删除。
-  // 返回删除条数（0 表示未改动），调用方据此决定是否需要重建响应/重序列化。
-  function filterFeedJson(url, json) {
-    // 审查模式下不在数据层删项，让视频照常渲染，交给 DOM 层标记，便于核对
-    if (!CONFIG.enabled || CONFIG.reviewMode || !json || json.code !== 0 || !json.data) return 0;
-    const hook = FEED_HOOKS.find((h) => h.re.test(url));
-    if (!hook) return 0;
-    const arr = hook.get(json.data);
-    if (!arr || !arr.length) return 0;
-    let removed = 0;
-    for (let i = arr.length - 1; i >= 0; i--) {
-      const info = normFeedItem(arr[i]);
-      if (!info) continue; // 白名单由 matchRule 内部短路，无需在此重复判断
-      const reason = matchRule(info);
-      if (reason) {
-        recordBlock(reason, info, 'NET');
-        arr.splice(i, 1);
-        removed++;
-      }
-    }
-    if (removed) log(`拦截层 删除 ${removed} 项 @ ${url.split('?')[0]}`);
-    return removed;
-  }
-  // ===== 可插拔网络管线（借鉴 cleaner FetchHook，但以「JSON 原地过滤」为中心，fetch 与 XHR 共用一套）=====
-  // preFn:  (url:string) => newUrl|void   —— 渲染前改写请求 URL（仅处理字符串 URL）
-  // postFn: (url, json)  => removedCount  —— 原地修改解析后的 JSON，返回删除条数
-  const NET = (() => {
-    const preFns = [];
-    const postFns = [];
-    return {
-      addPre: (fn) => preFns.push(fn),
-      addPost: (fn) => postFns.push(fn),
-      hasPre: () => preFns.length > 0,
-      rewriteUrl(url) {
-        let u = url;
-        for (const fn of preFns) {
-          try {
-            const r = fn(u);
-            if (typeof r === 'string' && r) u = r;
-          } catch (e) {}
-        }
-        return u;
-      },
-      runJson(url, json) {
-        let removed = 0;
-        for (const fn of postFns) {
-          try {
-            removed += fn(url, json) || 0;
-          } catch (e) {}
-        }
-        return removed;
-      },
-    };
-  })();
-
-  // 注册唯一的内容过滤 postFn（即原 filterFeedJson）；以后新增过滤器只需再 addPost 一条。
-  NET.addPost(filterFeedJson);
-  // 注册「增大首页推荐请求数」preFn（默认关，opt-in）：拦截层会删项，调大 ps 可让信息流删后仍饱满。
-  NET.addPre((url) => {
-    if (!CONFIG.boostFeedLoad) return;
-    if (/\/x\/web-interface\/(wbi\/)?index\/top\/feed\/rcmd/.test(url) && /[?&]ps=\d+/.test(url)) {
-      return url.replace(/([?&]ps=)\d+/, '$1' + 30);
-    }
-  });
-
-  // 过滤文本响应：无删项时原样返回 raw（省一次序列化、且保持字节一致）
-  function computeFilteredText(url, raw) {
-    try {
-      const json = JSON.parse(raw);
-      return NET.runJson(url, json) ? JSON.stringify(json) : raw;
-    } catch (e) {
-      return raw;
-    }
-  }
-
-  function installNetworkHooks() {
-    const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-
-    // —— fetch —— 
-    const RespCtor = W.Response || Response;
-    if (typeof W.fetch === 'function' && !W.fetch.__bfb) {
-      const origFetch = W.fetch;
-      const wrapped = function (input, init) {
-        // 请求改写（preFn）：仅当输入是字符串 URL 时处理，避免重建 Request 对象的副作用
-        let input2 = input;
-        if (NET.hasPre() && typeof input === 'string') input2 = NET.rewriteUrl(input);
-        const url = typeof input2 === 'string' ? input2 : (input2 && input2.url) || '';
-        const p = origFetch.call(this, input2, init);
-        if (!isFeedUrl(url)) return p;
-        return p.then((resp) =>
-          resp
-            .clone()
-            .json()
-            .then((json) => {
-              // 无命中删项：原样返回真实响应，保留 url/type/redirected 等元信息，且不重序列化
-              if (!NET.runJson(url, json)) return resp;
-              // 有删项才重建响应：剔除 content-encoding/length（正文已是明文 JSON，旧头会误导消费者）
-              const h = new Headers(resp.headers);
-              h.delete('content-encoding');
-              h.delete('content-length');
-              return new RespCtor(JSON.stringify(json), { status: resp.status, statusText: resp.statusText, headers: h });
-            })
-            .catch(() => resp)
-        );
-      };
-      wrapped.__bfb = true;
-      try {
-        W.fetch = wrapped;
-      } catch (e) {}
-    }
-
-    // —— XMLHttpRequest —— 在 open 时给目标请求实例装上惰性 getter，
-    // 读取时（readyState 4）才解析+过滤，规避页面处理器先于我们读取的时序问题。
-    const XHR = W.XMLHttpRequest;
-    if (XHR && XHR.prototype && !XHR.prototype.__bfb) {
-      const origOpen = XHR.prototype.open;
-      const dText = Object.getOwnPropertyDescriptor(XHR.prototype, 'responseText');
-      const dResp = Object.getOwnPropertyDescriptor(XHR.prototype, 'response');
-      XHR.prototype.open = function (method, url) {
-        const self = this;
-        // 请求改写（preFn）：仅处理字符串 URL
-        const url2 = NET.hasPre() && typeof url === 'string' ? NET.rewriteUrl(url) : url;
-        if (isFeedUrl(url2)) {
-          // 同一次响应只过滤一次：responseText 与 response(text 型) 共用这份文本 memo，
-          // 避免消费者同时读两者时过滤跑两遍、导致计数与屏蔽记录翻倍。
-          const filteredText = (getRaw) => {
-            if (self.__bfbText === undefined) self.__bfbText = computeFilteredText(url2, getRaw());
-            return self.__bfbText;
-          };
-          if (dText && dText.get) {
-            Object.defineProperty(self, 'responseText', {
-              configurable: true,
-              get() {
-                if (self.readyState !== 4) return dText.get.call(self);
-                return filteredText(() => dText.get.call(self));
-              },
-            });
-          }
-          if (dResp && dResp.get) {
-            Object.defineProperty(self, 'response', {
-              configurable: true,
-              get() {
-                if (self.readyState !== 4) return dResp.get.call(self);
-                const rt = self.responseType;
-                // json 型只能读 .response（读 responseText 会抛错），单独 memo 一份对象
-                if (rt === 'json') {
-                  if (self.__bfbResp === undefined) {
-                    const orig = dResp.get.call(self);
-                    try {
-                      if (orig && typeof orig === 'object') NET.runJson(url2, orig); // 原地删项
-                      self.__bfbResp = orig;
-                    } catch (e) {
-                      self.__bfbResp = orig;
-                    }
-                  }
-                  return self.__bfbResp;
-                }
-                // text/'' 型：与 responseText 共用同一份文本 memo
-                if (rt === '' || rt === 'text') {
-                  const orig = dResp.get.call(self);
-                  return typeof orig === 'string' ? filteredText(() => orig) : orig;
-                }
-                return dResp.get.call(self);
-              },
-            });
-          }
-        }
-        // 用改写后的 url2 调原始 open（保留 async/user/password 透传）
-        return origOpen.call(this, method, url2, arguments.length > 2 ? arguments[2] : true, arguments[3], arguments[4]);
-      };
-      XHR.prototype.__bfb = true;
-    }
-  }
+  // FEED_HOOKS / isFeedUrl / filterFeedJson / NET 管线 / computeFilteredText / installNetworkHooks
+  // 已抽到 ./net（见顶部 import）。installShadowHook 因依赖 comments/shadow，留在 bootstrap。
 
   // hook Element.prototype.attachShadow：把页面创建的每个开放 shadowRoot 收进注册表（评论组件定位、卡片穿透共用）。
   // 必须在 document-start 安装，先于 B 站构建评论 Web Component。借鉴 bilibili-cleaner Shadow.hook。
@@ -540,29 +191,9 @@ import { M, ruleVersion, rebuildRules, isWhitelisted, matchRule, matchApi, apiNe
 
   /* ===================== 5. 拦截执行 ===================== */
   // PROCESSED 已抽到 ./constants
-  const blockedLog = [];
-  const countedEls = new WeakSet();
-  // 按拦截原因聚合计数，供面板「分类」与启动汇总共用
-  function tallyLog() {
-    const t = {};
-    for (const b of blockedLog) t[b.reason] = (t[b.reason] || 0) + 1;
-    return t;
-  }
-  let panelStatsRefresh = null; // 面板打开时的"屏蔽记录"刷新器，命中时实时更新计数
-
-  function logBlocked(reason, info, src) {
-    blockedLog.unshift({
-      title: (info && info.title) || '',
-      up: (info && info.up) || '',
-      uid: (info && info.uid) || '',
-      bvid: (info && info.bvid) || '',
-      link: (info && info.link) || '',
-      src: src || 'DOM', // NET=网络拦截层（渲染前删项）/ DOM=兜底隐藏
-      reason,
-      t: Date.now(),
-    });
-    if (blockedLog.length > 300) blockedLog.pop();
-  }
+  // blockedLog / tallyLog / logBlocked / recordBlock / sessionBlocked 已抽到 ./stats（见顶部 import）
+  const countedEls = new WeakSet(); // DOM 兜底「已计数」去重（属 DOM 层，留待 L4 随 dom 一起抽）
+  let panelStatsRefresh = null; // 面板打开时的「屏蔽记录」刷新器（renderPanel 注册，stats 监听器读取）
 
   // 撤销 DOM 层对某卡的隐藏 / 审查标记（规则变更后重扫时调用）
   function clearVisual(card) {
@@ -603,16 +234,7 @@ import { M, ruleVersion, rebuildRules, isWhitelisted, matchRule, matchApi, apiNe
     card.appendChild(tag);
   }
 
-  // 记账：计数 + 日志 + 角标 + 面板刷新。拦截层（无 card）与 DOM 层共用。
-  function recordBlock(reason, info, src) {
-    logBlocked(reason, info, src);
-    sessionBlocked++;
-    CONFIG.blockedCount++;
-    if (document.body) updateBadge(); // document-start 时 body 可能还没就绪
-    if (panelStatsRefresh && isPanelOpen()) panelStatsRefresh();
-    scheduleSave();
-    log(`拦截🚫 ${reason} ${info && info.up ? info.up + ' · ' : ''}${(info && info.title) || '(无标题)'}`);
-  }
+  // recordBlock 已抽到 ./stats（命中后经 setStatsListener 回调更新角标 / 面板）
 
   // DOM 兜底层：审查模式标记、否则直接隐藏漏网卡。主路径由网络拦截层在渲染前就删除。
   function blockVideo(card, reason, info) {
@@ -698,21 +320,7 @@ import { M, ruleVersion, rebuildRules, isWhitelisted, matchRule, matchApi, apiNe
 
   // 已知的开放 Shadow Root 注册表：部分卡片可能渲染在 shadow DOM 内，普通 querySelectorAll 选不中。
   // 启动时全量采集一次，之后只在 MutationObserver 的新增节点子树里增量采集，避免每次扫描全量遍历（借鉴 codertesla queryAllDeep）。
-  const shadowRoots = new Set();
-  function harvestShadowRoots(root) {
-    if (!root || !root.querySelectorAll) return;
-    let nodes;
-    try {
-      nodes = root.querySelectorAll('*');
-    } catch (e) {
-      return;
-    }
-    for (const el of nodes) {
-      if (el.shadowRoot && el.id !== 'bfb-overlay-host' && !shadowRoots.has(el.shadowRoot)) {
-        shadowRoots.add(el.shadowRoot);
-      }
-    }
-  }
+  // shadowRoots / harvestShadowRoots 已抽到 ./dom/shadow（见顶部 import）
   // 普通 DOM 卡片 ∪ 各存活 shadow root 内的卡片
   function queryCards() {
     const out = Array.from(document.querySelectorAll(VIDEO_CARD_SELECTOR));
@@ -1477,35 +1085,7 @@ import { M, ruleVersion, rebuildRules, isWhitelisted, matchRule, matchApi, apiNe
     #bfb-panel .grp-tip{padding:8px 16px;font-size:11px;color:#aaa;background:#fafafa;border-bottom:1px solid #f0f0f0}
   `);
 
-  function updateBadge() {
-    let b = document.getElementById('bfb-badge');
-    if (!b) {
-      b = document.createElement('div');
-      b.id = 'bfb-badge';
-      b.title = '点击打开设置';
-      b.onclick = openPanel;
-      document.body.appendChild(b);
-    }
-    b.classList.toggle('off', !CONFIG.enabled);
-    b.textContent = CONFIG.enabled ? `🛡 已拦截 ${sessionBlocked}（共${CONFIG.blockedCount}）` : '🛡 已暂停';
-  }
-
-  function toastContainer() {
-    let c = document.getElementById('bfb-toasts');
-    if (!c) {
-      c = document.createElement('div');
-      c.id = 'bfb-toasts';
-      document.body.appendChild(c);
-    }
-    return c;
-  }
-  function toast(msg) {
-    const t = document.createElement('div');
-    t.className = 'bfb-toast';
-    t.textContent = msg;
-    toastContainer().appendChild(t);
-    setTimeout(() => t.remove(), 4000);
-  }
+  // updateBadge / toast / toastContainer 已抽到 ./ui/toast（见顶部 import）
 
   // 记住每个字段的折叠状态（renderPanel 重建时保留）
   const collapseState = {};
@@ -2471,7 +2051,7 @@ import { M, ruleVersion, rebuildRules, isWhitelisted, matchRule, matchApi, apiNe
     G.tools.appendChild(tool);
     tool.querySelector('#bfb-clearcount').onclick = () => {
       CONFIG.blockedCount = 0;
-      sessionBlocked = 0;
+      setSessionBlocked(0);
       blockedLog.length = 0;
       saveConfig();
       updateBadge();
