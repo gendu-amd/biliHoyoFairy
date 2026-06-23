@@ -12,6 +12,10 @@ import { lc, toHalfWidth, escapeRe, INVISIBLE_RE, stripInvisible, SEP_RE, config
 import { CONFIG, DEFAULT_CONFIG, saveConfig, scheduleSave, exportConfig, mergeImport } from './config';
 import { log, logErr, safe } from './logging';
 import { PRESET_LIBRARY } from './presets';
+import { parseSubscription, SUB_DIMS } from './subscriptions/parse';
+import { loadSubStore, saveSubStore } from './subscriptions/store';
+import { extractCardInfo, normFeedItem, configureCardDetect } from './cardinfo';
+import { M, ruleVersion, rebuildRules, isWhitelisted, matchRule, matchApi, apiNeeds, apiRulesActive, buildApiCtx, buildMatchers, SYNC_DIMS, API_DIMS } from './match/engine';
 /*
  * 架构（拦截优先 + DOM 兜底）：
  *   1. 拦截层（主）：document-start 时 hook fetch / XHR，被动过滤 B 站自身请求的 JSON 列表
@@ -33,31 +37,17 @@ import { PRESET_LIBRARY } from './presets';
 
   // COMMENT_BOTS / COMMENT_AD_RE / UNSAFE_KEYS 已抽到 ./constants
 
-  // deepMerge / loadConfig / saveConfig / scheduleSave / exportConfig / mergeImport / CONFIG 已抽到 ./config
-  // CONFIG 在 ./config 模块加载时即 loadConfig()；此处仅在首次 buildMatchers() 前绑定 fuzzy 取值器，
-  // 否则初始匹配器会以 fuzzy=false 编译，首屏反绕过匹配失效。
-  configureFuzzy(() => CONFIG.fuzzyMatch);
+  // deepMerge / loadConfig / saveConfig / scheduleSave / exportConfig / mergeImport / CONFIG 已抽到 ./config（模块加载即就绪）。
+  // 匹配引擎 ./match/engine 在自身模块加载时已绑定 fuzzy 取值器并构建首个 M；
+  // 此处仅把卡片广告/直播检测开关注入 ./cardinfo（保持 cardinfo 不直接依赖 CONFIG）。
+  configureCardDetect(() => ({ detectAd: CONFIG.hideAd, detectLive: CONFIG.hideLiveCard }));
   let sessionBlocked = 0;
 
   /* ===================== 0c. 规则订阅（数据层） ===================== */
-  // 订阅可携带的黑名单维度（白名单/开关/统计一律不接受）；未知维度忽略（向前兼容）
-  const SUB_DIMS = ['uids', 'upNames', 'keywords', 'partitions', 'tags', 'upBio', 'bvids'];
-  // 纯文本行前缀 → 维度；无前缀=关键词；未知前缀忽略。行匹配正则由前缀表派生（单一来源，避免两处重复）
-  const SUB_LINE_PREFIX = { uid: 'uids', up: 'upNames', kw: 'keywords', part: 'partitions', tag: 'tags', bio: 'upBio', bv: 'bvids' };
-  const SUB_PREFIX_RE = new RegExp('^(' + Object.keys(SUB_LINE_PREFIX).join('|') + ')\\s*:\\s*(.+)$', 'i');
+  // SUB_DIMS / 文本前缀解析 / sanitizeSubRules / parseSubscription 已抽到 ./subscriptions/parse；
+  // loadSubStore / saveSubStore / collectSubRules 已抽到 ./subscriptions/store（见顶部 import）。
+  // 以下保留 订阅“刷新/同步”逻辑（联网，属 L4，后续再抽）。
 
-  function loadSubStore() {
-    try {
-      return JSON.parse(GM_getValue(SUB_STORE_KEY, '') || '{}') || {};
-    } catch (e) {
-      return {};
-    }
-  }
-  function saveSubStore(store) {
-    try {
-      GM_setValue(SUB_STORE_KEY, JSON.stringify(store));
-    } catch (e) {}
-  }
   // 元数据大小写不敏感读取（JSON 用 camelCase，文本头可能用任意大小写）
   function metaGet(meta, key) {
     if (!meta) return undefined;
@@ -81,80 +71,6 @@ import { PRESET_LIBRARY } from './presets';
     if (!m) return DAY_MS; // 默认 1 天
     const n = Math.max(1, parseInt(m[1], 10) || 1);
     return n * ((m[2] || 'd').toLowerCase() === 'h' ? 3600e3 : DAY_MS);
-  }
-  // 迁移层：把旧 format 的对象升级到当前结构（v1=identity；将来重命名/改维度在此加 case，旧订阅不破）
-  function migrateSub(obj) {
-    return obj || {};
-  }
-  // 清洗规则维度 → {dim: string[]}：未知维度忽略、去空去重、限量（防超大列表）
-  // 上限按维度区分：Set 精确维度(uid/UP名/bv)查找 O(1)，可承载大名单；正则维度合并成单条正则，保守些。
-  const SUB_CAP = { uids: 50000, upNames: 50000, bvids: 50000 };
-  const SUB_CAP_DEFAULT = 5000;
-  function sanitizeSubRules(rawRules) {
-    const out = {};
-    for (const dim of SUB_DIMS) {
-      const arr = rawRules && rawRules[dim];
-      if (!Array.isArray(arr)) continue;
-      const max = SUB_CAP[dim] || SUB_CAP_DEFAULT;
-      const seen = new Set();
-      const clean = [];
-      for (const x of arr) {
-        if (typeof x !== 'string') continue;
-        const v = x.trim();
-        if (!v || seen.has(v)) continue;
-        seen.add(v);
-        clean.push(v);
-        if (clean.length >= max) break;
-      }
-      if (clean.length) out[dim] = clean;
-    }
-    return out;
-  }
-  // 解析订阅文本 → { meta, rules }；以 { 开头按 JSON，否则按 uBlock 风格纯文本行
-  function parseSubscription(text) {
-    const t = (text || '').trim();
-    if (!t) throw new Error('空内容');
-    if (t[0] === '{') {
-      const obj = migrateSub(JSON.parse(t));
-      const meta = obj && obj.meta && typeof obj.meta === 'object' ? obj.meta : {};
-      // 优先 rules；兼容把「导出的配置文件」直接当订阅（从 config.block 取黑名单维度）
-      let rawRules = obj && obj.rules;
-      if (!rawRules && obj && obj.config && obj.config.block) rawRules = obj.config.block;
-      return { meta, rules: sanitizeSubRules(rawRules) };
-    }
-    const meta = {};
-    const buckets = {};
-    for (let line of t.split(/\r?\n/)) {
-      line = line.trim();
-      if (!line) continue;
-      if (line[0] === '!') {
-        const m = line.slice(1).match(/^\s*([a-zA-Z][\w-]*)\s*:\s*(.+)$/);
-        if (m) meta[m[1]] = m[2].trim();
-        continue; // 其余 ! 行=注释
-      }
-      line = line.replace(/\s+#.*$/, '').trim(); // 行内 # 注释（前有空白）
-      if (!line) continue;
-      const pm = !line.startsWith('/') && line.match(SUB_PREFIX_RE);
-      const dim = pm ? SUB_LINE_PREFIX[pm[1].toLowerCase()] : 'keywords';
-      const val = pm ? pm[2].trim() : line;
-      (buckets[dim] = buckets[dim] || []).push(val);
-    }
-    return { meta, rules: sanitizeSubRules(buckets) };
-  }
-  // 汇总所有【启用】订阅的规则 → {dim: string[]}，供 buildMatchers 并入黑名单
-  function collectSubRules() {
-    const store = loadSubStore();
-    const merged = {};
-    for (const sub of CONFIG.subscriptions || []) {
-      if (!sub || !sub.enabled || !sub.url) continue;
-      const e = store[sub.url];
-      if (!e || !e.ok || !e.rules) continue;
-      for (const dim of SUB_DIMS) {
-        const arr = e.rules[dim];
-        if (Array.isArray(arr) && arr.length) (merged[dim] = merged[dim] || []).push(...arr);
-      }
-    }
-    return merged;
   }
   function fetchSubText(url, cb) {
     if (typeof GM_xmlhttpRequest !== 'function') return cb(null, '无 GM_xmlhttpRequest');
@@ -265,279 +181,13 @@ import { PRESET_LIBRARY } from './presets';
   }
 
   /* ===================== 3. 卡片信息抽取 ===================== */
-  function pickText(card, selectors) {
-    for (const sel of selectors) {
-      const el = card.querySelector(sel);
-      if (el) {
-        const v = el.getAttribute('title') || el.textContent;
-        if (v && v.trim()) return v.trim();
-      }
-    }
-    return '';
-  }
-
-  // deepUid: 是否为缺 UID 的卡做昂贵的 innerHTML 兜底解析（扫描热路径按需，拉黑场景强制 true）
-  function extractCardInfo(card, deepUid = true) {
-    const info = { title: '', up: '', uid: '', partition: '', bvid: '', duration: null, views: null, likes: null, isLive: false, isAd: false };
-
-    info.title = pickText(card, [
-      '.bili-video-card__info--tit',
-      '.video-name',
-      'h3[title]',
-      '.title',
-      '.bili-dyn-card-video__title', // 动态内视频标题
-      '.dyn-card-opus__title', // 动态专栏/图文标题
-      '.bili-dyn-content__orig__desc', // 动态正文（文字动态，便于关键词命中）
-    ]);
-    info.up = pickText(card, [
-      '.bili-video-card__info--author',
-      '.up-name__text',
-      '.up-name',
-      '.bili-video-card__info--owner span',
-      '.upname .name',
-      '.bili-dyn-title__text', // 动态发布者
-    ]);
-
-    // UID（拉黑必需）：space 链接 → data-* → innerHTML 兜底（含纯文本卡内嵌的 "mid":数字）
-    const upA = card.querySelector('a[href*="space.bilibili.com"]');
-    if (upA) info.uid = ((upA.getAttribute('href') || '').match(/space\.bilibili\.com\/(\d+)/) || [])[1] || '';
-    if (!info.uid) {
-      const midEl = card.querySelector('[data-mid],[data-up-mid],[data-user-id]');
-      if (midEl) info.uid = midEl.getAttribute('data-mid') || midEl.getAttribute('data-up-mid') || midEl.getAttribute('data-user-id') || '';
-    }
-    // innerHTML 兜底会序列化整张卡 HTML，开销较大：仅在需要 UID（存在 UID 规则或拉黑场景）且 DOM 没抠到时才走
-    if (!info.uid && deepUid) {
-      info.uid = (card.innerHTML.match(/space\.bilibili\.com\/(\d+)/) || [])[1] || '';
-      if (!info.uid) info.uid = (card.innerHTML.match(/"(?:mid|owner_?id|up_?mid)"\s*:\s*"?(\d{2,})"?/) || [])[1] || '';
-    }
-
-    info.partition = pickText(card, ['.bili-video-card__info--tag', '.rcmd-tag']);
-
-    const aVideo = card.querySelector('a[href*="/video/"]');
-    if (aVideo) {
-      const m = (aVideo.getAttribute('href') || '').match(/(BV[0-9A-Za-z]+)/);
-      if (m) info.bvid = m[1];
-    }
-
-    info.duration = parseDuration(pickText(card, ['.bili-video-card__stats__duration', '.duration', '.bili-dyn-card-video__duration']));
-
-    const statEl = card.querySelector('.bili-video-card__stats--item') || card.querySelector('.play-text');
-    if (statEl) info.views = parseCount(statEl.textContent);
-
-    // 直播识别：服务于「屏蔽直播推荐卡」，并避免把直播误当广告。hideAd / hideLiveCard 任一开启才算（省热路径）。
-    if (CONFIG.hideAd || CONFIG.hideLiveCard) {
-      info.isLive = !!(
-        card.querySelector('a[href*="live.bilibili.com"]') ||
-        card.querySelector('.bili-live-card, [class*="live-card"]') ||
-        /直播中|正在直播/.test(card.textContent || '')
-      );
-    }
-
-    // 广告判定（含遍历全卡 span/div 找角标文案）只服务于「屏蔽广告卡」，hideAd 关时整段跳过，省热路径开销。
-    if (CONFIG.hideAd) {
-      const adBadge = Array.from(card.querySelectorAll('span,div')).some((el) => {
-        const tx = (el.textContent || '').trim();
-        return tx === '广告' || tx === '赞助' || tx === '推广';
-      });
-      // 仅用稳定的广告标识判定：官方广告类名 / 投流域名 / 运营推广链接 / 显式角标文案。
-      // （早期版本曾用「class 字符串完全等于 'bili-video-card is-rcmd' + 全局缺某容器」启发式，
-      //   极易随 B 站改版误杀正常推荐卡，已移除。）
-      info.isAd = !info.isLive && !!(
-        card.querySelector('.bili-video-card__info--ad') ||
-        card.querySelector('a[href*="cm.bilibili.com"]') ||
-        card.querySelector('a[href*="//mall.bilibili.com"]') ||
-        card.querySelector('a[href*="specialRecommendByOp"]') ||
-        adBadge
-      );
-    }
-
-    return info;
-  }
+  // pickText / extractCardInfo / normFeedItem 已抽到 ./cardinfo（见顶部 import）。
+  // 广告/直播检测开关经 configureCardDetect 注入（见上）。
 
   /* ===================== 4. 规则匹配（白名单优先） ===================== */
-  let M = buildMatchers();
-  function buildMatchers() {
-    // 精确匹配维度预编译成 Set，避免每张卡每次都 map/includes/some 重建数组（大黑名单下显著更快）
-    const lcSet = (arr) => new Set((arr || []).map((x) => lc(x)).filter(Boolean));
-    const strSet = (arr) => new Set((arr || []).map(String));
-    // 黑名单 = 用户规则 ∪ 已启用订阅规则（订阅只并入黑名单维度，不碰白名单/开关）
-    const sub = collectSubRules();
-    const u = (dim) => (CONFIG.block[dim] || []).concat(sub[dim] || []);
-    const m = {
-      blockKw: compileScopedKeywords(u('keywords')),
-      blockPartition: compileLines(u('partitions')),
-      allowKw: compileScopedKeywords(CONFIG.allow.keywords),
-      blockTag: compileLines(u('tags')),
-      upBio: compileLines(u('upBio')),
-      blockUidSet: strSet(u('uids')),
-      blockBvidSet: new Set(u('bvids')),
-      blockUpNameSet: lcSet(u('upNames')),
-      allowUidSet: strSet(CONFIG.allow.uids),
-      allowUpNameSet: lcSet(CONFIG.allow.upNames),
-      // 评论区维度（独立编译）
-      cmtKw: compileLines(CONFIG.comment.keywords),
-      cmtUserKw: compileLines(CONFIG.comment.userNameKeywords),
-      cmtUserSet: lcSet(CONFIG.comment.userNames),
-    };
-    // 是否存在 UID 规则：决定扫描时要不要为缺 UID 的卡做昂贵的 innerHTML 兜底解析
-    m.needUid = m.blockUidSet.size > 0 || m.allowUidSet.size > 0;
-    // API 维度是否需要拉取（含订阅并入的规则）：标签 = 仅当有专门的「视频标签」规则；简介 = 有简介词。
-    // 注意：普通关键词只匹配 标题/UP名/分区（本地、免联网），不再隐式触发每张卡的标签请求。
-    m.tagActive = !m.blockTag.empty;
-    m.upBioActive = !m.upBio.empty;
-    return m;
-  }
-  // 规则版本号：每次重建自增；评论扫描据此判断某条评论是否需重新评估（避免重复处理 + 规则变更后能刷新）
-  let ruleVersion = 0;
-  function rebuildRules() {
-    M = buildMatchers();
-    ruleVersion++;
-  }
-
-  function isWhitelisted(info) {
-    if (kwHit(M.allowKw, 'title', info.title)) return true;
-    if (info.up && kwHit(M.allowKw, 'up', info.up)) return true;
-    if (info.partition && kwHit(M.allowKw, 'part', info.partition)) return true;
-    if (info.up && M.allowUpNameSet.has(lc(info.up))) return true;
-    if (info.uid && M.allowUidSet.has(info.uid)) return true;
-    return false;
-  }
-
-  // ——————————————————————————————————————————————————————————————
-  // 维度注册表（Schema）：一处声明，多端派生
-  //   match(info[,ctx]) 返回命中原因字符串或 null；命中即拦（按数组顺序）。
-  //   active()         可选，当前是否启用（联网维度用它推导 apiNeeds，省去请求）。
-  //   source/needs     仅联网维度：source=数据来源(tag/view/card)，needs=要拉哪个接口。
-  // 新增一个过滤维度 = 往对应数组里加一条，matchRule / matchApi / apiNeeds 自动生效。
-  // ——————————————————————————————————————————————————————————————
-
-  // 本地同步维度（matchRule，按序短路）。各 match 自带空配置守卫，故无需 active。
-  const SYNC_DIMS = [
-    { match: (i) => (CONFIG.hideAd && i.isAd ? '广告卡' : null) },
-    { match: (i) => (CONFIG.hideLiveCard && i.isLive ? '直播卡' : null) },
-    {
-      match: (i) => {
-        const b = CONFIG.block;
-        return b.minViews > 0 && i.views != null && i.views < b.minViews * 1e4 ? `播放<${b.minViews}万` : null;
-      },
-    },
-    // 营销号/搬运号：高播放却极低赞（点赞率异常）。仅在拿得到点赞数(feed 层)时判定。
-    {
-      match: (i) => {
-        const b = CONFIG.block;
-        if (b.spamLikeRatio <= 0 || i.likes == null || !i.views) return null;
-        if (i.views < b.spamMinViews * 1e4) return null;
-        return (i.likes / i.views) * 100 < b.spamLikeRatio ? `营销号(赞率<${b.spamLikeRatio}%)` : null;
-      },
-    },
-    // 关键词：标题 / UP名 / 分区任一命中即拦（标签维度在 matchApi 里补判）
-    { match: (i) => (kwHit(M.blockKw, 'title', i.title) || (i.up && kwHit(M.blockKw, 'up', i.up)) || kwHit(M.blockKw, 'part', i.partition) ? '关键词' : null) },
-    { match: (i) => (i.partition && textHit(i.partition, M.blockPartition) ? '分区:' + i.partition : null) },
-    { match: (i) => (i.up && M.blockUpNameSet.has(lc(i.up)) ? 'UP主:' + i.up : null) },
-    { match: (i) => (i.uid && M.blockUidSet.has(i.uid) ? 'UID:' + i.uid : null) },
-    { match: (i) => (i.bvid && M.blockBvidSet.has(i.bvid) ? 'BV:' + i.bvid : null) },
-    {
-      match: (i) => {
-        const b = CONFIG.block;
-        if (i.duration == null) return null;
-        if (b.minDuration > 0 && i.duration < b.minDuration) return `时长<${b.minDuration}s`;
-        if (b.maxDuration > 0 && i.duration > b.maxDuration) return `时长>${b.maxDuration}s`;
-        return null;
-      },
-    },
-  ];
-
-  // 联网维度（matchApi，按序短路）。source 数据缺失时跳过；active 用于 apiNeeds 推导。
-  const API_DIMS = [
-    {
-      source: 'tag',
-      needs: 'tag',
-      active: () => M.tagActive, // 含订阅并入的「视频标签」维度
-      match: (info, ctx) => {
-        for (const t of ctx.tags) {
-          if (textHit(t, M.blockTag)) return '标签:' + t;
-        }
-        return null;
-      },
-    },
-    {
-      source: 'tag',
-      needs: 'tag',
-      active: () => CONFIG.block.dualTags.length,
-      match: (info, ctx) => {
-        for (const group of CONFIG.block.dualTags) {
-          const parts = String(group).split('+').map((s) => s.trim()).filter(Boolean);
-          if (parts.length >= 2 && parts.every((p) => ctx.tags.some((t) => lc(t).includes(lc(p))))) return '双标签:' + group;
-        }
-        return null;
-      },
-    },
-    {
-      source: 'view',
-      needs: 'view',
-      active: () => CONFIG.hideCharging,
-      match: (info, ctx) => (CONFIG.hideCharging && ctx.view.is_upower_exclusive ? '充电专属' : null),
-    },
-    {
-      source: 'card',
-      needs: 'card',
-      active: () => M.upBioActive, // 含订阅并入的简介词
-      match: (info, ctx) => (!M.upBio.empty && textHit(ctx.sign, M.upBio) ? 'UP简介' : null),
-    },
-  ];
-
-  function matchRule(info) {
-    if (isWhitelisted(info)) return null;
-    for (const d of SYNC_DIMS) {
-      const r = d.match(info);
-      if (r) return r;
-    }
-    return null;
-  }
-
-  // 算出「联网维度」各需要哪些接口（由注册表的 active/needs 推导）
-  function apiNeeds() {
-    let needTag = false;
-    let needView = false;
-    let needCard = false;
-    for (const d of API_DIMS) {
-      if (!d.active()) continue;
-      if (d.needs === 'tag') needTag = true;
-      else if (d.needs === 'view') needView = true;
-      else if (d.needs === 'card') needCard = true;
-    }
-    if (needCard) needView = true; // 取 card 需要 mid，无 uid 时用 view.owner 兜底
-    return { needTag, needView, needCard };
-  }
-  // 是否有任一联网规则启用（决定要不要发请求）
-  function apiRulesActive() {
-    if (!CONFIG.apiFilters) return false;
-    const n = apiNeeds();
-    return n.needTag || n.needView || n.needCard;
-  }
-
-  // 把原始接口数据整理成匹配上下文，供 API_DIMS 的 match 共用
-  function buildApiCtx(info, view, tags, cardData) {
-    const ctx = { tags: tags || [], view: view || {} };
-    if (cardData) {
-      const c = cardData.card || cardData;
-      ctx.sign = c.sign || '';
-    }
-    return ctx;
-  }
-
-  // 联网维度匹配：view=视频详情, tags=标签数组, cardData=UP卡片
-  function matchApi(info, view, tags, cardData) {
-    const ctx = buildApiCtx(info, view, tags, cardData);
-    for (const d of API_DIMS) {
-      if (d.source === 'tag' && !(tags && tags.length)) continue;
-      if (d.source === 'view' && !view) continue;
-      if (d.source === 'card' && !cardData) continue;
-      const r = d.match(info, ctx);
-      if (r) return r;
-    }
-    return null;
-  }
+  // 已抽到 ./match/engine：M / ruleVersion / buildMatchers / rebuildRules / isWhitelisted /
+  // SYNC_DIMS / API_DIMS / matchRule / matchApi / apiNeeds / apiRulesActive / buildApiCtx（见顶部 import）。
+  // 维度注册表（SYNC_DIMS/API_DIMS）即扩展点：加维度=往对应数组加一条，三处派生自动生效。
 
   /* ===================== 4b. 接口层（缓存 + 限速队列 + 风控熔断，避免频繁请求） ===================== */
   // 风控熔断：B 站返回风控码时全局暂停联网并指数退避，保护账号（API 取数 + 批量拉黑共用）。
@@ -671,31 +321,7 @@ import { PRESET_LIBRARY } from './presets';
   // 让页面只渲染保留项。只读不发——不重发请求、不需 WBI 签名、不触发风控。
   // 进阶维度（标签 / 简介 / 等级，需额外接口）与首屏 SSR 漏网仍由 DOM 兜底层处理。
 
-  // 各接口的「列表项」归一成与 extractCardInfo 同形状的 info（rcmd/ranking/popular/related 同构）
-  function normFeedItem(it) {
-    if (!it || typeof it !== 'object') return null;
-    const goto = it.goto || it.card_goto || '';
-    const owner = it.owner || {};
-    const stat = it.stat || {};
-    // 广告项标题/落地页常埋在 ad_info / cm 里，尽量抠出来，便于在屏蔽记录里辨识
-    const ad = it.ad_info || it.cm_info || it.cm || null;
-    const adC = (ad && (ad.creative_content || ad.creative)) || {};
-    // 搜索结果的 title 内含 <em class="keyword"> 高亮标签，去标签后再匹配（其它接口无标签，无副作用）
-    const rawTitle = it.title || adC.title || adC.description || ad?.title || '';
-    return {
-      title: rawTitle.replace(/<[^>]*>/g, ''),
-      up: owner.name || it.author || it.name || (ad && ad.source_content && ad.source_content.name) || '',
-      uid: owner.mid != null ? String(owner.mid) : it.mid != null ? String(it.mid) : '',
-      partition: it.tname || it.typename || (it.rcmd_reason && it.rcmd_reason.content) || '',
-      bvid: it.bvid || '',
-      link: it.uri || it.jump_url || adC.url || adC.jump_url || '',
-      duration: typeof it.duration === 'number' ? it.duration : it.duration ? parseDuration(it.duration) : null,
-      views: stat.view != null ? stat.view : stat.play != null ? stat.play : it.play != null ? it.play : null,
-      likes: stat.like != null ? stat.like : null, // 点赞数（feed JSON 才有；用于营销号低赞率识别）
-      isLive: goto === 'live',
-      isAd: goto === 'ad' || goto === 'cm' || !!it.ad_info || !!it.is_ad,
-    };
-  }
+  // normFeedItem 已抽到 ./cardinfo（见顶部 import）
 
   // 接口注册：re=URL 匹配，get=从 data 里取出可过滤的数组（就地 splice 即生效）
   const FEED_HOOKS = [

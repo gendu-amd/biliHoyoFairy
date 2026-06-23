@@ -360,27 +360,360 @@
     { cat: "其它", name: "含日语标题", rules: { keywords: ["/[ぁ-ヶ]/"] } }
   ];
 
+  // src/subscriptions/parse.ts
+  var SUB_DIMS = ["uids", "upNames", "keywords", "partitions", "tags", "upBio", "bvids"];
+  var SUB_LINE_PREFIX = { uid: "uids", up: "upNames", kw: "keywords", part: "partitions", tag: "tags", bio: "upBio", bv: "bvids" };
+  var SUB_PREFIX_RE = new RegExp("^(" + Object.keys(SUB_LINE_PREFIX).join("|") + ")\\s*:\\s*(.+)$", "i");
+  var SUB_CAP = { uids: 5e4, upNames: 5e4, bvids: 5e4 };
+  var SUB_CAP_DEFAULT = 5e3;
+  function migrateSub(obj) {
+    return obj || {};
+  }
+  function sanitizeSubRules(rawRules) {
+    const out = {};
+    for (const dim of SUB_DIMS) {
+      const arr = rawRules && rawRules[dim];
+      if (!Array.isArray(arr)) continue;
+      const max = SUB_CAP[dim] || SUB_CAP_DEFAULT;
+      const seen = /* @__PURE__ */ new Set();
+      const clean = [];
+      for (const x of arr) {
+        if (typeof x !== "string") continue;
+        const v = x.trim();
+        if (!v || seen.has(v)) continue;
+        seen.add(v);
+        clean.push(v);
+        if (clean.length >= max) break;
+      }
+      if (clean.length) out[dim] = clean;
+    }
+    return out;
+  }
+  function parseSubscription(text) {
+    const t = (text || "").trim();
+    if (!t) throw new Error("空内容");
+    if (t[0] === "{") {
+      const obj = migrateSub(JSON.parse(t));
+      const meta2 = obj && obj.meta && typeof obj.meta === "object" ? obj.meta : {};
+      let rawRules = obj && obj.rules;
+      if (!rawRules && obj && obj.config && obj.config.block) rawRules = obj.config.block;
+      return { meta: meta2, rules: sanitizeSubRules(rawRules) };
+    }
+    const meta = {};
+    const buckets = {};
+    for (let line of t.split(/\r?\n/)) {
+      line = line.trim();
+      if (!line) continue;
+      if (line[0] === "!") {
+        const m = line.slice(1).match(/^\s*([a-zA-Z][\w-]*)\s*:\s*(.+)$/);
+        if (m) meta[m[1]] = m[2].trim();
+        continue;
+      }
+      line = line.replace(/\s+#.*$/, "").trim();
+      if (!line) continue;
+      const pm = !line.startsWith("/") && line.match(SUB_PREFIX_RE);
+      const dim = pm ? SUB_LINE_PREFIX[pm[1].toLowerCase()] : "keywords";
+      const val = pm ? pm[2].trim() : line;
+      (buckets[dim] = buckets[dim] || []).push(val);
+    }
+    return { meta, rules: sanitizeSubRules(buckets) };
+  }
+
+  // src/subscriptions/store.ts
+  function loadSubStore() {
+    try {
+      return JSON.parse(GM_getValue(SUB_STORE_KEY, "") || "{}") || {};
+    } catch (e) {
+      return {};
+    }
+  }
+  function saveSubStore(store) {
+    try {
+      GM_setValue(SUB_STORE_KEY, JSON.stringify(store));
+    } catch (e) {
+    }
+  }
+  function collectSubRules() {
+    const store = loadSubStore();
+    const merged = {};
+    for (const sub of CONFIG.subscriptions || []) {
+      if (!sub || !sub.enabled || !sub.url) continue;
+      const e = store[sub.url];
+      if (!e || !e.ok || !e.rules) continue;
+      for (const dim of SUB_DIMS) {
+        const arr = e.rules[dim];
+        if (Array.isArray(arr) && arr.length) (merged[dim] = merged[dim] || []).push(...arr);
+      }
+    }
+    return merged;
+  }
+
+  // src/cardinfo.ts
+  var getDetect = () => ({ detectAd: false, detectLive: false });
+  function configureCardDetect(fn) {
+    getDetect = fn;
+  }
+  function pickText(card, selectors) {
+    for (const sel of selectors) {
+      const el = card.querySelector(sel);
+      if (el) {
+        const v = el.getAttribute("title") || el.textContent;
+        if (v && v.trim()) return v.trim();
+      }
+    }
+    return "";
+  }
+  function extractCardInfo(card, deepUid = true) {
+    const info = { title: "", up: "", uid: "", partition: "", bvid: "", duration: null, views: null, likes: null, isLive: false, isAd: false };
+    info.title = pickText(card, [
+      ".bili-video-card__info--tit",
+      ".video-name",
+      "h3[title]",
+      ".title",
+      ".bili-dyn-card-video__title",
+      // 动态内视频标题
+      ".dyn-card-opus__title",
+      // 动态专栏/图文标题
+      ".bili-dyn-content__orig__desc"
+      // 动态正文（文字动态，便于关键词命中）
+    ]);
+    info.up = pickText(card, [
+      ".bili-video-card__info--author",
+      ".up-name__text",
+      ".up-name",
+      ".bili-video-card__info--owner span",
+      ".upname .name",
+      ".bili-dyn-title__text"
+      // 动态发布者
+    ]);
+    const upA = card.querySelector('a[href*="space.bilibili.com"]');
+    if (upA) info.uid = ((upA.getAttribute("href") || "").match(/space\.bilibili\.com\/(\d+)/) || [])[1] || "";
+    if (!info.uid) {
+      const midEl = card.querySelector("[data-mid],[data-up-mid],[data-user-id]");
+      if (midEl) info.uid = midEl.getAttribute("data-mid") || midEl.getAttribute("data-up-mid") || midEl.getAttribute("data-user-id") || "";
+    }
+    if (!info.uid && deepUid) {
+      info.uid = (card.innerHTML.match(/space\.bilibili\.com\/(\d+)/) || [])[1] || "";
+      if (!info.uid) info.uid = (card.innerHTML.match(/"(?:mid|owner_?id|up_?mid)"\s*:\s*"?(\d{2,})"?/) || [])[1] || "";
+    }
+    info.partition = pickText(card, [".bili-video-card__info--tag", ".rcmd-tag"]);
+    const aVideo = card.querySelector('a[href*="/video/"]');
+    if (aVideo) {
+      const m = (aVideo.getAttribute("href") || "").match(/(BV[0-9A-Za-z]+)/);
+      if (m) info.bvid = m[1];
+    }
+    info.duration = parseDuration(pickText(card, [".bili-video-card__stats__duration", ".duration", ".bili-dyn-card-video__duration"]));
+    const statEl = card.querySelector(".bili-video-card__stats--item") || card.querySelector(".play-text");
+    if (statEl) info.views = parseCount(statEl.textContent);
+    const { detectAd, detectLive } = getDetect();
+    if (detectAd || detectLive) {
+      info.isLive = !!(card.querySelector('a[href*="live.bilibili.com"]') || card.querySelector('.bili-live-card, [class*="live-card"]') || /直播中|正在直播/.test(card.textContent || ""));
+    }
+    if (detectAd) {
+      const adBadge = Array.from(card.querySelectorAll("span,div")).some((el) => {
+        const tx = (el.textContent || "").trim();
+        return tx === "广告" || tx === "赞助" || tx === "推广";
+      });
+      info.isAd = !info.isLive && !!(card.querySelector(".bili-video-card__info--ad") || card.querySelector('a[href*="cm.bilibili.com"]') || card.querySelector('a[href*="//mall.bilibili.com"]') || card.querySelector('a[href*="specialRecommendByOp"]') || adBadge);
+    }
+    return info;
+  }
+  function normFeedItem(it) {
+    if (!it || typeof it !== "object") return null;
+    const goto = it.goto || it.card_goto || "";
+    const owner = it.owner || {};
+    const stat = it.stat || {};
+    const ad = it.ad_info || it.cm_info || it.cm || null;
+    const adC = ad && (ad.creative_content || ad.creative) || {};
+    const rawTitle = it.title || adC.title || adC.description || ad?.title || "";
+    return {
+      title: rawTitle.replace(/<[^>]*>/g, ""),
+      up: owner.name || it.author || it.name || ad && ad.source_content && ad.source_content.name || "",
+      uid: owner.mid != null ? String(owner.mid) : it.mid != null ? String(it.mid) : "",
+      partition: it.tname || it.typename || it.rcmd_reason && it.rcmd_reason.content || "",
+      bvid: it.bvid || "",
+      link: it.uri || it.jump_url || adC.url || adC.jump_url || "",
+      duration: typeof it.duration === "number" ? it.duration : it.duration ? parseDuration(it.duration) : null,
+      views: stat.view != null ? stat.view : stat.play != null ? stat.play : it.play != null ? it.play : null,
+      likes: stat.like != null ? stat.like : null,
+      // 点赞数（feed JSON 才有；用于营销号低赞率识别）
+      isLive: goto === "live",
+      isAd: goto === "ad" || goto === "cm" || !!it.ad_info || !!it.is_ad
+    };
+  }
+
+  // src/match/engine.ts
+  configureFuzzy(() => CONFIG.fuzzyMatch);
+  function buildMatchers() {
+    const lcSet = (arr) => new Set((arr || []).map((x) => lc(x)).filter(Boolean));
+    const strSet = (arr) => new Set((arr || []).map(String));
+    const sub = collectSubRules();
+    const u = (dim) => (CONFIG.block[dim] || []).concat(sub[dim] || []);
+    const blockUidSet = strSet(u("uids"));
+    const allowUidSet = strSet(CONFIG.allow.uids);
+    const blockTag = compileLines(u("tags"));
+    const upBio = compileLines(u("upBio"));
+    return {
+      blockKw: compileScopedKeywords(u("keywords")),
+      blockPartition: compileLines(u("partitions")),
+      allowKw: compileScopedKeywords(CONFIG.allow.keywords),
+      blockTag,
+      upBio,
+      blockUidSet,
+      blockBvidSet: new Set(u("bvids")),
+      blockUpNameSet: lcSet(u("upNames")),
+      allowUidSet,
+      allowUpNameSet: lcSet(CONFIG.allow.upNames),
+      // 评论区维度（独立编译）
+      cmtKw: compileLines(CONFIG.comment.keywords),
+      cmtUserKw: compileLines(CONFIG.comment.userNameKeywords),
+      cmtUserSet: lcSet(CONFIG.comment.userNames),
+      // 是否存在 UID 规则：决定扫描时要不要为缺 UID 的卡做昂贵的 innerHTML 兜底解析
+      needUid: blockUidSet.size > 0 || allowUidSet.size > 0,
+      // API 维度是否需要拉取（含订阅并入的规则）：标签 = 仅当有专门的「视频标签」规则；简介 = 有简介词。
+      // 注意：普通关键词只匹配 标题/UP名/分区（本地、免联网），不再隐式触发每张卡的标签请求。
+      tagActive: !blockTag.empty,
+      upBioActive: !upBio.empty
+    };
+  }
+  var M = buildMatchers();
+  var ruleVersion = 0;
+  function rebuildRules() {
+    M = buildMatchers();
+    ruleVersion++;
+  }
+  function isWhitelisted(info) {
+    if (kwHit(M.allowKw, "title", info.title)) return true;
+    if (info.up && kwHit(M.allowKw, "up", info.up)) return true;
+    if (info.partition && kwHit(M.allowKw, "part", info.partition)) return true;
+    if (info.up && M.allowUpNameSet.has(lc(info.up))) return true;
+    if (info.uid && M.allowUidSet.has(info.uid)) return true;
+    return false;
+  }
+  var SYNC_DIMS = [
+    { match: (i) => CONFIG.hideAd && i.isAd ? "广告卡" : null },
+    { match: (i) => CONFIG.hideLiveCard && i.isLive ? "直播卡" : null },
+    {
+      match: (i) => {
+        const b = CONFIG.block;
+        return b.minViews > 0 && i.views != null && i.views < b.minViews * 1e4 ? `播放<${b.minViews}万` : null;
+      }
+    },
+    // 营销号/搬运号：高播放却极低赞（点赞率异常）。仅在拿得到点赞数(feed 层)时判定。
+    {
+      match: (i) => {
+        const b = CONFIG.block;
+        if (b.spamLikeRatio <= 0 || i.likes == null || !i.views) return null;
+        if (i.views < b.spamMinViews * 1e4) return null;
+        return i.likes / i.views * 100 < b.spamLikeRatio ? `营销号(赞率<${b.spamLikeRatio}%)` : null;
+      }
+    },
+    // 关键词：标题 / UP名 / 分区任一命中即拦（标签维度在 matchApi 里补判）
+    { match: (i) => kwHit(M.blockKw, "title", i.title) || i.up && kwHit(M.blockKw, "up", i.up) || kwHit(M.blockKw, "part", i.partition) ? "关键词" : null },
+    { match: (i) => i.partition && textHit(i.partition, M.blockPartition) ? "分区:" + i.partition : null },
+    { match: (i) => i.up && M.blockUpNameSet.has(lc(i.up)) ? "UP主:" + i.up : null },
+    { match: (i) => i.uid && M.blockUidSet.has(i.uid) ? "UID:" + i.uid : null },
+    { match: (i) => i.bvid && M.blockBvidSet.has(i.bvid) ? "BV:" + i.bvid : null },
+    {
+      match: (i) => {
+        const b = CONFIG.block;
+        if (i.duration == null) return null;
+        if (b.minDuration > 0 && i.duration < b.minDuration) return `时长<${b.minDuration}s`;
+        if (b.maxDuration > 0 && i.duration > b.maxDuration) return `时长>${b.maxDuration}s`;
+        return null;
+      }
+    }
+  ];
+  var API_DIMS = [
+    {
+      source: "tag",
+      needs: "tag",
+      active: () => M.tagActive,
+      // 含订阅并入的「视频标签」维度
+      match: (info, ctx) => {
+        for (const t of ctx.tags) {
+          if (textHit(t, M.blockTag)) return "标签:" + t;
+        }
+        return null;
+      }
+    },
+    {
+      source: "tag",
+      needs: "tag",
+      active: () => CONFIG.block.dualTags.length,
+      match: (info, ctx) => {
+        for (const group of CONFIG.block.dualTags) {
+          const parts = String(group).split("+").map((s) => s.trim()).filter(Boolean);
+          if (parts.length >= 2 && parts.every((p) => ctx.tags.some((t) => lc(t).includes(lc(p))))) return "双标签:" + group;
+        }
+        return null;
+      }
+    },
+    {
+      source: "view",
+      needs: "view",
+      active: () => CONFIG.hideCharging,
+      match: (info, ctx) => CONFIG.hideCharging && ctx.view.is_upower_exclusive ? "充电专属" : null
+    },
+    {
+      source: "card",
+      needs: "card",
+      active: () => M.upBioActive,
+      // 含订阅并入的简介词
+      match: (info, ctx) => !M.upBio.empty && textHit(ctx.sign, M.upBio) ? "UP简介" : null
+    }
+  ];
+  function matchRule(info) {
+    if (isWhitelisted(info)) return null;
+    for (const d of SYNC_DIMS) {
+      const r = d.match(info);
+      if (r) return r;
+    }
+    return null;
+  }
+  function apiNeeds() {
+    let needTag = false;
+    let needView = false;
+    let needCard = false;
+    for (const d of API_DIMS) {
+      if (!d.active()) continue;
+      if (d.needs === "tag") needTag = true;
+      else if (d.needs === "view") needView = true;
+      else if (d.needs === "card") needCard = true;
+    }
+    if (needCard) needView = true;
+    return { needTag, needView, needCard };
+  }
+  function apiRulesActive() {
+    if (!CONFIG.apiFilters) return false;
+    const n = apiNeeds();
+    return n.needTag || n.needView || n.needCard;
+  }
+  function buildApiCtx(info, view, tags, cardData) {
+    const ctx = { tags: tags || [], view: view || {} };
+    if (cardData) {
+      const c = cardData.card || cardData;
+      ctx.sign = c.sign || "";
+    }
+    return ctx;
+  }
+  function matchApi(info, view, tags, cardData) {
+    const ctx = buildApiCtx(info, view, tags, cardData);
+    for (const d of API_DIMS) {
+      if (d.source === "tag" && !(tags && tags.length)) continue;
+      if (d.source === "view" && !view) continue;
+      if (d.source === "card" && !cardData) continue;
+      const r = d.match(info, ctx);
+      if (r) return r;
+    }
+    return null;
+  }
+
   // src/main.ts
   (function() {
     "use strict";
-    configureFuzzy(() => CONFIG.fuzzyMatch);
+    configureCardDetect(() => ({ detectAd: CONFIG.hideAd, detectLive: CONFIG.hideLiveCard }));
     let sessionBlocked = 0;
-    const SUB_DIMS = ["uids", "upNames", "keywords", "partitions", "tags", "upBio", "bvids"];
-    const SUB_LINE_PREFIX = { uid: "uids", up: "upNames", kw: "keywords", part: "partitions", tag: "tags", bio: "upBio", bv: "bvids" };
-    const SUB_PREFIX_RE = new RegExp("^(" + Object.keys(SUB_LINE_PREFIX).join("|") + ")\\s*:\\s*(.+)$", "i");
-    function loadSubStore() {
-      try {
-        return JSON.parse(GM_getValue(SUB_STORE_KEY, "") || "{}") || {};
-      } catch (e) {
-        return {};
-      }
-    }
-    function saveSubStore(store) {
-      try {
-        GM_setValue(SUB_STORE_KEY, JSON.stringify(store));
-      } catch (e) {
-      }
-    }
     function metaGet(meta, key) {
       if (!meta) return void 0;
       if (meta[key] != null) return meta[key];
@@ -403,74 +736,6 @@
       if (!m) return DAY_MS;
       const n = Math.max(1, parseInt(m[1], 10) || 1);
       return n * ((m[2] || "d").toLowerCase() === "h" ? 36e5 : DAY_MS);
-    }
-    function migrateSub(obj) {
-      return obj || {};
-    }
-    const SUB_CAP = { uids: 5e4, upNames: 5e4, bvids: 5e4 };
-    const SUB_CAP_DEFAULT = 5e3;
-    function sanitizeSubRules(rawRules) {
-      const out = {};
-      for (const dim of SUB_DIMS) {
-        const arr = rawRules && rawRules[dim];
-        if (!Array.isArray(arr)) continue;
-        const max = SUB_CAP[dim] || SUB_CAP_DEFAULT;
-        const seen = /* @__PURE__ */ new Set();
-        const clean = [];
-        for (const x of arr) {
-          if (typeof x !== "string") continue;
-          const v = x.trim();
-          if (!v || seen.has(v)) continue;
-          seen.add(v);
-          clean.push(v);
-          if (clean.length >= max) break;
-        }
-        if (clean.length) out[dim] = clean;
-      }
-      return out;
-    }
-    function parseSubscription(text) {
-      const t = (text || "").trim();
-      if (!t) throw new Error("空内容");
-      if (t[0] === "{") {
-        const obj = migrateSub(JSON.parse(t));
-        const meta2 = obj && obj.meta && typeof obj.meta === "object" ? obj.meta : {};
-        let rawRules = obj && obj.rules;
-        if (!rawRules && obj && obj.config && obj.config.block) rawRules = obj.config.block;
-        return { meta: meta2, rules: sanitizeSubRules(rawRules) };
-      }
-      const meta = {};
-      const buckets = {};
-      for (let line of t.split(/\r?\n/)) {
-        line = line.trim();
-        if (!line) continue;
-        if (line[0] === "!") {
-          const m = line.slice(1).match(/^\s*([a-zA-Z][\w-]*)\s*:\s*(.+)$/);
-          if (m) meta[m[1]] = m[2].trim();
-          continue;
-        }
-        line = line.replace(/\s+#.*$/, "").trim();
-        if (!line) continue;
-        const pm = !line.startsWith("/") && line.match(SUB_PREFIX_RE);
-        const dim = pm ? SUB_LINE_PREFIX[pm[1].toLowerCase()] : "keywords";
-        const val = pm ? pm[2].trim() : line;
-        (buckets[dim] = buckets[dim] || []).push(val);
-      }
-      return { meta, rules: sanitizeSubRules(buckets) };
-    }
-    function collectSubRules() {
-      const store = loadSubStore();
-      const merged = {};
-      for (const sub of CONFIG.subscriptions || []) {
-        if (!sub || !sub.enabled || !sub.url) continue;
-        const e = store[sub.url];
-        if (!e || !e.ok || !e.rules) continue;
-        for (const dim of SUB_DIMS) {
-          const arr = e.rules[dim];
-          if (Array.isArray(arr) && arr.length) (merged[dim] = merged[dim] || []).push(...arr);
-        }
-      }
-      return merged;
     }
     function fetchSubText(url, cb) {
       if (typeof GM_xmlhttpRequest !== "function") return cb(null, "无 GM_xmlhttpRequest");
@@ -569,228 +834,6 @@
       } catch (e) {
       }
       return false;
-    }
-    function pickText(card, selectors) {
-      for (const sel of selectors) {
-        const el = card.querySelector(sel);
-        if (el) {
-          const v = el.getAttribute("title") || el.textContent;
-          if (v && v.trim()) return v.trim();
-        }
-      }
-      return "";
-    }
-    function extractCardInfo(card, deepUid = true) {
-      const info = { title: "", up: "", uid: "", partition: "", bvid: "", duration: null, views: null, likes: null, isLive: false, isAd: false };
-      info.title = pickText(card, [
-        ".bili-video-card__info--tit",
-        ".video-name",
-        "h3[title]",
-        ".title",
-        ".bili-dyn-card-video__title",
-        // 动态内视频标题
-        ".dyn-card-opus__title",
-        // 动态专栏/图文标题
-        ".bili-dyn-content__orig__desc"
-        // 动态正文（文字动态，便于关键词命中）
-      ]);
-      info.up = pickText(card, [
-        ".bili-video-card__info--author",
-        ".up-name__text",
-        ".up-name",
-        ".bili-video-card__info--owner span",
-        ".upname .name",
-        ".bili-dyn-title__text"
-        // 动态发布者
-      ]);
-      const upA = card.querySelector('a[href*="space.bilibili.com"]');
-      if (upA) info.uid = ((upA.getAttribute("href") || "").match(/space\.bilibili\.com\/(\d+)/) || [])[1] || "";
-      if (!info.uid) {
-        const midEl = card.querySelector("[data-mid],[data-up-mid],[data-user-id]");
-        if (midEl) info.uid = midEl.getAttribute("data-mid") || midEl.getAttribute("data-up-mid") || midEl.getAttribute("data-user-id") || "";
-      }
-      if (!info.uid && deepUid) {
-        info.uid = (card.innerHTML.match(/space\.bilibili\.com\/(\d+)/) || [])[1] || "";
-        if (!info.uid) info.uid = (card.innerHTML.match(/"(?:mid|owner_?id|up_?mid)"\s*:\s*"?(\d{2,})"?/) || [])[1] || "";
-      }
-      info.partition = pickText(card, [".bili-video-card__info--tag", ".rcmd-tag"]);
-      const aVideo = card.querySelector('a[href*="/video/"]');
-      if (aVideo) {
-        const m = (aVideo.getAttribute("href") || "").match(/(BV[0-9A-Za-z]+)/);
-        if (m) info.bvid = m[1];
-      }
-      info.duration = parseDuration(pickText(card, [".bili-video-card__stats__duration", ".duration", ".bili-dyn-card-video__duration"]));
-      const statEl = card.querySelector(".bili-video-card__stats--item") || card.querySelector(".play-text");
-      if (statEl) info.views = parseCount(statEl.textContent);
-      if (CONFIG.hideAd || CONFIG.hideLiveCard) {
-        info.isLive = !!(card.querySelector('a[href*="live.bilibili.com"]') || card.querySelector('.bili-live-card, [class*="live-card"]') || /直播中|正在直播/.test(card.textContent || ""));
-      }
-      if (CONFIG.hideAd) {
-        const adBadge = Array.from(card.querySelectorAll("span,div")).some((el) => {
-          const tx = (el.textContent || "").trim();
-          return tx === "广告" || tx === "赞助" || tx === "推广";
-        });
-        info.isAd = !info.isLive && !!(card.querySelector(".bili-video-card__info--ad") || card.querySelector('a[href*="cm.bilibili.com"]') || card.querySelector('a[href*="//mall.bilibili.com"]') || card.querySelector('a[href*="specialRecommendByOp"]') || adBadge);
-      }
-      return info;
-    }
-    let M = buildMatchers();
-    function buildMatchers() {
-      const lcSet = (arr) => new Set((arr || []).map((x) => lc(x)).filter(Boolean));
-      const strSet = (arr) => new Set((arr || []).map(String));
-      const sub = collectSubRules();
-      const u = (dim) => (CONFIG.block[dim] || []).concat(sub[dim] || []);
-      const m = {
-        blockKw: compileScopedKeywords(u("keywords")),
-        blockPartition: compileLines(u("partitions")),
-        allowKw: compileScopedKeywords(CONFIG.allow.keywords),
-        blockTag: compileLines(u("tags")),
-        upBio: compileLines(u("upBio")),
-        blockUidSet: strSet(u("uids")),
-        blockBvidSet: new Set(u("bvids")),
-        blockUpNameSet: lcSet(u("upNames")),
-        allowUidSet: strSet(CONFIG.allow.uids),
-        allowUpNameSet: lcSet(CONFIG.allow.upNames),
-        // 评论区维度（独立编译）
-        cmtKw: compileLines(CONFIG.comment.keywords),
-        cmtUserKw: compileLines(CONFIG.comment.userNameKeywords),
-        cmtUserSet: lcSet(CONFIG.comment.userNames)
-      };
-      m.needUid = m.blockUidSet.size > 0 || m.allowUidSet.size > 0;
-      m.tagActive = !m.blockTag.empty;
-      m.upBioActive = !m.upBio.empty;
-      return m;
-    }
-    let ruleVersion = 0;
-    function rebuildRules() {
-      M = buildMatchers();
-      ruleVersion++;
-    }
-    function isWhitelisted(info) {
-      if (kwHit(M.allowKw, "title", info.title)) return true;
-      if (info.up && kwHit(M.allowKw, "up", info.up)) return true;
-      if (info.partition && kwHit(M.allowKw, "part", info.partition)) return true;
-      if (info.up && M.allowUpNameSet.has(lc(info.up))) return true;
-      if (info.uid && M.allowUidSet.has(info.uid)) return true;
-      return false;
-    }
-    const SYNC_DIMS = [
-      { match: (i) => CONFIG.hideAd && i.isAd ? "广告卡" : null },
-      { match: (i) => CONFIG.hideLiveCard && i.isLive ? "直播卡" : null },
-      {
-        match: (i) => {
-          const b = CONFIG.block;
-          return b.minViews > 0 && i.views != null && i.views < b.minViews * 1e4 ? `播放<${b.minViews}万` : null;
-        }
-      },
-      // 营销号/搬运号：高播放却极低赞（点赞率异常）。仅在拿得到点赞数(feed 层)时判定。
-      {
-        match: (i) => {
-          const b = CONFIG.block;
-          if (b.spamLikeRatio <= 0 || i.likes == null || !i.views) return null;
-          if (i.views < b.spamMinViews * 1e4) return null;
-          return i.likes / i.views * 100 < b.spamLikeRatio ? `营销号(赞率<${b.spamLikeRatio}%)` : null;
-        }
-      },
-      // 关键词：标题 / UP名 / 分区任一命中即拦（标签维度在 matchApi 里补判）
-      { match: (i) => kwHit(M.blockKw, "title", i.title) || i.up && kwHit(M.blockKw, "up", i.up) || kwHit(M.blockKw, "part", i.partition) ? "关键词" : null },
-      { match: (i) => i.partition && textHit(i.partition, M.blockPartition) ? "分区:" + i.partition : null },
-      { match: (i) => i.up && M.blockUpNameSet.has(lc(i.up)) ? "UP主:" + i.up : null },
-      { match: (i) => i.uid && M.blockUidSet.has(i.uid) ? "UID:" + i.uid : null },
-      { match: (i) => i.bvid && M.blockBvidSet.has(i.bvid) ? "BV:" + i.bvid : null },
-      {
-        match: (i) => {
-          const b = CONFIG.block;
-          if (i.duration == null) return null;
-          if (b.minDuration > 0 && i.duration < b.minDuration) return `时长<${b.minDuration}s`;
-          if (b.maxDuration > 0 && i.duration > b.maxDuration) return `时长>${b.maxDuration}s`;
-          return null;
-        }
-      }
-    ];
-    const API_DIMS = [
-      {
-        source: "tag",
-        needs: "tag",
-        active: () => M.tagActive,
-        // 含订阅并入的「视频标签」维度
-        match: (info, ctx) => {
-          for (const t of ctx.tags) {
-            if (textHit(t, M.blockTag)) return "标签:" + t;
-          }
-          return null;
-        }
-      },
-      {
-        source: "tag",
-        needs: "tag",
-        active: () => CONFIG.block.dualTags.length,
-        match: (info, ctx) => {
-          for (const group of CONFIG.block.dualTags) {
-            const parts = String(group).split("+").map((s) => s.trim()).filter(Boolean);
-            if (parts.length >= 2 && parts.every((p) => ctx.tags.some((t) => lc(t).includes(lc(p))))) return "双标签:" + group;
-          }
-          return null;
-        }
-      },
-      {
-        source: "view",
-        needs: "view",
-        active: () => CONFIG.hideCharging,
-        match: (info, ctx) => CONFIG.hideCharging && ctx.view.is_upower_exclusive ? "充电专属" : null
-      },
-      {
-        source: "card",
-        needs: "card",
-        active: () => M.upBioActive,
-        // 含订阅并入的简介词
-        match: (info, ctx) => !M.upBio.empty && textHit(ctx.sign, M.upBio) ? "UP简介" : null
-      }
-    ];
-    function matchRule(info) {
-      if (isWhitelisted(info)) return null;
-      for (const d of SYNC_DIMS) {
-        const r = d.match(info);
-        if (r) return r;
-      }
-      return null;
-    }
-    function apiNeeds() {
-      let needTag = false;
-      let needView = false;
-      let needCard = false;
-      for (const d of API_DIMS) {
-        if (!d.active()) continue;
-        if (d.needs === "tag") needTag = true;
-        else if (d.needs === "view") needView = true;
-        else if (d.needs === "card") needCard = true;
-      }
-      if (needCard) needView = true;
-      return { needTag, needView, needCard };
-    }
-    function apiRulesActive() {
-      if (!CONFIG.apiFilters) return false;
-      const n = apiNeeds();
-      return n.needTag || n.needView || n.needCard;
-    }
-    function buildApiCtx(info, view, tags, cardData) {
-      const ctx = { tags: tags || [], view: view || {} };
-      if (cardData) {
-        const c = cardData.card || cardData;
-        ctx.sign = c.sign || "";
-      }
-      return ctx;
-    }
-    function matchApi(info, view, tags, cardData) {
-      const ctx = buildApiCtx(info, view, tags, cardData);
-      for (const d of API_DIMS) {
-        if (d.source === "tag" && !(tags && tags.length)) continue;
-        if (d.source === "view" && !view) continue;
-        if (d.source === "card" && !cardData) continue;
-        const r = d.match(info, ctx);
-        if (r) return r;
-      }
-      return null;
     }
     const riskGuard = {
       until: 0,
@@ -910,29 +953,6 @@
     function cachedUid(bvid) {
       const d = bvid && API.view.get(bvid);
       return d && d.owner && d.owner.mid ? String(d.owner.mid) : "";
-    }
-    function normFeedItem(it) {
-      if (!it || typeof it !== "object") return null;
-      const goto = it.goto || it.card_goto || "";
-      const owner = it.owner || {};
-      const stat = it.stat || {};
-      const ad = it.ad_info || it.cm_info || it.cm || null;
-      const adC = ad && (ad.creative_content || ad.creative) || {};
-      const rawTitle = it.title || adC.title || adC.description || ad?.title || "";
-      return {
-        title: rawTitle.replace(/<[^>]*>/g, ""),
-        up: owner.name || it.author || it.name || ad && ad.source_content && ad.source_content.name || "",
-        uid: owner.mid != null ? String(owner.mid) : it.mid != null ? String(it.mid) : "",
-        partition: it.tname || it.typename || it.rcmd_reason && it.rcmd_reason.content || "",
-        bvid: it.bvid || "",
-        link: it.uri || it.jump_url || adC.url || adC.jump_url || "",
-        duration: typeof it.duration === "number" ? it.duration : it.duration ? parseDuration(it.duration) : null,
-        views: stat.view != null ? stat.view : stat.play != null ? stat.play : it.play != null ? it.play : null,
-        likes: stat.like != null ? stat.like : null,
-        // 点赞数（feed JSON 才有；用于营销号低赞率识别）
-        isLive: goto === "live",
-        isAd: goto === "ad" || goto === "cm" || !!it.ad_info || !!it.is_ad
-      };
     }
     const FEED_HOOKS = [
       { re: /\/x\/web-interface\/wbi\/index\/top\/feed\/rcmd/, get: (d) => d && Array.isArray(d.item) ? d.item : null },
