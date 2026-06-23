@@ -5,6 +5,10 @@
 // 抽出的每个模块都是手写 TS、会受完整类型与 lint 约束。
 // 作用：干净重模块化的「基线」——行为与 v0.0.5 等价；后续按体检 DAG 自底向上逐层抽出模块，
 // 每抽一层都对照快照核对、强类型、补测。请勿手改本文件的逻辑，改动应通过抽模块进行。
+// —— 已抽出的模块（自底向上逐层进行中）——
+import { VERSION, STORE_KEY, SUB_STORE_KEY, BLACKLIST_MANAGE_URL, ATTR_API, ATTR_BLOCKED, PROCESSED, COMMENT_BOTS, COMMENT_AD_RE, UNSAFE_KEYS, RISK_CODES } from './constants';
+import { getCookie, parseDuration, parseCount, escapeHtml } from './util';
+import { lc, toHalfWidth, escapeRe, INVISIBLE_RE, stripInvisible, SEP_RE, configureFuzzy, normMatch, compileLines, textHit, KW_SCOPES, compileScopedKeywords, kwHit, splitRuleInput } from './match/normalize';
 /*
  * 架构（拦截优先 + DOM 兜底）：
  *   1. 拦截层（主）：document-start 时 hook fetch / XHR，被动过滤 B 站自身请求的 JSON 列表
@@ -19,16 +23,8 @@
   'use strict';
 
   /* ===================== 0. 常量与配置 ===================== */
-  // 单一来源：直接读脚本头 @version，避免与常量双写漂移
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.0.1';
-  const STORE_KEY = 'bfb_config_v2';
-  const SUB_STORE_KEY = 'bfb_subs_v1'; // 订阅拉取结果缓存：{ [url]: { meta, rules, lastSync, ok, count, error } }
-  const BLACKLIST_MANAGE_URL = 'https://account.bilibili.com/account/blacklist';
+  // VERSION/STORE_KEY/SUB_STORE_KEY/BLACKLIST_MANAGE_URL/ATTR_*/PROCESSED 等常量已抽到 ./constants
   const BADGE = 'color:#fff;background:#fb7299;padding:0 4px;border-radius:3px'; // 控制台日志的品牌徽标样式
-
-  // DOM 标记属性（集中常量，避免散落硬编码改一处漏一处）。卡片"已处理"标记见下方 PROCESSED。
-  const ATTR_API = 'data-bfb-api'; // 卡片已发起 API 评估
-  const ATTR_BLOCKED = 'data-bfb-blocked'; // 卡片已被拦截（供批量拉黑扫描）
 
   // —— 统一日志 ——（debug 关时零开销；err 始终输出，便于线上排查）
   function log(...args) {
@@ -119,19 +115,7 @@
     { cat: '其它', name: '含日语标题', rules: { keywords: ['/[ぁ-ヶ]/'] } },
   ];
 
-  // 评论区已知 AI 机器人账号名单（借鉴 bilibili-cleaner extra/bots）
-  const COMMENT_BOTS = new Set([
-    '机器工具人', '有趣的程序员', 'AI视频小助理', 'AI视频小助理总结一下', 'AI笔记侠', 'AI视频助手',
-    '哔哩哔理点赞姬', '课代表猫', 'AI课代表呀', '木几萌Moe', '星崽丨StarZai', 'AI沈阳美食家', 'AI头脑风暴',
-    'GPT_5', 'Juice_AI', 'AI全文总结', 'AI视频总结', 'AI总结视频', 'AI工具集', 'Ai的评论', 'AI识片酱',
-    'AI知识总结', 'AI小精灵呀', 'AI课程教学', 'Ai好记', 'MilkyAi', '视频AI问答助手',
-  ]);
-  // 带货/导流广告评论特征（借鉴 cleaner）
-  const COMMENT_AD_RE = /(bili2233\.cn|b23\.tv)\/(mall-|cm-)|领券|gaoneng\.bilibili\.com/i;
-
-  // 合并外部数据（存档/导入）时必须跳过这些键，否则 JSON.parse 出来的 own "__proto__"
-  // 会被写进 Object.prototype，污染全局并可能破坏 B 站自身脚本。
-  const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+  // COMMENT_BOTS / COMMENT_AD_RE / UNSAFE_KEYS 已抽到 ./constants
 
   function deepMerge(base, override) {
     for (const k of Object.keys(override || {})) {
@@ -188,6 +172,9 @@
   }
 
   const CONFIG = loadConfig();
+  // 关键时序：在 CONFIG 就绪后、首次 buildMatchers() 之前绑定 fuzzy 取值器，
+  // 否则初始匹配器会以 fuzzy=false 编译，首屏反绕过匹配失效。
+  configureFuzzy(() => CONFIG.fuzzyMatch);
   let sessionBlocked = 0;
 
   /* ===================== 0c. 规则订阅（数据层） ===================== */
@@ -364,116 +351,10 @@
   }
 
   /* ===================== 1. 工具 ===================== */
-  function getCookie(name) {
-    const m = document.cookie.match(new RegExp('(^|;\\s*)' + name + '=([^;]*)'));
-    return m ? decodeURIComponent(m[2]) : '';
-  }
-  const lc = (s) => (s || '').toString().trim().toLowerCase();
-  // 全角→半角归一（含全角空格 U+3000），防止用全角字符绕过关键词（借鉴 bilibili-cleaner toHalfWidth）
-  function toHalfWidth(s) {
-    return (s || '')
-      .toString()
-      .replace(/[\uFF01-\uFF5E]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
-      .replace(/\u3000/g, ' ');
-  }
-  const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-  // —— 反绕过归一 ——
-  // 隐形字符(零宽空格/方向控制符等)：纯绕过手段、零误伤，始终剔除。
-  const INVISIBLE_RE = /[\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]/g;
-  const stripInvisible = (s) => (s || '').toString().replace(INVISIBLE_RE, '');
-  // 分隔符：fuzzyMatch 开启时从文本与普通词两侧一并剔除，使"原 神 / 原.神 / 原·神"也命中。
-  // 只跨分隔符桥接、不跨文字，故几乎不误伤（"原创神作"中 创 非分隔符，不会命中"原神"）。
-  const SEP_RE = /[\s_.·・･﹒。,，、;；:：!！?？~～^*"'`|｜/\\()（）【】<>《》\[\]—-]+/g;
-  // 匹配前对文本的归一：全角→半角 + 小写 + 去隐形（+ fuzzy 时去分隔符）。普通词编译时用同一套，保证两侧一致。
-  function normMatch(s) {
-    let t = stripInvisible(toHalfWidth(s)).toLowerCase();
-    if (CONFIG.fuzzyMatch) t = t.replace(SEP_RE, '');
-    return t;
-  }
-
-  // 把一组规则行编译成匹配器：普通词 → 归一/转义后合并成单条正则（性能更好，借鉴 cleaner）；
-  // /.../ 行 → 各自独立编译（保留其原有 flags，如 m/s/g 语义不被合并破坏）。
-  function compileLines(lines) {
-    const plainParts = [];
-    const regexes = [];
-    for (const raw of lines || []) {
-      const line = (raw || '').trim();
-      if (!line) continue;
-      const m = line.match(/^\/(.*)\/([a-z]*)$/);
-      if (m) {
-        try {
-          const flags = m[2] || 'i';
-          regexes.push(new RegExp(m[1], flags.includes('i') ? flags : flags + 'i'));
-        } catch (e) {}
-      } else {
-        const w = normMatch(line); // 与 textHit 同一套归一（含反绕过），两侧一致
-        if (w) plainParts.push(escapeRe(w));
-      }
-    }
-    let plain = null;
-    if (plainParts.length) {
-      try {
-        plain = new RegExp(plainParts.join('|'), 'i');
-      } catch (e) {}
-    }
-    return { plain, regexes, empty: !plain && !regexes.length };
-  }
-  function textHit(text, matcher) {
-    if (!text || !matcher) return false;
-    if (matcher.plain && matcher.plain.test(normMatch(text))) return true;
-    if (matcher.regexes.length) {
-      const t = stripInvisible(text); // 正则按其原样匹配，仅去隐形字符防零宽绕过
-      for (const r of matcher.regexes) if (r.test(t)) return true;
-    }
-    return false;
-  }
-
-  // 关键词作用域：行首可加 title: / up: / part: 前缀，限定只匹配 标题/UP名/分区；
-  // 不写前缀 = 全字段（保持历史行为）。前缀仅识别这三种，其它含冒号的词（如"日入500:真相"）按普通词处理。
-  // 形如 title:/正则/ 也支持（前缀剥离后仍交给 compileLines 解析正则）。
-  const KW_SCOPES = ['title', 'up', 'part'];
-  function compileScopedKeywords(lines) {
-    const buckets = { all: [], title: [], up: [], part: [] };
-    for (const raw of lines || []) {
-      const line = (raw || '').trim();
-      if (!line) continue;
-      const m = !line.startsWith('/') && line.match(/^(title|up|part)\s*:\s*(.+)$/i);
-      if (m) buckets[m[1].toLowerCase()].push(m[2].trim());
-      else buckets.all.push(line);
-    }
-    return {
-      all: compileLines(buckets.all),
-      title: compileLines(buckets.title),
-      up: compileLines(buckets.up),
-      part: compileLines(buckets.part),
-    };
-  }
-  // 针对某字段判定：无前缀(all)的词对所有字段生效，带前缀的词只对对应字段生效
-  function kwHit(scoped, field, text) {
-    if (!scoped || !text) return false;
-    return textHit(text, scoped.all) || textHit(text, scoped[field]);
-  }
-  function parseDuration(s) {
-    if (!s) return null;
-    const parts = s.trim().split(':').map((x) => parseInt(x, 10));
-    if (parts.length < 2 || parts.some((n) => Number.isNaN(n))) return null;
-    return parts.reduce((acc, n) => acc * 60 + n, 0);
-  }
-  function parseCount(s) {
-    if (!s) return null;
-    const t = s.trim().replace(/[,\s]/g, '');
-    const m = t.match(/^([\d.]+)\s*(万|亿)?/);
-    if (!m) return null;
-    let n = parseFloat(m[1]);
-    if (Number.isNaN(n)) return null;
-    if (m[2] === '万') n *= 1e4;
-    else if (m[2] === '亿') n *= 1e8;
-    return Math.round(n);
-  }
-  function escapeHtml(s) {
-    return (s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  }
+  // 本节已全部抽到 ./util（getCookie/parseDuration/parseCount/escapeHtml）
+  // 与 ./match/normalize（lc/toHalfWidth/escapeRe/INVISIBLE_RE/stripInvisible/SEP_RE/
+  // normMatch/compileLines/textHit/KW_SCOPES/compileScopedKeywords/kwHit）。见顶部 import。
+  // fuzzy 开关经 configureFuzzy 注入（在 CONFIG 就绪后、首次 buildMatchers 前绑定，见下）。
 
   /* ===================== 2. 页面模型 ===================== */
   const IS_SEARCH = location.host === 'search.bilibili.com';
@@ -798,7 +679,7 @@
 
   /* ===================== 4b. 接口层（缓存 + 限速队列 + 风控熔断，避免频繁请求） ===================== */
   // 风控熔断：B 站返回风控码时全局暂停联网并指数退避，保护账号（API 取数 + 批量拉黑共用）。
-  const RISK_CODES = new Set([-352, -412, -509, -799]); // 校验失败/被拦截/请求过频
+  // RISK_CODES 已抽到 ./constants
   const riskGuard = {
     until: 0,
     strikes: 0,
@@ -1170,7 +1051,7 @@
   }
 
   /* ===================== 5. 拦截执行 ===================== */
-  const PROCESSED = 'data-bfb-done';
+  // PROCESSED 已抽到 ./constants
   const blockedLog = [];
   const countedEls = new WeakSet();
   // 按拦截原因聚合计数，供面板「分类」与启动汇总共用
@@ -2294,24 +2175,7 @@
     host.appendChild(sec);
   }
 
-  // 把多条输入拆成规则数组（正则感知）：换行总是分隔；以 / 开头的行视为整条正则、不按逗号拆
-  // （避免把 /震惊{2,3}/、/(a|b){1,2}/ 这类含逗号的正则拆断）；其余行才按 逗号/分号 拆。
-  function splitRuleInput(raw) {
-    const out = [];
-    for (const ln of String(raw || '').split('\n')) {
-      const s = ln.trim();
-      if (!s) continue;
-      if (s[0] === '/') {
-        out.push(s); // 整行正则，保留其中的逗号
-        continue;
-      }
-      for (const x of s.split(/[,，;；]/)) {
-        const v = x.trim();
-        if (v) out.push(v);
-      }
-    }
-    return out;
-  }
+  // splitRuleInput 已抽到 ./match/normalize（见顶部 import）
 
   // 普通 chip 列表（关键词 / BV / 标签 / 白名单…）；groupMode=组合标签
   function chipModel(arr, groupMode) {

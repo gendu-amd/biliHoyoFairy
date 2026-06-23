@@ -26,16 +26,171 @@
 
 "use strict";
 (() => {
+  // src/constants.ts
+  var VERSION = typeof GM_info !== "undefined" && GM_info.script && GM_info.script.version || "0.0.1";
+  var STORE_KEY = "bfb_config_v2";
+  var SUB_STORE_KEY = "bfb_subs_v1";
+  var BLACKLIST_MANAGE_URL = "https://account.bilibili.com/account/blacklist";
+  var ATTR_API = "data-bfb-api";
+  var ATTR_BLOCKED = "data-bfb-blocked";
+  var PROCESSED = "data-bfb-done";
+  var COMMENT_BOTS = /* @__PURE__ */ new Set([
+    "机器工具人",
+    "有趣的程序员",
+    "AI视频小助理",
+    "AI视频小助理总结一下",
+    "AI笔记侠",
+    "AI视频助手",
+    "哔哩哔理点赞姬",
+    "课代表猫",
+    "AI课代表呀",
+    "木几萌Moe",
+    "星崽丨StarZai",
+    "AI沈阳美食家",
+    "AI头脑风暴",
+    "GPT_5",
+    "Juice_AI",
+    "AI全文总结",
+    "AI视频总结",
+    "AI总结视频",
+    "AI工具集",
+    "Ai的评论",
+    "AI识片酱",
+    "AI知识总结",
+    "AI小精灵呀",
+    "AI课程教学",
+    "Ai好记",
+    "MilkyAi",
+    "视频AI问答助手"
+  ]);
+  var COMMENT_AD_RE = /(bili2233\.cn|b23\.tv)\/(mall-|cm-)|领券|gaoneng\.bilibili\.com/i;
+  var UNSAFE_KEYS = /* @__PURE__ */ new Set(["__proto__", "constructor", "prototype"]);
+  var RISK_CODES = /* @__PURE__ */ new Set([-352, -412, -509, -799]);
+
+  // src/util.ts
+  function getCookie(name) {
+    const m = document.cookie.match(new RegExp("(^|;\\s*)" + name + "=([^;]*)"));
+    return m ? decodeURIComponent(m[2]) : "";
+  }
+  function parseDuration(s) {
+    if (!s) return null;
+    const parts = s.trim().split(":").map((x) => parseInt(x, 10));
+    if (parts.length < 2 || parts.some((n) => Number.isNaN(n))) return null;
+    return parts.reduce((acc, n) => acc * 60 + n, 0);
+  }
+  function parseCount(s) {
+    if (!s) return null;
+    const t = s.trim().replace(/[,\s]/g, "");
+    const m = t.match(/^([\d.]+)\s*(万|亿)?/);
+    if (!m) return null;
+    let n = parseFloat(m[1]);
+    if (Number.isNaN(n)) return null;
+    if (m[2] === "万") n *= 1e4;
+    else if (m[2] === "亿") n *= 1e8;
+    return Math.round(n);
+  }
+  function escapeHtml(s) {
+    return (s || "").replace(
+      /[&<>"']/g,
+      (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
+    );
+  }
+
+  // src/match/normalize.ts
+  var lc = (s) => (s || "").toString().trim().toLowerCase();
+  function toHalfWidth(s) {
+    return (s || "").toString().replace(/[\uFF01-\uFF5E]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 65248)).replace(/\u3000/g, " ");
+  }
+  var escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  var INVISIBLE_RE = /[\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]/g;
+  var stripInvisible = (s) => (s || "").toString().replace(INVISIBLE_RE, "");
+  var SEP_RE = /[\s_.·・･﹒。,，、;；:：!！?？~～^*"'`|｜/\\()（）【】<>《》[\]—-]+/g;
+  var getFuzzy = () => false;
+  function configureFuzzy(fn) {
+    getFuzzy = fn;
+  }
+  function normMatch(s) {
+    let t = stripInvisible(toHalfWidth(s)).toLowerCase();
+    if (getFuzzy()) t = t.replace(SEP_RE, "");
+    return t;
+  }
+  function compileLines(lines) {
+    const plainParts = [];
+    const regexes = [];
+    for (const raw of lines || []) {
+      const line = (raw || "").trim();
+      if (!line) continue;
+      const m = line.match(/^\/(.*)\/([a-z]*)$/);
+      if (m) {
+        try {
+          const flags = m[2] || "i";
+          regexes.push(new RegExp(m[1], flags.includes("i") ? flags : flags + "i"));
+        } catch (e) {
+        }
+      } else {
+        const w = normMatch(line);
+        if (w) plainParts.push(escapeRe(w));
+      }
+    }
+    let plain = null;
+    if (plainParts.length) {
+      try {
+        plain = new RegExp(plainParts.join("|"), "i");
+      } catch (e) {
+      }
+    }
+    return { plain, regexes, empty: !plain && !regexes.length };
+  }
+  function textHit(text, matcher) {
+    if (!text || !matcher) return false;
+    if (matcher.plain && matcher.plain.test(normMatch(text))) return true;
+    if (matcher.regexes.length) {
+      const t = stripInvisible(text);
+      for (const r of matcher.regexes) if (r.test(t)) return true;
+    }
+    return false;
+  }
+  function compileScopedKeywords(lines) {
+    const buckets = { all: [], title: [], up: [], part: [] };
+    for (const raw of lines || []) {
+      const line = (raw || "").trim();
+      if (!line) continue;
+      const m = !line.startsWith("/") && line.match(/^(title|up|part)\s*:\s*(.+)$/i);
+      if (m) buckets[m[1].toLowerCase()].push(m[2].trim());
+      else buckets.all.push(line);
+    }
+    return {
+      all: compileLines(buckets.all),
+      title: compileLines(buckets.title),
+      up: compileLines(buckets.up),
+      part: compileLines(buckets.part)
+    };
+  }
+  function kwHit(scoped, field, text) {
+    if (!scoped || !text) return false;
+    return textHit(text, scoped.all) || textHit(text, scoped[field]);
+  }
+  function splitRuleInput(raw) {
+    const out = [];
+    for (const ln of String(raw || "").split("\n")) {
+      const s = ln.trim();
+      if (!s) continue;
+      if (s[0] === "/") {
+        out.push(s);
+        continue;
+      }
+      for (const x of s.split(/[,，;；]/)) {
+        const v = x.trim();
+        if (v) out.push(v);
+      }
+    }
+    return out;
+  }
+
   // src/main.ts
   (function() {
     "use strict";
-    const VERSION = typeof GM_info !== "undefined" && GM_info.script && GM_info.script.version || "0.0.1";
-    const STORE_KEY = "bfb_config_v2";
-    const SUB_STORE_KEY = "bfb_subs_v1";
-    const BLACKLIST_MANAGE_URL = "https://account.bilibili.com/account/blacklist";
     const BADGE = "color:#fff;background:#fb7299;padding:0 4px;border-radius:3px";
-    const ATTR_API = "data-bfb-api";
-    const ATTR_BLOCKED = "data-bfb-blocked";
     function log(...args) {
       if (CONFIG.debug) console.log(`%c[biliHoyoFairy]%c`, BADGE, "color:inherit", ...args);
     }
@@ -151,37 +306,6 @@
       { cat: "其它", name: "梗视频", rules: { keywords: ["科目三", "猫meme", "/是什么梗|梗百科|大型[纪记]录片/"] } },
       { cat: "其它", name: "含日语标题", rules: { keywords: ["/[ぁ-ヶ]/"] } }
     ];
-    const COMMENT_BOTS = /* @__PURE__ */ new Set([
-      "机器工具人",
-      "有趣的程序员",
-      "AI视频小助理",
-      "AI视频小助理总结一下",
-      "AI笔记侠",
-      "AI视频助手",
-      "哔哩哔理点赞姬",
-      "课代表猫",
-      "AI课代表呀",
-      "木几萌Moe",
-      "星崽丨StarZai",
-      "AI沈阳美食家",
-      "AI头脑风暴",
-      "GPT_5",
-      "Juice_AI",
-      "AI全文总结",
-      "AI视频总结",
-      "AI总结视频",
-      "AI工具集",
-      "Ai的评论",
-      "AI识片酱",
-      "AI知识总结",
-      "AI小精灵呀",
-      "AI课程教学",
-      "Ai好记",
-      "MilkyAi",
-      "视频AI问答助手"
-    ]);
-    const COMMENT_AD_RE = /(bili2233\.cn|b23\.tv)\/(mall-|cm-)|领券|gaoneng\.bilibili\.com/i;
-    const UNSAFE_KEYS = /* @__PURE__ */ new Set(["__proto__", "constructor", "prototype"]);
     function deepMerge(base, override) {
       for (const k of Object.keys(override || {})) {
         if (UNSAFE_KEYS.has(k)) continue;
@@ -232,6 +356,7 @@
       }
     }
     const CONFIG = loadConfig();
+    configureFuzzy(() => CONFIG.fuzzyMatch);
     let sessionBlocked = 0;
     const SUB_DIMS = ["uids", "upNames", "keywords", "partitions", "tags", "upBio", "bvids"];
     const SUB_LINE_PREFIX = { uid: "uids", up: "upNames", kw: "keywords", part: "partitions", tag: "tags", bio: "upBio", bv: "bvids" };
@@ -392,100 +517,6 @@
           }
         })
       );
-    }
-    function getCookie(name) {
-      const m = document.cookie.match(new RegExp("(^|;\\s*)" + name + "=([^;]*)"));
-      return m ? decodeURIComponent(m[2]) : "";
-    }
-    const lc = (s) => (s || "").toString().trim().toLowerCase();
-    function toHalfWidth(s) {
-      return (s || "").toString().replace(/[\uFF01-\uFF5E]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 65248)).replace(/\u3000/g, " ");
-    }
-    const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const INVISIBLE_RE = /[\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]/g;
-    const stripInvisible = (s) => (s || "").toString().replace(INVISIBLE_RE, "");
-    const SEP_RE = /[\s_.·・･﹒。,，、;；:：!！?？~～^*"'`|｜/\\()（）【】<>《》\[\]—-]+/g;
-    function normMatch(s) {
-      let t = stripInvisible(toHalfWidth(s)).toLowerCase();
-      if (CONFIG.fuzzyMatch) t = t.replace(SEP_RE, "");
-      return t;
-    }
-    function compileLines(lines) {
-      const plainParts = [];
-      const regexes = [];
-      for (const raw of lines || []) {
-        const line = (raw || "").trim();
-        if (!line) continue;
-        const m = line.match(/^\/(.*)\/([a-z]*)$/);
-        if (m) {
-          try {
-            const flags = m[2] || "i";
-            regexes.push(new RegExp(m[1], flags.includes("i") ? flags : flags + "i"));
-          } catch (e) {
-          }
-        } else {
-          const w = normMatch(line);
-          if (w) plainParts.push(escapeRe(w));
-        }
-      }
-      let plain = null;
-      if (plainParts.length) {
-        try {
-          plain = new RegExp(plainParts.join("|"), "i");
-        } catch (e) {
-        }
-      }
-      return { plain, regexes, empty: !plain && !regexes.length };
-    }
-    function textHit(text, matcher) {
-      if (!text || !matcher) return false;
-      if (matcher.plain && matcher.plain.test(normMatch(text))) return true;
-      if (matcher.regexes.length) {
-        const t = stripInvisible(text);
-        for (const r of matcher.regexes) if (r.test(t)) return true;
-      }
-      return false;
-    }
-    const KW_SCOPES = ["title", "up", "part"];
-    function compileScopedKeywords(lines) {
-      const buckets = { all: [], title: [], up: [], part: [] };
-      for (const raw of lines || []) {
-        const line = (raw || "").trim();
-        if (!line) continue;
-        const m = !line.startsWith("/") && line.match(/^(title|up|part)\s*:\s*(.+)$/i);
-        if (m) buckets[m[1].toLowerCase()].push(m[2].trim());
-        else buckets.all.push(line);
-      }
-      return {
-        all: compileLines(buckets.all),
-        title: compileLines(buckets.title),
-        up: compileLines(buckets.up),
-        part: compileLines(buckets.part)
-      };
-    }
-    function kwHit(scoped, field, text) {
-      if (!scoped || !text) return false;
-      return textHit(text, scoped.all) || textHit(text, scoped[field]);
-    }
-    function parseDuration(s) {
-      if (!s) return null;
-      const parts = s.trim().split(":").map((x) => parseInt(x, 10));
-      if (parts.length < 2 || parts.some((n) => Number.isNaN(n))) return null;
-      return parts.reduce((acc, n) => acc * 60 + n, 0);
-    }
-    function parseCount(s) {
-      if (!s) return null;
-      const t = s.trim().replace(/[,\s]/g, "");
-      const m = t.match(/^([\d.]+)\s*(万|亿)?/);
-      if (!m) return null;
-      let n = parseFloat(m[1]);
-      if (Number.isNaN(n)) return null;
-      if (m[2] === "万") n *= 1e4;
-      else if (m[2] === "亿") n *= 1e8;
-      return Math.round(n);
-    }
-    function escapeHtml(s) {
-      return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
     }
     const IS_SEARCH = location.host === "search.bilibili.com";
     const IS_DYNAMIC = location.host === "t.bilibili.com";
@@ -754,7 +785,6 @@
       }
       return null;
     }
-    const RISK_CODES = /* @__PURE__ */ new Set([-352, -412, -509, -799]);
     const riskGuard = {
       until: 0,
       strikes: 0,
@@ -1081,7 +1111,6 @@
       } catch (e) {
       }
     }
-    const PROCESSED = "data-bfb-done";
     const blockedLog = [];
     const countedEls = /* @__PURE__ */ new WeakSet();
     function tallyLog() {
@@ -2101,22 +2130,6 @@
       });
       renderChips();
       host.appendChild(sec);
-    }
-    function splitRuleInput(raw) {
-      const out = [];
-      for (const ln of String(raw || "").split("\n")) {
-        const s = ln.trim();
-        if (!s) continue;
-        if (s[0] === "/") {
-          out.push(s);
-          continue;
-        }
-        for (const x of s.split(/[,，;；]/)) {
-          const v = x.trim();
-          if (v) out.push(v);
-        }
-      }
-      return out;
     }
     function chipModel(arr, groupMode) {
       return {
