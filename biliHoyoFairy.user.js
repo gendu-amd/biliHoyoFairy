@@ -248,6 +248,13 @@
     else if (m[2] === "亿") n *= 1e8;
     return Math.round(n);
   }
+  function capMapSet(map, key, val, max) {
+    map.set(key, val);
+    while (map.size > max) {
+      const oldest = map.keys().next().value;
+      map.delete(oldest);
+    }
+  }
   function escapeHtml(s) {
     return (s || "").replace(
       /[&<>"']/g,
@@ -1297,6 +1304,10 @@
   }
 
   // src/api.ts
+  var VIEW_CACHE_MAX = 800;
+  var TAG_CACHE_MAX = 1200;
+  var CARD_CACHE_MAX = 800;
+  var UID_NAMES_MAX = 5e3;
   var riskGuard = {
     until: 0,
     strikes: 0,
@@ -1387,10 +1398,13 @@
     apiEnqueue((done) => {
       gmGet("https://api.bilibili.com/x/web-interface/view?bvid=" + encodeURIComponent(bvid), (j) => {
         const d = j && j.code === 0 ? j.data : null;
-        API.view.set(bvid, d);
+        capMapSet(API.view, bvid, d, VIEW_CACHE_MAX);
         if (d && d.owner && d.owner.mid && d.owner.name) {
-          CONFIG.uidNames[String(d.owner.mid)] = d.owner.name;
-          scheduleSave();
+          const key = String(d.owner.mid);
+          if (CONFIG.uidNames[key] !== void 0 || Object.keys(CONFIG.uidNames).length < UID_NAMES_MAX) {
+            CONFIG.uidNames[key] = d.owner.name;
+            scheduleSave();
+          }
         }
         cb(d);
         done();
@@ -1403,7 +1417,7 @@
     apiEnqueue((done) => {
       gmGet("https://api.bilibili.com/x/web-interface/view/detail/tag?bvid=" + encodeURIComponent(bvid), (j) => {
         const arr = j && j.code === 0 && Array.isArray(j.data) ? j.data.map((x) => x.tag_name).filter(Boolean) : null;
-        API.tag.set(bvid, arr);
+        capMapSet(API.tag, bvid, arr, TAG_CACHE_MAX);
         cb(arr);
         done();
       });
@@ -1415,7 +1429,7 @@
     apiEnqueue((done) => {
       gmGet("https://api.bilibili.com/x/web-interface/card?mid=" + encodeURIComponent(mid), (j) => {
         const d = j && j.code === 0 ? j.data : null;
-        API.card.set(mid, d);
+        capMapSet(API.card, mid, d, CARD_CACHE_MAX);
         cb(d);
         done();
       });

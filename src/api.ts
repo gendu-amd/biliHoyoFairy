@@ -1,8 +1,16 @@
 // 接口层：缓存 + 小并发限速队列 + 风控熔断。API 取数与批量拉黑共用。
 import { RISK_CODES } from './constants';
 import { CONFIG, scheduleSave } from './config';
+import { capMapSet } from './util';
 import { logErr } from './logging';
 import { toast } from './ui/toast';
+
+// 缓存容量上限（防长会话内存无界）：view/card 对象较大用 800，tag 较小用 1200。
+const VIEW_CACHE_MAX = 800;
+const TAG_CACHE_MAX = 1200;
+const CARD_CACHE_MAX = 800;
+// uidNames（持久化）软上限：超出时不再写入新名字，避免存档 blob 无限膨胀（仅影响新 UP 的按名展示，退回显示 uid）。
+const UID_NAMES_MAX = 5000;
 
 // 风控熔断：B 站返回风控码时全局暂停联网并指数退避，保护账号。
 export const riskGuard = {
@@ -106,10 +114,14 @@ export function fetchView(bvid: string, cb: ApiCb): void {
   apiEnqueue((done) => {
     gmGet('https://api.bilibili.com/x/web-interface/view?bvid=' + encodeURIComponent(bvid), (j) => {
       const d = j && j.code === 0 ? j.data : null;
-      API.view.set(bvid, d); // d.owner.mid 即可反查 uid，无需另设缓存
+      capMapSet(API.view, bvid, d, VIEW_CACHE_MAX); // d.owner.mid 即可反查 uid，无需另设缓存
       if (d && d.owner && d.owner.mid && d.owner.name) {
-        CONFIG.uidNames[String(d.owner.mid)] = d.owner.name; // 持久化：面板按名展示
-        scheduleSave();
+        const key = String(d.owner.mid);
+        // 软上限：已存在的键照常更新；只在「新增键且已达上限」时跳过，避免持久化 blob 无界增长。
+        if (CONFIG.uidNames[key] !== undefined || Object.keys(CONFIG.uidNames).length < UID_NAMES_MAX) {
+          CONFIG.uidNames[key] = d.owner.name; // 持久化：面板按名展示
+          scheduleSave();
+        }
       }
       cb(d);
       done();
@@ -123,7 +135,7 @@ export function fetchTags(bvid: string, cb: ApiCb): void {
   apiEnqueue((done) => {
     gmGet('https://api.bilibili.com/x/web-interface/view/detail/tag?bvid=' + encodeURIComponent(bvid), (j) => {
       const arr = j && j.code === 0 && Array.isArray(j.data) ? j.data.map((x: any) => x.tag_name).filter(Boolean) : null;
-      API.tag.set(bvid, arr);
+      capMapSet(API.tag, bvid, arr, TAG_CACHE_MAX);
       cb(arr);
       done();
     });
@@ -136,7 +148,7 @@ export function fetchCard(mid: string, cb: ApiCb): void {
   apiEnqueue((done) => {
     gmGet('https://api.bilibili.com/x/web-interface/card?mid=' + encodeURIComponent(mid), (j) => {
       const d = j && j.code === 0 ? j.data : null;
-      API.card.set(mid, d);
+      capMapSet(API.card, mid, d, CARD_CACHE_MAX);
       cb(d);
       done();
     });

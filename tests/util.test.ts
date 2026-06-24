@@ -1,5 +1,32 @@
 import { describe, expect, it } from 'vitest';
-import { escapeHtml, parseCount, parseDuration } from '../src/util';
+import { capMapSet, escapeHtml, parseCount, parseDuration } from '../src/util';
+
+describe('capMapSet', () => {
+  it('未超上限：正常写入', () => {
+    const m = new Map<string, number>();
+    capMapSet(m, 'a', 1, 3);
+    capMapSet(m, 'b', 2, 3);
+    expect(m.size).toBe(2);
+    expect(m.get('a')).toBe(1);
+  });
+  it('超上限：淘汰最旧键，保留最新', () => {
+    const m = new Map<string, number>();
+    capMapSet(m, 'a', 1, 2);
+    capMapSet(m, 'b', 2, 2);
+    capMapSet(m, 'c', 3, 2); // 触发淘汰最旧的 a
+    expect(m.size).toBe(2);
+    expect(m.has('a')).toBe(false);
+    expect(m.has('b')).toBe(true);
+    expect(m.get('c')).toBe(3);
+  });
+  it('更新已存在键不增长 size', () => {
+    const m = new Map<string, number>();
+    capMapSet(m, 'a', 1, 2);
+    capMapSet(m, 'a', 9, 2);
+    expect(m.size).toBe(1);
+    expect(m.get('a')).toBe(9);
+  });
+});
 
 describe('parseDuration', () => {
   it('mm:ss → 秒', () => {

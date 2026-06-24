@@ -27,6 +27,16 @@ export function parseCount(s: string | null | undefined): number | null {
   return Math.round(n);
 }
 
+// 有容量上限的 Map 写入：超出 max 时按插入顺序淘汰最旧的键，避免长会话缓存无界增长。
+// 注：对缓存语义友好——被淘汰的键下次会重新拉取，结果不变，仅丢一次缓存。
+export function capMapSet<K, V>(map: Map<K, V>, key: K, val: V, max: number): void {
+  map.set(key, val);
+  while (map.size > max) {
+    const oldest = map.keys().next().value as K;
+    map.delete(oldest);
+  }
+}
+
 // HTML 转义：所有写入 innerHTML 的动态文本都应先过这里。
 export function escapeHtml(s: string | null | undefined): string {
   return (s || '').replace(
