@@ -43,14 +43,14 @@
     #bfb-panel .sec.allow .chip{background:#eafaef;color:#1b7a3d;border-color:#c6ecd0}
     #bfb-panel .chip b{cursor:pointer;font-weight:700;opacity:.6}
     #bfb-panel .chip b:hover{opacity:1}
-    #bfb-panel .empty{font-size:11px;color:#bbb;margin-top:6px}
+    #bfb-panel .empty{font-size:11px;color:#767676;margin-top:6px}
     #bfb-panel input[type=number]{width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:6px}
-    #bfb-panel .hint{font-size:11px;color:#999;margin-top:4px}
+    #bfb-panel .hint{font-size:11px;color:#6e6e6e;margin-top:4px}
     #bfb-panel .toolbar{display:flex;gap:8px;flex-wrap:wrap}
     #bfb-panel button.act{background:#fb7299;color:#fff;border:none;border-radius:8px;padding:8px 12px;cursor:pointer;font-size:13px}
     #bfb-panel button.ghost{background:#f3f3f3;color:#333}
     #bfb-panel .switch{display:flex;align-items:center;gap:8px;font-size:13px;color:#333;font-weight:600;margin-top:6px}
-    #bfb-panel .stat{font-size:12px;color:#888}
+    #bfb-panel .stat{font-size:12px;color:#6e6e6e}
     #bfb-panel a.manage{color:#fb7299;font-size:12px}
     #bfb-panel .sec.api{background:#f5f3ff}
     /* —— 交互美化 —— */
@@ -114,7 +114,7 @@
     #bfb-panel .bfb-group{display:none}
     #bfb-panel .bfb-group.active{display:block;animation:bfb-fade .18s ease}
     @keyframes bfb-fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
-    #bfb-panel .grp-tip{padding:8px 16px;font-size:11px;color:#aaa;background:#fafafa;border-bottom:1px solid #f0f0f0}
+    #bfb-panel .grp-tip{padding:8px 16px;font-size:11px;color:#6e6e6e;background:#fafafa;border-bottom:1px solid #f0f0f0}
     /* —— 暗色模式（跟随系统 prefers-color-scheme）：仅覆盖自有 UI 表面，品牌粉与语义色保留 —— */
     @media (prefers-color-scheme: dark){
       #bfb-panel,.bfb-toast,.bfb-modal,#bfb-ctxmenu{background:#1c1c20;color:#e6e6e9}
@@ -124,7 +124,7 @@
       #bfb-panel label{color:#cfcfd6}
       #bfb-panel .switch,#bfb-panel button.ghost{color:#d0d0d6}
       #bfb-panel .hint,#bfb-panel .stat,#bfb-panel .grp-tip{color:#8a8a92}
-      #bfb-panel .empty{color:#6a6a72}
+      #bfb-panel .empty{color:#9a9aa2}
       #bfb-panel .addrow input,#bfb-panel input[type=number]{background:#26262b;border-color:#44444c;color:#e6e6e9}
       #bfb-panel button.ghost{background:#2e2e34}
       #bfb-panel .switch input[type=checkbox]{background:#45454d}
