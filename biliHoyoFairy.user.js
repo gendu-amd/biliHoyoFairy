@@ -949,7 +949,7 @@
     }
   }
 
-  // src/dom/shadow.ts
+  // src/shadow.ts
   var shadowRoots = /* @__PURE__ */ new Set();
   function harvestShadowRoots(root) {
     if (!root || !root.querySelectorAll) return;
@@ -2278,8 +2278,7 @@
     });
   }
 
-  // src/ui/panel.ts
-  var panelStatsRefresh = null;
+  // src/ui/panel.styles.ts
   GM_addStyle(`
     .bfb-review{outline:2px solid #fb7299 !important;outline-offset:-2px;border-radius:8px;position:relative !important}
     .bfb-tag{position:absolute;top:6px;left:6px;z-index:9;display:flex;align-items:center;gap:6px;background:rgba(251,114,153,.95);color:#fff;border-radius:8px;padding:3px 6px;font-size:11px;font-family:system-ui,Arial;box-shadow:0 2px 6px rgba(0,0,0,.25)}
@@ -2372,6 +2371,9 @@
     @keyframes bfb-fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
     #bfb-panel .grp-tip{padding:8px 16px;font-size:11px;color:#aaa;background:#fafafa;border-bottom:1px solid #f0f0f0}
   `);
+
+  // src/ui/panel.ts
+  var panelStatsRefresh = null;
   var activeTab = "base";
   function buildPanel() {
     if (panelEl()) return;

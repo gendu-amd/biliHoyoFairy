@@ -8,7 +8,7 @@ import { extractCardInfo } from './cardinfo';
 import { M, matchRule, matchApi, apiNeeds, apiRulesActive, isWhitelisted, rebuildRules } from './match/engine';
 import { fetchView, fetchTags, fetchCard } from './api';
 import { recordBlock } from './stats';
-import { shadowRoots } from './dom/shadow';
+import { shadowRoots } from './shadow';
 import { scanComments } from './comments';
 import { addToList } from './rules';
 import { log, safe } from './logging';

@@ -9,7 +9,7 @@ import { safe, BADGE } from './logging';
 import { configureCardDetect } from './cardinfo';
 import { pageType } from './page';
 import { installNetworkHooks } from './net';
-import { shadowRoots, harvestShadowRoots } from './dom/shadow';
+import { shadowRoots, harvestShadowRoots } from './shadow';
 import { sessionBlocked, tallyLog, setStatsListener } from './stats';
 import { updateBadge, toast } from './ui/toast';
 import { setPanelHooks } from './ui/hooks';

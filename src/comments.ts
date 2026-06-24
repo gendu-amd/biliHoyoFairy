@@ -7,7 +7,7 @@ import { CONFIG } from './config';
 import { COMMENT_BOTS, COMMENT_AD_RE } from './constants';
 import { lc, textHit } from './match/normalize';
 import { M, ruleVersion } from './match/engine';
-import { shadowRoots } from './dom/shadow';
+import { shadowRoots } from './shadow';
 import { recordBlock } from './stats';
 import { log, safe } from './logging';
 
