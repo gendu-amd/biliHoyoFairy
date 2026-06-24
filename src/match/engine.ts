@@ -215,7 +215,7 @@ export function apiRulesActive(): boolean {
 }
 
 // 把原始接口数据整理成匹配上下文，供 API_DIMS 的 match 共用。
-export function buildApiCtx(info: CardInfo, view: any, tags: string[] | null | undefined, cardData: any): ApiCtx {
+function buildApiCtx(info: CardInfo, view: any, tags: string[] | null | undefined, cardData: any): ApiCtx {
   const ctx: ApiCtx = { tags: tags || [], view: view || {} };
   if (cardData) {
     const c = cardData.card || cardData;
@@ -226,6 +226,7 @@ export function buildApiCtx(info: CardInfo, view: any, tags: string[] | null | u
 
 // 联网维度匹配：view=视频详情, tags=标签数组, cardData=UP卡片。
 export function matchApi(info: CardInfo, view: any, tags: string[] | null | undefined, cardData: any): string | null {
+  if (isWhitelisted(info)) return null; // 与 matchRule 对齐：白名单对联网维度同样优先（防新增调用点遗漏）
   const ctx = buildApiCtx(info, view, tags, cardData);
   for (const d of API_DIMS) {
     if (d.source === 'tag' && !(tags && tags.length)) continue;

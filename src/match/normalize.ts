@@ -15,12 +15,12 @@ export const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, 
 
 // —— 反绕过归一 ——
 // 隐形字符(零宽空格/方向控制符等)：纯绕过手段、零误伤，始终剔除。
-export const INVISIBLE_RE = /[\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]/g;
+const INVISIBLE_RE = /[\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]/g;
 export const stripInvisible = (s: unknown): string => (s || '').toString().replace(INVISIBLE_RE, '');
 
 // 分隔符：fuzzyMatch 开启时从文本与普通词两侧一并剔除，使“原 神 / 原.神 / 原·神”也命中。
 // 只跨分隔符桥接、不跨文字，故几乎不误伤（“原创神作”中 创 非分隔符，不会命中“原神”）。
-export const SEP_RE = /[\s_.·・･﹒。,，、;；:：!！?？~～^*"'`|｜/\\()（）【】<>《》[\]—-]+/g;
+const SEP_RE = /[\s_.·・･﹒。,，、;；:：!！?？~～^*"'`|｜/\\()（）【】<>《》[\]—-]+/g;
 
 // fuzzyMatch 开关的注入式取值器（默认关）。主程序在 CONFIG 就绪后调用 configureFuzzy 绑定。
 let getFuzzy: () => boolean = () => false;
@@ -42,7 +42,7 @@ export interface Matcher {
 }
 
 // 单条 /正则/ 模式体的长度上限（针对订阅/导入的不可信正则）。正常规则远不及此。
-export const MAX_REGEX_LEN = 1000;
+const MAX_REGEX_LEN = 1000;
 
 // 灾难性回溯启发式（非完备，仅挡最常见形态）：量词作用于「本身含无界量词」的分组，
 // 如 (a+)+ / (a*)* / (a+){2,} —— 这类对中等长度文本即可指数级回溯卡死页面。

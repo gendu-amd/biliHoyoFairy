@@ -4,7 +4,7 @@
 // 注：GM POST 详情与多态回调暂以 any 处理，保留 @ts-nocheck（渐进类型化）。
 import { fetchView, riskGuard } from './api';
 import { getCookie } from './util';
-import { CONFIG, saveConfig } from './config';
+import { CONFIG, saveConfig, setUidName } from './config';
 import { addToList, pushUnique, removeFromList } from './rules';
 import { emitRulesChanged } from './events';
 import { toast } from './ui/toast';
@@ -32,7 +32,7 @@ export const REL_ERR = {
 function doBlacklist(uid, upName, cb, quiet) {
   const label = upName || uid;
   const addLocal = () => {
-    if (upName) CONFIG.uidNames[String(uid)] = upName;
+    if (upName) setUidName(uid, upName);
     // 批量(quiet) 不逐条存盘/重扫——由 doBlacklistMany.finish 统一一次 saveConfig+重扫，避免 N 次全页重扫卡顿。
     if (quiet) pushUnique(CONFIG.block.uids, [String(uid)]);
     else addToList(CONFIG.block.uids, String(uid));
@@ -144,6 +144,7 @@ export function doBlacklistMany(targets, cb, onProgress) {
   let cancelled = false; // 用户点「停止」
   let finished = false; // 防止「取消」与在途回调重复收尾
   let timer = null; // 当前等待中的定时器（限速/退避），取消时清掉
+  const noCsrf = !getCookie('bili_jct'); // 未登录：每条都只走本地降级、不发请求，无需限速空转
   const snapshot = (paused) => ({
     done,
     added,
@@ -195,7 +196,7 @@ export function doBlacklistMany(targets, cb, onProgress) {
         else failed.push({ uid: t.uid, code });
         report(false);
         if (cancelled) return finish(); // 停止：在途请求收尾后即结束，不再排下一个
-        timer = setTimeout(next, BL_DELAY + Math.random() * BL_JITTER);
+        timer = setTimeout(next, noCsrf ? 0 : BL_DELAY + Math.random() * BL_JITTER);
       },
       true
     );

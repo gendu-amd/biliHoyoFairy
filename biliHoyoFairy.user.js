@@ -178,6 +178,14 @@
   function saveConfig() {
     GM_setValue(STORE_KEY, JSON.stringify(CONFIG));
   }
+  var UID_NAMES_MAX = 5e3;
+  function setUidName(uid, name) {
+    const k = String(uid || "");
+    if (!k || !name) return;
+    if (CONFIG.uidNames[k] !== void 0 || Object.keys(CONFIG.uidNames).length < UID_NAMES_MAX) {
+      CONFIG.uidNames[k] = name;
+    }
+  }
   var saveTimer = null;
   function scheduleSave() {
     if (saveTimer) clearTimeout(saveTimer);
@@ -350,7 +358,8 @@
     const adC = ad && (ad.creative_content || ad.creative) || {};
     const rawTitle = it.title || adC.title || adC.description || ad?.title || "";
     return {
-      title: rawTitle.replace(/<[^>]*>/g, ""),
+      title: String(rawTitle || "").replace(/<[^>]*>/g, ""),
+      // String()：接口偶发非字符串 title 时不抛错
       up: owner.name || it.author || it.name || ad && ad.source_content && ad.source_content.name || "",
       uid: owner.mid != null ? String(owner.mid) : it.mid != null ? String(it.mid) : "",
       partition: it.tname || it.typename || it.rcmd_reason && it.rcmd_reason.content || "",
@@ -752,6 +761,7 @@
     return ctx;
   }
   function matchApi(info, view, tags, cardData) {
+    if (isWhitelisted(info)) return null;
     const ctx = buildApiCtx(info, view, tags, cardData);
     for (const d of API_DIMS) {
       if (d.source === "tag" && !(tags && tags.length)) continue;
@@ -1127,6 +1137,15 @@
   }
   function refreshSubscriptions(force, done) {
     const store = loadSubStore();
+    const urls = new Set((CONFIG.subscriptions || []).map((s) => s && s.url).filter(Boolean));
+    let pruned = false;
+    for (const k of Object.keys(store)) {
+      if (!urls.has(k)) {
+        delete store[k];
+        pruned = true;
+      }
+    }
+    if (pruned) saveSubStore(store);
     const due = (CONFIG.subscriptions || []).filter((s) => {
       if (!s || !s.enabled || !s.url) return false;
       if (force) return true;
@@ -1347,7 +1366,6 @@
   var VIEW_CACHE_MAX = 800;
   var TAG_CACHE_MAX = 1200;
   var CARD_CACHE_MAX = 800;
-  var UID_NAMES_MAX = 5e3;
   var riskGuard = {
     until: 0,
     strikes: 0,
@@ -1439,12 +1457,9 @@
       gmGet("https://api.bilibili.com/x/web-interface/view?bvid=" + encodeURIComponent(bvid), (j) => {
         const d = j && j.code === 0 ? j.data : null;
         capMapSet(API.view, bvid, d, VIEW_CACHE_MAX);
-        if (d && d.owner && d.owner.mid && d.owner.name) {
-          const key = String(d.owner.mid);
-          if (CONFIG.uidNames[key] !== void 0 || Object.keys(CONFIG.uidNames).length < UID_NAMES_MAX) {
-            CONFIG.uidNames[key] = d.owner.name;
-            scheduleSave();
-          }
+        if (d && d.owner && d.owner.mid && d.owner.name && CONFIG.uidNames[String(d.owner.mid)] === void 0) {
+          setUidName(d.owner.mid, d.owner.name);
+          scheduleSave();
         }
         cb(d);
         done();
@@ -1584,7 +1599,7 @@
     let view = null;
     let tags = null;
     let cardData = null;
-    let pending = 0;
+    let pending = 1;
     const finish = () => {
       if (pending > 0) return;
       if (!CONFIG.enabled || isWhitelisted(info)) return;
@@ -1622,6 +1637,8 @@
         finish();
       });
     }
+    pending--;
+    finish();
   }
   function queryCards() {
     const out = Array.from(document.querySelectorAll(VIDEO_CARD_SELECTOR));
@@ -1673,7 +1690,7 @@
   function doBlacklist(uid, upName, cb, quiet) {
     const label = upName || uid;
     const addLocal = () => {
-      if (upName) CONFIG.uidNames[String(uid)] = upName;
+      if (upName) setUidName(uid, upName);
       if (quiet) pushUnique(CONFIG.block.uids, [String(uid)]);
       else addToList(CONFIG.block.uids, String(uid));
     };
@@ -1775,6 +1792,7 @@
     let cancelled = false;
     let finished = false;
     let timer = null;
+    const noCsrf = !getCookie("bili_jct");
     const snapshot = (paused) => ({
       done,
       added,
@@ -1824,7 +1842,7 @@
           else failed.push({ uid: t.uid, code });
           report(false);
           if (cancelled) return finish();
-          timer = setTimeout(next, BL_DELAY + Math.random() * BL_JITTER);
+          timer = setTimeout(next, noCsrf ? 0 : BL_DELAY + Math.random() * BL_JITTER);
         },
         true
       );
@@ -2464,7 +2482,7 @@
           fetchCard(entry.value, (d) => {
             const name = d && d.card && d.card.name;
             if (name) {
-              CONFIG.uidNames[String(entry.value)] = name;
+              setUidName(entry.value, name);
               saveConfig();
               rerender();
             }

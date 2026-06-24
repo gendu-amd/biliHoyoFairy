@@ -86,6 +86,16 @@ export function syncSubscription(url: string, cb?: (ok: boolean) => void): void 
 // 刷新启用中的订阅；force=true 忽略 expires 间隔。完成后若有变更则触发规则重建 + 重扫。
 export function refreshSubscriptions(force: boolean, done?: (n: number) => void): void {
   const store = loadSubStore();
+  // GC：清掉已不在订阅列表里的缓存条目（删订阅/恢复默认后残留），避免缓存 blob 随历史 URL 累积。
+  const urls = new Set((CONFIG.subscriptions || []).map((s) => s && s.url).filter(Boolean));
+  let pruned = false;
+  for (const k of Object.keys(store)) {
+    if (!urls.has(k)) {
+      delete store[k];
+      pruned = true;
+    }
+  }
+  if (pruned) saveSubStore(store);
   const due = (CONFIG.subscriptions || []).filter((s) => {
     if (!s || !s.enabled || !s.url) return false;
     if (force) return true;

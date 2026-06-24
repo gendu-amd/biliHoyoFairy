@@ -156,6 +156,17 @@ export function saveConfig(): void {
   GM_setValue(STORE_KEY, JSON.stringify(CONFIG));
 }
 
+// uidNames（持久化）软上限：达上限后不再写入「新」键，避免存档 blob 无界膨胀（仅影响新 UP 按名展示，退回显示 uid）。
+// 单点 setter：api 自动回填 / 拉黑写名 / 面板手动解析 三处统一调用，杜绝将来漏限。不负责存盘，由调用方决定时机。
+const UID_NAMES_MAX = 5000;
+export function setUidName(uid: unknown, name: string): void {
+  const k = String(uid || '');
+  if (!k || !name) return;
+  if (CONFIG.uidNames[k] !== undefined || Object.keys(CONFIG.uidNames).length < UID_NAMES_MAX) {
+    CONFIG.uidNames[k] = name;
+  }
+}
+
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 export function scheduleSave(): void {
   if (saveTimer) clearTimeout(saveTimer);

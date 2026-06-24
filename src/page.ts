@@ -1,6 +1,6 @@
 // 页面模型与卡片选择器：识别当前页类型、定位“内层视频卡”与要隐藏的网格格子。
-export const IS_SEARCH = location.host === 'search.bilibili.com';
-export const IS_DYNAMIC = location.host === 't.bilibili.com';
+const IS_SEARCH = location.host === 'search.bilibili.com';
+const IS_DYNAMIC = location.host === 't.bilibili.com';
 
 export function pageType(): string {
   const h = location.href;

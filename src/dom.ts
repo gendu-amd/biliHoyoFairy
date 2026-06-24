@@ -97,7 +97,7 @@ function evaluateApi(card, info) {
   let view = null;
   let tags = null;
   let cardData = null;
-  let pending = 0;
+  let pending = 1; // 守卫位：占位到所有同步派发完成再释放，避免缓存命中的同步回调导致 pending 中途归零、提前 finish
   const finish = () => {
     if (pending > 0) return;
     if (!CONFIG.enabled || isWhitelisted(info)) return;
@@ -136,6 +136,8 @@ function evaluateApi(card, info) {
       finish();
     });
   }
+  pending--; // 释放守卫：同步派发已结束；若此刻请求都已（同步）完成则在此真正评估一次
+  finish();
 }
 
 // 普通 DOM 卡片 ∪ 各存活 shadow root 内的卡片。

@@ -1,7 +1,7 @@
 // @ts-nocheck
 // 通用列表字段组件：折叠头 / 添加行 / 批量管理 / chip 渲染共一套；不同字段（关键词、UP名+UID、组合标签…）
 // 只需提供一个轻量 model 适配器。供设置面板复用。本层 DOM 操作密集，暂保留 @ts-nocheck（渐进类型化）。
-import { CONFIG, saveConfig } from '../config';
+import { CONFIG, saveConfig, setUidName } from '../config';
 import { addToList, removeFromList } from '../rules';
 import { splitRuleInput } from '../match/normalize';
 import { fetchCard } from '../api';
@@ -232,7 +232,7 @@ export function upModel(names, uids) {
         fetchCard(entry.value, (d) => {
           const name = d && d.card && d.card.name;
           if (name) {
-            CONFIG.uidNames[String(entry.value)] = name;
+            setUidName(entry.value, name);
             saveConfig();
             rerender();
           }

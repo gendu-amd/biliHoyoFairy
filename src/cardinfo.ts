@@ -129,7 +129,7 @@ export function normFeedItem(it: any): CardInfo | null {
   // 搜索结果的 title 内含 <em class="keyword"> 高亮标签，去标签后再匹配（其它接口无标签，无副作用）
   const rawTitle = it.title || adC.title || adC.description || ad?.title || '';
   return {
-    title: rawTitle.replace(/<[^>]*>/g, ''),
+    title: String(rawTitle || '').replace(/<[^>]*>/g, ''), // String()：接口偶发非字符串 title 时不抛错
     up: owner.name || it.author || it.name || (ad && ad.source_content && ad.source_content.name) || '',
     uid: owner.mid != null ? String(owner.mid) : it.mid != null ? String(it.mid) : '',
     partition: it.tname || it.typename || (it.rcmd_reason && it.rcmd_reason.content) || '',
