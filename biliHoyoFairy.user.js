@@ -1012,9 +1012,9 @@
     }
     return c;
   }
-  function toast(msg) {
+  function toast(msg, kind = "info") {
     const t = document.createElement("div");
-    t.className = "bfb-toast";
+    t.className = "bfb-toast" + (kind !== "info" ? " " + kind : "");
     t.textContent = msg;
     toastContainer().appendChild(t);
     setTimeout(() => t.remove(), 4e3);
@@ -1329,7 +1329,7 @@
       this.until = Date.now() + backoff;
       if (!wasBlocked) {
         logErr("风控熔断", `code ${code}，暂停联网 ${Math.round(backoff / 1e3)}s`);
-        toast(`⚠️ 触发 B 站风控(code ${code})，已暂停联网 ${Math.round(backoff / 1e3)} 秒以保护账号`);
+        toast(`⚠️ 触发 B 站风控(code ${code})，已暂停联网 ${Math.round(backoff / 1e3)} 秒以保护账号`, "error");
       }
     }
   };
@@ -1638,7 +1638,7 @@
     const csrf = getCookie("bili_jct");
     if (!csrf) {
       addLocal();
-      if (!quiet) toast(`未登录，已本地屏蔽「${label}」(未同步账号黑名单)`);
+      if (!quiet) toast(`未登录，已本地屏蔽「${label}」(未同步账号黑名单)`, "warn");
       cb && cb(false, -101);
       return;
     }
@@ -1663,15 +1663,15 @@
         const ok = code === 0 || code === 22120;
         if (ok) logBlocked("拉黑", { up: upName || CONFIG.uidNames && CONFIG.uidNames[String(uid)] || "", uid: String(uid) }, "BL");
         if (!quiet) {
-          if (code === 0) toast(`已拉黑并同步账号黑名单：${label}（刷新后不再推荐）`);
-          else if (code === 22120) toast(`「${label}」此前已在账号黑名单，已本地同步`);
-          else toast(`账号侧拉黑失败（${REL_ERR[code] || msg || "code " + code}），已本地屏蔽：${label}`);
+          if (code === 0) toast(`已拉黑并同步账号黑名单：${label}（刷新后不再推荐）`, "success");
+          else if (code === 22120) toast(`「${label}」此前已在账号黑名单，已本地同步`, "success");
+          else toast(`账号侧拉黑失败（${REL_ERR[code] || msg || "code " + code}），已本地屏蔽：${label}`, "warn");
         }
         cb && cb(ok, code);
       },
       onerror: () => {
         addLocal();
-        if (!quiet) toast(`网络错误，已本地屏蔽：${label}`);
+        if (!quiet) toast(`网络错误，已本地屏蔽：${label}`, "error");
         cb && cb(false, null);
       }
     });
@@ -2415,6 +2415,9 @@
     .bfb-ctx-item:hover{background:#fff0f5;color:#fb7299}
     #bfb-toasts{position:fixed;right:18px;bottom:70px;z-index:100001;display:flex;flex-direction:column}
     .bfb-toast{background:#fff;color:#222;border-radius:12px;padding:12px 14px;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.18);max-width:320px;font-family:system-ui,Arial;border:1px solid #ffd5e2;margin-top:8px}
+    .bfb-toast.success{border-left:4px solid #1b7a3d}
+    .bfb-toast.warn{border-left:4px solid #e67e22}
+    .bfb-toast.error{border-left:4px solid #e74c3c}
     .bfb-modal-back{position:fixed;inset:0;z-index:100003;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-family:system-ui,Arial;padding:16px}
     .bfb-modal{background:#fff;border-radius:14px;max-width:400px;width:88vw;box-shadow:0 12px 44px rgba(0,0,0,.32);overflow:hidden;animation:bfb-modal-in .14s ease-out}
     @keyframes bfb-modal-in{from{transform:scale(.95);opacity:.4}to{transform:scale(1);opacity:1}}

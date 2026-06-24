@@ -40,7 +40,7 @@ function doBlacklist(uid, upName, cb, quiet) {
   const csrf = getCookie('bili_jct');
   if (!csrf) {
     addLocal();
-    if (!quiet) toast(`未登录，已本地屏蔽「${label}」(未同步账号黑名单)`);
+    if (!quiet) toast(`未登录，已本地屏蔽「${label}」(未同步账号黑名单)`, 'warn');
     cb && cb(false, -101);
     return;
   }
@@ -66,15 +66,15 @@ function doBlacklist(uid, upName, cb, quiet) {
       // 成功拉黑写入屏蔽记录（单发/批量共用），让用户能看到“这次拉黑了谁”
       if (ok) logBlocked('拉黑', { up: upName || (CONFIG.uidNames && CONFIG.uidNames[String(uid)]) || '', uid: String(uid) }, 'BL');
       if (!quiet) {
-        if (code === 0) toast(`已拉黑并同步账号黑名单：${label}（刷新后不再推荐）`);
-        else if (code === 22120) toast(`「${label}」此前已在账号黑名单，已本地同步`);
-        else toast(`账号侧拉黑失败（${REL_ERR[code] || msg || 'code ' + code}），已本地屏蔽：${label}`);
+        if (code === 0) toast(`已拉黑并同步账号黑名单：${label}（刷新后不再推荐）`, 'success');
+        else if (code === 22120) toast(`「${label}」此前已在账号黑名单，已本地同步`, 'success');
+        else toast(`账号侧拉黑失败（${REL_ERR[code] || msg || 'code ' + code}），已本地屏蔽：${label}`, 'warn');
       }
       cb && cb(ok, code);
     },
     onerror: () => {
       addLocal();
-      if (!quiet) toast(`网络错误，已本地屏蔽：${label}`);
+      if (!quiet) toast(`网络错误，已本地屏蔽：${label}`, 'error');
       cb && cb(false, null);
     },
   });

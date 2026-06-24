@@ -27,9 +27,12 @@ function toastContainer(): HTMLElement {
   return c;
 }
 
-export function toast(msg: string): void {
+export type ToastKind = 'info' | 'success' | 'warn' | 'error';
+
+// kind 决定左侧色条（默认 info=原样）：success 绿 / warn 橙 / error 红，便于一眼区分操作结果。
+export function toast(msg: string, kind: ToastKind = 'info'): void {
   const t = document.createElement('div');
-  t.className = 'bfb-toast';
+  t.className = 'bfb-toast' + (kind !== 'info' ? ' ' + kind : '');
   t.textContent = msg;
   toastContainer().appendChild(t);
   setTimeout(() => t.remove(), 4000);

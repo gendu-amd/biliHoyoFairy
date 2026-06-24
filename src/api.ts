@@ -34,7 +34,7 @@ export const riskGuard = {
     this.until = Date.now() + backoff;
     if (!wasBlocked) {
       logErr('风控熔断', `code ${code}，暂停联网 ${Math.round(backoff / 1000)}s`);
-      toast(`⚠️ 触发 B 站风控(code ${code})，已暂停联网 ${Math.round(backoff / 1000)} 秒以保护账号`);
+      toast(`⚠️ 触发 B 站风控(code ${code})，已暂停联网 ${Math.round(backoff / 1000)} 秒以保护账号`, 'error');
     }
   },
 };
