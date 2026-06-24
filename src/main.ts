@@ -1,36 +1,23 @@
 // @ts-nocheck
-/* eslint-disable */
-// 整体 lift 自 v0.0.5 单文件快照（docs/review/v0.0.5-snapshot.user.js）。
-// 注：本文件为「逐字搬运」的过渡基线，刻意不改 v0.0.5 逻辑，故关闭 ts/eslint 检查；
-// 抽出的每个模块都是手写 TS、会受完整类型与 lint 约束。
-// 作用：干净重模块化的「基线」——行为与 v0.0.5 等价；后续按体检 DAG 自底向上逐层抽出模块，
-// 每抽一层都对照快照核对、强类型、补测。请勿手改本文件的逻辑，改动应通过抽模块进行。
-// —— 已抽出的模块（自底向上逐层进行中）——
-import { VERSION, STORE_KEY, SUB_STORE_KEY, BLACKLIST_MANAGE_URL, ATTR_API, ATTR_BLOCKED, PROCESSED, COMMENT_BOTS, COMMENT_AD_RE, UNSAFE_KEYS, RISK_CODES } from './constants';
-import { getCookie, parseDuration, parseCount, escapeHtml } from './util';
-import { lc, toHalfWidth, escapeRe, INVISIBLE_RE, stripInvisible, SEP_RE, configureFuzzy, normMatch, compileLines, textHit, KW_SCOPES, compileScopedKeywords, kwHit, splitRuleInput } from './match/normalize';
-import { CONFIG, DEFAULT_CONFIG, saveConfig, scheduleSave, exportConfig, mergeImport } from './config';
-import { log, logErr, safe, BADGE } from './logging';
-import { PRESET_LIBRARY } from './presets';
-import { parseSubscription, SUB_DIMS } from './subscriptions/parse';
-import { loadSubStore, saveSubStore } from './subscriptions/store';
-import { extractCardInfo, normFeedItem, configureCardDetect } from './cardinfo';
-import { M, ruleVersion, rebuildRules, isWhitelisted, matchRule, matchApi, apiNeeds, apiRulesActive, buildApiCtx, buildMatchers, SYNC_DIMS, API_DIMS } from './match/engine';
-import { IS_SEARCH, IS_DYNAMIC, pageType, VIDEO_CARD_SELECTOR, cellOf, isUnsafeHideTarget } from './page';
-import { riskGuard, fetchView, fetchTags, fetchCard, cachedUid } from './api';
+// 入口 bootstrap：在 document-start 安装拦截层 + shadow 钩子，文档就绪后启动 DOM 兜底/评论扫描，
+// 接线各模块的注入 seam（面板回调 / stats 监听 / 规则变更 / 卡片检测开关），注册菜单命令与 MutationObserver。
+// 业务逻辑全部在各 src 模块；本文件只负责装配。仍保留 @ts-nocheck（事件 glue，渐进类型化），但受 eslint(no-undef) 约束。
+// bootstrap 只依赖各模块的「入口/接线」符号；其余模块经依赖图传递性加载（无需在此直接 import）。
+import { VERSION, BLACKLIST_MANAGE_URL } from './constants';
+import { CONFIG, saveConfig } from './config';
+import { safe, BADGE } from './logging';
+import { configureCardDetect } from './cardinfo';
+import { pageType } from './page';
 import { installNetworkHooks } from './net';
 import { shadowRoots, harvestShadowRoots } from './dom/shadow';
-import { blockedLog, sessionBlocked, setSessionBlocked, tallyLog, logBlocked, recordBlock, setStatsListener } from './stats';
+import { sessionBlocked, tallyLog, setStatsListener } from './stats';
 import { updateBadge, toast } from './ui/toast';
 import { setPanelHooks } from './ui/hooks';
-import { addToList, removeFromList } from './rules';
-import { refreshSubscriptions, syncSubscription, metaGet } from './subscriptions/refresh';
+import { refreshSubscriptions } from './subscriptions/refresh';
 import { setRulesChangedHandler } from './events';
 import { CMT_TAGS, scanComments, scheduleCommentScan } from './comments';
-import { blacklistUp, doBlacklistMany, REL_ERR } from './blacklist';
 import { applyHotSearchStyle } from './hotsearch';
-import { processCard, queryCards, scanAll, rescanAfterRuleChange } from './dom';
-import { renderListField, chipModel, upModel, bindControl, renderFields } from './ui/field';
+import { scanAll, rescanAfterRuleChange } from './dom';
 import { onContextMenu, onCardHover, hideHoverBtn } from './ui/menu';
 import { openPanel, isPanelOpen, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
 /*

@@ -1,13 +1,12 @@
 // @ts-nocheck
 // 设置面板（UI 最大模块）：注入 CSS + 构建/渲染面板——分组 Tab、列表字段、预置库、规则订阅、
 // 名单批量处理/批量拉黑、正则测试器、导入导出、屏蔽记录等。DOM 操作密集，保留 @ts-nocheck（渐进类型化）。
-import { CONFIG, DEFAULT_CONFIG, saveConfig, scheduleSave, exportConfig, mergeImport } from '../config';
+import { CONFIG, DEFAULT_CONFIG, saveConfig, exportConfig, mergeImport } from '../config';
 import { PRESET_LIBRARY } from '../presets';
 import { VERSION, BLACKLIST_MANAGE_URL, ATTR_BLOCKED } from '../constants';
 import { pageType } from '../page';
 import { escapeHtml } from '../util';
-import { escapeRe, splitRuleInput, compileLines, textHit } from '../match/normalize';
-import { M } from '../match/engine';
+import { escapeRe } from '../match/normalize';
 import { blockedLog, tallyLog, sessionBlocked, setSessionBlocked } from '../stats';
 import { blacklistUp, doBlacklistMany, REL_ERR } from '../blacklist';
 import { refreshSubscriptions, syncSubscription, metaGet } from '../subscriptions/refresh';
@@ -15,10 +14,10 @@ import { loadSubStore, saveSubStore } from '../subscriptions/store';
 import { rescanAfterRuleChange } from '../dom';
 import { addToList } from '../rules';
 import { extractCardInfo } from '../cardinfo';
-import { fetchView, fetchCard, cachedUid } from '../api';
+import { fetchView, cachedUid } from '../api';
 import { applyHotSearchStyle } from '../hotsearch';
 import { toast, updateBadge } from './toast';
-import { renderListField, chipModel, upModel, bindControl, renderFields } from './field';
+import { renderListField, chipModel, bindControl, renderFields } from './field';
 import { hideHoverBtn } from './menu';
 
 let panelStatsRefresh = null; // 面板打开时的「屏蔽记录」刷新器（renderPanel 注册，stats 监听器读取）
