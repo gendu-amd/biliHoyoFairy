@@ -177,6 +177,8 @@ npm test           # vitest 纯逻辑单测
 - **缓存/存档有界**：API `view/tag/card` 缓存用 `util.capMapSet` 限容；`CONFIG.uidNames` 软上限 5000。任何会随会话无界增长的结构都要设上限。
 - **DOM 观察器全量 `scanAll` 是有意为之**：单卡判定由 `PROCESSED` 短路，每批仅一次原生 `querySelectorAll`；增量化会牺牲 shadow/skeleton 覆盖，无 profiling 证据前不改。
 - **确认对话框一律走 `ui/confirm.confirmModal`**（Promise<boolean>），不再用原生 `confirm()`；账号写/销毁类操作传 `danger:true`。新增确认入口请沿用，勿引回原生弹窗。
+- **账号拉黑必须可撤销**：拉黑成功要给撤销入口（toast 动作 / 屏蔽记录按钮），撤销走 `blacklist.unblockUp`（`relation/modify act=6`）。新增账号写操作同理。
+- **自有 UI 配色集中在 `ui/panel.styles.ts`**：新增表面要同时给暗色（`@media prefers-color-scheme:dark`）覆盖，说明性文字保证 WCAG AA（≥4.5:1）。
 - `@updateURL` 指向 main = 合入即发布；对外可见改动要 bump `meta.js` 的 `@version`，否则用户不会自动更新。
 - 第三方致谢集中在 README，勿散落代码注释。
 - **安全红线**（0.0.6 起）：`@connect` 只声明已知域（B 站 + 常见 CDN），不留 `*`；配置**导出与导入都剔除 `NON_PORTABLE`**（尤其 `subscriptions`，防分享文件注入自动联网 URL）；订阅/导入的 `/正则/` 受 `MAX_REGEX_LEN` 长度上限保护（防 ReDoS）。
