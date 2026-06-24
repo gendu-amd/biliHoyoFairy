@@ -61,6 +61,9 @@
     #bfb-panel .switch input[type=checkbox]:checked::after{transform:translateX(16px)}
     #bfb-panel .sec{transition:background .15s}
     #bfb-panel .addrow input:focus,#bfb-panel input[type=number]:focus{outline:none;border-color:#fb7299;box-shadow:0 0 0 2px rgba(251,114,153,.18)}
+    /* —— 键盘焦点环（仅键盘导航时出现，鼠标点击不显示）—— */
+    #bfb-panel button:focus-visible,#bfb-panel .tab:focus-visible,#bfb-panel .chip b:focus-visible,#bfb-panel .x:focus-visible,#bfb-panel a:focus-visible,#bfb-panel .switch input:focus-visible,.bfb-toast-act:focus-visible{outline:2px solid #fb7299;outline-offset:2px;border-radius:6px}
+    #bfb-panel:focus{outline:none}
     #bfb-panel button.act:active,#bfb-panel .addrow button:active{transform:translateY(1px)}
     #bfb-panel::-webkit-scrollbar{width:10px}
     #bfb-panel::-webkit-scrollbar-thumb{background:#f0c2d2;border-radius:8px;border:2px solid #fff}

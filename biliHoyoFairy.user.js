@@ -2518,6 +2518,9 @@
     #bfb-panel .switch input[type=checkbox]:checked::after{transform:translateX(16px)}
     #bfb-panel .sec{transition:background .15s}
     #bfb-panel .addrow input:focus,#bfb-panel input[type=number]:focus{outline:none;border-color:#fb7299;box-shadow:0 0 0 2px rgba(251,114,153,.18)}
+    /* —— 键盘焦点环（仅键盘导航时出现，鼠标点击不显示）—— */
+    #bfb-panel button:focus-visible,#bfb-panel .tab:focus-visible,#bfb-panel .chip b:focus-visible,#bfb-panel .x:focus-visible,#bfb-panel a:focus-visible,#bfb-panel .switch input:focus-visible,.bfb-toast-act:focus-visible{outline:2px solid #fb7299;outline-offset:2px;border-radius:6px}
+    #bfb-panel:focus{outline:none}
     #bfb-panel button.act:active,#bfb-panel .addrow button:active{transform:translateY(1px)}
     #bfb-panel::-webkit-scrollbar{width:10px}
     #bfb-panel::-webkit-scrollbar-thumb{background:#f0c2d2;border-radius:8px;border:2px solid #fff}
@@ -2609,11 +2612,23 @@
     if (panelEl()) return;
     const p = document.createElement("div");
     p.id = "bfb-panel";
+    p.tabIndex = -1;
+    p.setAttribute("role", "dialog");
+    p.setAttribute("aria-label", "biliHoyoFairy 设置");
     ["keydown", "keypress", "keyup", "input"].forEach((ev) => {
       p.addEventListener(ev, (e) => {
         if (e.target && e.target.matches && e.target.matches("input, textarea, select")) e.stopPropagation();
       });
     });
+    document.addEventListener(
+      "keydown",
+      (e) => {
+        if (e.key !== "Escape" || !p.classList.contains("open")) return;
+        if (document.querySelector(".bfb-modal-back")) return;
+        closePanel();
+      },
+      true
+    );
     document.body.appendChild(p);
     renderPanel(p);
   }
@@ -2645,9 +2660,16 @@
     p.innerHTML = "";
     panelStatsRefresh = null;
     const h2 = document.createElement("h2");
-    h2.innerHTML = `🛡 biliHoyoFairy · 抗击黑潮 <small style="font-weight:normal;opacity:.6;font-size:12px">v${VERSION} · ${pageType()}</small> <span class="x">✕</span>`;
+    h2.innerHTML = `🛡 biliHoyoFairy · 抗击黑潮 <small style="font-weight:normal;opacity:.6;font-size:12px">v${VERSION} · ${pageType()}</small> <span class="x" role="button" tabindex="0" aria-label="关闭设置面板">✕</span>`;
     p.appendChild(h2);
-    h2.querySelector(".x").onclick = closePanel;
+    const xBtn = h2.querySelector(".x");
+    xBtn.onclick = closePanel;
+    xBtn.onkeydown = (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        closePanel();
+      }
+    };
     const tabBar = document.createElement("div");
     tabBar.className = "tabs";
     p.appendChild(tabBar);
@@ -3399,15 +3421,28 @@
     const p = panelEl();
     return !!(p && p.classList.contains("open"));
   }
+  var lastFocus = null;
   function openPanel2() {
+    lastFocus = document.activeElement;
     buildPanel();
     const p = panelEl();
     renderPanel(p);
     p.classList.add("open");
+    try {
+      p.focus();
+    } catch (e) {
+    }
   }
   function closePanel() {
     const p = panelEl();
     if (p) p.classList.remove("open");
+    if (lastFocus && lastFocus.focus) {
+      try {
+        lastFocus.focus();
+      } catch (e) {
+      }
+    }
+    lastFocus = null;
   }
   function refreshPanelIfOpen2() {
     if (!isPanelOpen()) return;
