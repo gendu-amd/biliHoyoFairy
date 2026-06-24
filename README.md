@@ -130,8 +130,10 @@ B 站自带的「关键词屏蔽 / 不感兴趣」只在展示环节藏标题命
 
 欢迎提 Issue 反馈 bug / 建议，或提 Pull Request。完整流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
+- **想读懂代码 / 二次开发**：先看 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)——模块地图、分层依赖、注入 seam，以及「想改 X 去哪 / 怎么加新过滤维度·预置·订阅维度」的速查与 cookbook。
+- 源码在 `src/`（TypeScript 多模块），`npm run build` 用 esbuild 打包成根目录单文件 `biliHoyoFairy.user.js`（**别手改产物**）。
 - 报告问题：用 [Issue 模板](.github/ISSUE_TEMPLATE/) 提交，附页面类型、复现步骤、控制台 `[biliHoyoFairy]` 日志（开调试模式更易定位）。
-- 本地测试：把 `biliHoyoFairy.user.js` 拖进 Tampermonkey 安装 / 覆盖，刷新 B 站验证。
+- 本地测试：`npm run build` 后把根产物粘进 Tampermonkey 安装 / 覆盖，刷新 B 站验证（详见 [冒烟清单](docs/review/SMOKE-TEST.md)）。
 - 发布：`@updateURL` 指向 `main` 分支，**仅在 `@version` 升高时**触发用户自动更新，故对外改动务必同步 +1。
 
 ## 致谢
