@@ -183,6 +183,7 @@ export function doBlacklistMany(targets, cb, onProgress) {
       timer = setTimeout(next, riskGuard.remaining() + 50);
       return;
     }
+    timer = null; // 进入「在途请求」阶段：清掉已触发的旧间隔句柄，使 cancel() 必然延后到本次回调收尾（而非立即 finish）
     const t = list[i++];
     doBlacklist(
       t.uid,

@@ -76,6 +76,16 @@ describe('compileLines + textHit', () => {
     // 正常长度正则仍生效
     expect(compileLines(['/abc/']).empty).toBe(false);
   });
+  it('剥除 g/y 标志（避免 .test 复用时 lastIndex 粘连漏判）', () => {
+    const re = compileLines(['/ab/g']).regexes[0];
+    expect(re.flags).not.toContain('g');
+    expect(re.flags).toContain('i');
+    // 同一正则对象跨多次 test 仍稳定命中（无 lastIndex 推进）
+    expect(re.test('xaby')).toBe(true);
+    expect(re.test('xaby')).toBe(true);
+    // 保留有意义的 m/s 等
+    expect(compileLines(['/^a/m']).regexes[0].flags).toContain('m');
+  });
   it('fuzzy 开：普通词与文本两侧一致，绕过分隔符仍命中', () => {
     configureFuzzy(() => true);
     const m = compileLines(['原神']);

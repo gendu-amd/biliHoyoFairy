@@ -432,7 +432,7 @@
       if (m) {
         if (m[1].length > MAX_REGEX_LEN) continue;
         try {
-          const flags = m[2] || "i";
+          const flags = (m[2] || "i").replace(/[gy]/g, "");
           regexes.push(new RegExp(m[1], flags.includes("i") ? flags : flags + "i"));
         } catch (e) {
         }
@@ -1085,7 +1085,14 @@
     fetchSubText(url, (text, err) => {
       const store = loadSubStore();
       const finish = (patch, ok) => {
-        store[url] = ok ? patch : Object.assign(store[url] || {}, patch);
+        const prev = store[url] || {};
+        if (ok) {
+          store[url] = patch;
+        } else if (prev.ok && prev.rules) {
+          store[url] = Object.assign(prev, { error: patch.error, lastError: Date.now() });
+        } else {
+          store[url] = Object.assign(prev, patch);
+        }
         saveSubStore(store);
         cb && cb(ok);
       };
@@ -1786,6 +1793,7 @@
         timer = setTimeout(next, riskGuard.remaining() + 50);
         return;
       }
+      timer = null;
       const t = list[i++];
       doBlacklist(
         t.uid,

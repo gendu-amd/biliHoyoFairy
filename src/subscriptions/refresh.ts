@@ -50,7 +50,17 @@ export function syncSubscription(url: string, cb?: (ok: boolean) => void): void 
   fetchSubText(url, (text, err) => {
     const store = loadSubStore();
     const finish = (patch: any, ok: boolean) => {
-      store[url] = ok ? patch : Object.assign(store[url] || {}, patch);
+      const prev = store[url] || {};
+      if (ok) {
+        store[url] = patch;
+      } else if (prev.ok && prev.rules) {
+        // 瞬时失败但此前已有可用规则：保留旧规则，只记错误，不把 ok 翻成 false
+        // （否则 collectSubRules 会因 !ok 丢弃整份订阅规则，造成一次网络抖动后保护静默消失）。
+        // 不更新 lastSync，使其在下次刷新时仍被判为 due，尽快重试。
+        store[url] = Object.assign(prev, { error: patch.error, lastError: Date.now() });
+      } else {
+        store[url] = Object.assign(prev, patch); // 本就无可用规则：照常标记失败
+      }
       saveSubStore(store);
       cb && cb(ok);
     };

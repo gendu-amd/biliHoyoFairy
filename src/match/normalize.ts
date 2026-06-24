@@ -57,7 +57,8 @@ export function compileLines(lines: readonly string[] | null | undefined): Match
       // ReDoS 防护：过长的 /正则/（多来自订阅/导入的不可信来源）直接忽略，避免灾难性回溯卡死页面。
       if (m[1].length > MAX_REGEX_LEN) continue;
       try {
-        const flags = m[2] || 'i';
+        // 剥除 g/y：编译出的 RegExp 会跨多张卡复用 .test()，全局/粘性标志会让 lastIndex 粘连导致间歇漏判。
+        const flags = (m[2] || 'i').replace(/[gy]/g, '');
         regexes.push(new RegExp(m[1], flags.includes('i') ? flags : flags + 'i'));
       } catch (e) {
         /* 非法正则：忽略该行 */
