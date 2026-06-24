@@ -176,3 +176,5 @@ npm test           # vitest 纯逻辑单测
 - 新增联网维度必须**默认关 + 缓存 + 限速**（防风控）。
 - `@updateURL` 指向 main = 合入即发布；对外可见改动要 bump `meta.js` 的 `@version`，否则用户不会自动更新。
 - 第三方致谢集中在 README，勿散落代码注释。
+- **安全红线**（0.0.6 起）：`@connect` 只声明已知域（B 站 + 常见 CDN），不留 `*`；配置**导出与导入都剔除 `NON_PORTABLE`**（尤其 `subscriptions`，防分享文件注入自动联网 URL）；订阅/导入的 `/正则/` 受 `MAX_REGEX_LEN` 长度上限保护（防 ReDoS）。
+- **账号写操作红线**：单条拉黑（右键/悬停）执行前必须二次确认；批量拉黑必须可停止、限速、风控自动退避；`doBlacklistMany` 批量本地屏蔽统一一次 `saveConfig+emitRulesChanged`（勿逐条重扫）。
