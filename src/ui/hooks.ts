@@ -4,16 +4,10 @@ type Action = () => void;
 
 let _refreshPanelIfOpen: Action = () => {};
 let _openPanel: Action = () => {};
-let _isPanelOpen: () => boolean = () => false;
 
-export function setPanelHooks(h: {
-  refreshPanelIfOpen?: Action;
-  openPanel?: Action;
-  isPanelOpen?: () => boolean;
-}): void {
+export function setPanelHooks(h: { refreshPanelIfOpen?: Action; openPanel?: Action }): void {
   if (h.refreshPanelIfOpen) _refreshPanelIfOpen = h.refreshPanelIfOpen;
   if (h.openPanel) _openPanel = h.openPanel;
-  if (h.isPanelOpen) _isPanelOpen = h.isPanelOpen;
 }
 
 export function refreshPanelIfOpen(): void {
@@ -21,7 +15,4 @@ export function refreshPanelIfOpen(): void {
 }
 export function openPanel(): void {
   _openPanel();
-}
-export function isPanelOpen(): boolean {
-  return _isPanelOpen();
 }

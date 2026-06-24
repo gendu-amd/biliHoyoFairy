@@ -19,7 +19,7 @@ import { CMT_TAGS, scanComments, scheduleCommentScan } from './comments';
 import { applyHotSearchStyle } from './hotsearch';
 import { scanAll, rescanAfterRuleChange } from './dom';
 import { onContextMenu, onCardHover, hideHoverBtn } from './ui/menu';
-import { openPanel, isPanelOpen, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
+import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
 /*
  * 架构（拦截优先 + DOM 兜底）：
  *   1. 拦截层（主）：document-start 时 hook fetch / XHR，被动过滤 B 站自身请求的 JSON 列表
@@ -49,7 +49,6 @@ import { openPanel, isPanelOpen, refreshPanelIfOpen, refreshStatsIfOpen } from '
   setPanelHooks({
     refreshPanelIfOpen: () => refreshPanelIfOpen(),
     openPanel: () => openPanel(),
-    isPanelOpen: () => isPanelOpen(),
   });
   // stats 命中记账后回调：更新角标 + 面板打开时刷新计数（document.body 未就绪时跳过角标）。
   setStatsListener(() => {

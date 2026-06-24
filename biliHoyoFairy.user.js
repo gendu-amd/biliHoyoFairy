@@ -968,11 +968,9 @@
   };
   var _openPanel = () => {
   };
-  var _isPanelOpen = () => false;
   function setPanelHooks(h) {
     if (h.refreshPanelIfOpen) _refreshPanelIfOpen = h.refreshPanelIfOpen;
     if (h.openPanel) _openPanel = h.openPanel;
-    if (h.isPanelOpen) _isPanelOpen = h.isPanelOpen;
   }
   function refreshPanelIfOpen() {
     _refreshPanelIfOpen();
@@ -3096,8 +3094,7 @@
     configureCardDetect(() => ({ detectAd: CONFIG.hideAd, detectLive: CONFIG.hideLiveCard }));
     setPanelHooks({
       refreshPanelIfOpen: () => refreshPanelIfOpen2(),
-      openPanel: () => openPanel2(),
-      isPanelOpen: () => isPanelOpen()
+      openPanel: () => openPanel2()
     });
     setStatsListener(() => {
       if (document.body) updateBadge();
