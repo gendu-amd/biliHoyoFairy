@@ -2342,6 +2342,8 @@
     #bfb-panel .log-row{display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(128,128,128,.12)}
     #bfb-panel .log-tx{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     #bfb-panel .log-rs{color:#fb7299;margin-right:2px}
+    #bfb-panel .log-link{color:inherit;text-decoration:none}
+    #bfb-panel .log-link:hover{color:#fb7299;text-decoration:underline}
     #bfb-panel .log-src{flex:0 0 auto;font-size:10px;border-radius:5px;padding:0 4px;margin-right:4px;color:#fff}
     #bfb-panel .log-src.net{background:#27ae60}
     #bfb-panel .log-src.dom{background:#e67e22}
@@ -3026,7 +3028,13 @@
           tx.className = "log-tx";
           const desc = b.title || (b.link ? b.link.replace(/^https?:\/\//, "").slice(0, 48) : "") || b.bvid || (b.uid ? "UID " + b.uid : "") || "(无可辨识信息)";
           const srcTag = b.src === "BL" ? '<span class="log-src net">黑</span>' : b.src === "NET" ? '<span class="log-src net">拦</span>' : b.src === "CMT" ? '<span class="log-src dom">评</span>' : '<span class="log-src dom">隐</span>';
-          tx.innerHTML = `${srcTag}<span class="log-rs">[${escapeHtml(b.reason)}]</span> ${b.up ? "<b>" + escapeHtml(b.up) + "</b> · " : ""}${escapeHtml(desc)}`;
+          const safeHttp = (u) => u && /^https?:\/\//i.test(u) ? u : "";
+          const upHref = b.uid ? "https://space.bilibili.com/" + encodeURIComponent(b.uid) : "";
+          const vidHref = b.bvid ? "https://www.bilibili.com/video/" + encodeURIComponent(b.bvid) : safeHttp(b.link);
+          const A = (href, inner) => `<a class="log-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${inner}</a>`;
+          const upHtml = b.up ? (upHref ? A(upHref, "<b>" + escapeHtml(b.up) + "</b>") : "<b>" + escapeHtml(b.up) + "</b>") + " · " : "";
+          const descHtml = vidHref ? A(vidHref, escapeHtml(desc)) : escapeHtml(desc);
+          tx.innerHTML = `${srcTag}<span class="log-rs">[${escapeHtml(b.reason)}]</span> ${upHtml}${descHtml}`;
           tx.title = (b.up ? b.up + " · " : "") + (b.title || desc) + (b.bvid ? "  ·  " + b.bvid : "") + (b.uid ? "  ·  UID " + b.uid : "") + (b.link ? "\n" + b.link : "");
           row.appendChild(tx);
           if (b.up || b.uid) {

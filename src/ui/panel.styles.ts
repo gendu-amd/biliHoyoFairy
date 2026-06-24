@@ -62,6 +62,8 @@
     #bfb-panel .log-row{display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(128,128,128,.12)}
     #bfb-panel .log-tx{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     #bfb-panel .log-rs{color:#fb7299;margin-right:2px}
+    #bfb-panel .log-link{color:inherit;text-decoration:none}
+    #bfb-panel .log-link:hover{color:#fb7299;text-decoration:underline}
     #bfb-panel .log-src{flex:0 0 auto;font-size:10px;border-radius:5px;padding:0 4px;margin-right:4px;color:#fff}
     #bfb-panel .log-src.net{background:#27ae60}
     #bfb-panel .log-src.dom{background:#e67e22}
