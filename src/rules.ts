@@ -17,10 +17,12 @@ export function addToList(arr: string[], value: unknown): boolean {
 // 纯去重追加：把已归一的字符串值逐个加进 arr（已存在则跳过），返回新增条数。
 // 不存盘、不触发重扫——供批量场景（名单批处理、预置库）在最后统一存盘+重扫，避免逐条重扫。
 export function pushUnique(arr: string[], values: readonly string[]): number {
+  const seen = new Set(arr.map(String)); // 一次性建索引，避免每元素重算 map(String).includes 退化为 O(n²)
   let n = 0;
   for (const v of values) {
     const s = String(v);
-    if (!arr.map(String).includes(s)) {
+    if (!seen.has(s)) {
+      seen.add(s);
       arr.push(s);
       n++;
     }

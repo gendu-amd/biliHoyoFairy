@@ -33,13 +33,19 @@ export function parseExpires(s: unknown): number {
   return n * ((m[2] || 'd').toLowerCase() === 'h' ? 3600e3 : DAY_MS);
 }
 
+const SUB_MAX_LEN = 2 * 1024 * 1024; // 订阅文本硬上限 2MB：超大/恶意内容在解析前就拒，避免内存峰值/卡顿
+
 function fetchSubText(url: string, cb: (text: string | null, err: string | null) => void): void {
   if (typeof GM_xmlhttpRequest !== 'function') return cb(null, '无 GM_xmlhttpRequest');
   GM_xmlhttpRequest({
     method: 'GET',
     url,
     timeout: 15000,
-    onload: (r) => (r.status >= 200 && r.status < 300 && r.responseText ? cb(r.responseText, null) : cb(null, 'HTTP ' + r.status)),
+    onload: (r) => {
+      if (!(r.status >= 200 && r.status < 300) || !r.responseText) return cb(null, 'HTTP ' + r.status);
+      if (r.responseText.length > SUB_MAX_LEN) return cb(null, '订阅内容过大（>2MB）');
+      cb(r.responseText, null);
+    },
     onerror: () => cb(null, '网络错误'),
     ontimeout: () => cb(null, '超时'),
   });

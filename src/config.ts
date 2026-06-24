@@ -172,6 +172,9 @@ export function exportConfig(): string {
   return JSON.stringify({ app: 'biliHoyoFairy', version: VERSION, config: c }, null, 2);
 }
 
+// 单个规则数组导入后的容量上限：防恶意/超大「规则文件」灌入无界列表拖垮匹配。
+const IMPORT_ARRAY_CAP = 50000;
+
 // 导入合并：规则数组取并集（不丢已有），对象递归，标量以导入值为准。
 export function mergeImport(base: Record<string, any>, inc: any): void {
   for (const k of Object.keys(inc || {})) {
@@ -179,7 +182,15 @@ export function mergeImport(base: Record<string, any>, inc: any): void {
     const v = inc[k];
     if (Array.isArray(v)) {
       if (!Array.isArray(base[k])) base[k] = [];
-      for (const it of v) if (!base[k].map(String).includes(String(it))) base[k].push(it);
+      const seen = new Set(base[k].map(String)); // 一次性建索引，避免 O(n²)
+      for (const it of v) {
+        if (base[k].length >= IMPORT_ARRAY_CAP) break;
+        const s = String(it);
+        if (!seen.has(s)) {
+          seen.add(s);
+          base[k].push(it);
+        }
+      }
     } else if (v && typeof v === 'object' && base[k] && typeof base[k] === 'object') {
       mergeImport(base[k], v);
     } else {

@@ -76,6 +76,12 @@ describe('compileLines + textHit', () => {
     // 正常长度正则仍生效
     expect(compileLines(['/abc/']).empty).toBe(false);
   });
+  it('灾难性回溯形态被忽略，正常带量词正则保留', () => {
+    expect(compileLines(['/(a+)+$/']).empty).toBe(true); // 嵌套量词 → 拒绝
+    expect(compileLines(['/(a*)*/']).empty).toBe(true);
+    expect(compileLines(['/(ab)+/']).empty).toBe(false); // 普通分组+量词 → 保留
+    expect(compileLines(['/ab+/']).empty).toBe(false);
+  });
   it('剥除 g/y 标志（避免 .test 复用时 lastIndex 粘连漏判）', () => {
     const re = compileLines(['/ab/g']).regexes[0];
     expect(re.flags).not.toContain('g');

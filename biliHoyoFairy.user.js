@@ -189,13 +189,22 @@
     NON_PORTABLE.forEach((k) => delete c[k]);
     return JSON.stringify({ app: "biliHoyoFairy", version: VERSION, config: c }, null, 2);
   }
+  var IMPORT_ARRAY_CAP = 5e4;
   function mergeImport(base, inc) {
     for (const k of Object.keys(inc || {})) {
       if (UNSAFE_KEYS.has(k)) continue;
       const v = inc[k];
       if (Array.isArray(v)) {
         if (!Array.isArray(base[k])) base[k] = [];
-        for (const it of v) if (!base[k].map(String).includes(String(it))) base[k].push(it);
+        const seen = new Set(base[k].map(String));
+        for (const it of v) {
+          if (base[k].length >= IMPORT_ARRAY_CAP) break;
+          const s = String(it);
+          if (!seen.has(s)) {
+            seen.add(s);
+            base[k].push(it);
+          }
+        }
       } else if (v && typeof v === "object" && base[k] && typeof base[k] === "object") {
         mergeImport(base[k], v);
       } else {
@@ -422,6 +431,9 @@
     return t;
   }
   var MAX_REGEX_LEN = 1e3;
+  function looksCatastrophic(src) {
+    return /\((?:[^()]*[*+]|[^()]*\{\d+,\}?)[^()]*\)\s*(?:[*+]|\{\d+,\}?)/.test(src);
+  }
   function compileLines(lines) {
     const plainParts = [];
     const regexes = [];
@@ -430,7 +442,7 @@
       if (!line) continue;
       const m = line.match(/^\/(.*)\/([a-z]*)$/);
       if (m) {
-        if (m[1].length > MAX_REGEX_LEN) continue;
+        if (m[1].length > MAX_REGEX_LEN || looksCatastrophic(m[1])) continue;
         try {
           const flags = (m[2] || "i").replace(/[gy]/g, "");
           regexes.push(new RegExp(m[1], flags.includes("i") ? flags : flags + "i"));
@@ -1070,13 +1082,18 @@
     const n = Math.max(1, parseInt(m[1], 10) || 1);
     return n * ((m[2] || "d").toLowerCase() === "h" ? 36e5 : DAY_MS);
   }
+  var SUB_MAX_LEN = 2 * 1024 * 1024;
   function fetchSubText(url, cb) {
     if (typeof GM_xmlhttpRequest !== "function") return cb(null, "无 GM_xmlhttpRequest");
     GM_xmlhttpRequest({
       method: "GET",
       url,
       timeout: 15e3,
-      onload: (r) => r.status >= 200 && r.status < 300 && r.responseText ? cb(r.responseText, null) : cb(null, "HTTP " + r.status),
+      onload: (r) => {
+        if (!(r.status >= 200 && r.status < 300) || !r.responseText) return cb(null, "HTTP " + r.status);
+        if (r.responseText.length > SUB_MAX_LEN) return cb(null, "订阅内容过大（>2MB）");
+        cb(r.responseText, null);
+      },
       onerror: () => cb(null, "网络错误"),
       ontimeout: () => cb(null, "超时")
     });
@@ -1474,10 +1491,12 @@
     return true;
   }
   function pushUnique(arr, values) {
+    const seen = new Set(arr.map(String));
     let n = 0;
     for (const v of values) {
       const s = String(v);
-      if (!arr.map(String).includes(s)) {
+      if (!seen.has(s)) {
+        seen.add(s);
         arr.push(s);
         n++;
       }
