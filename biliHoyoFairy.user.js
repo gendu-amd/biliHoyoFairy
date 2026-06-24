@@ -811,13 +811,16 @@
     if (!arr || !arr.length) return 0;
     let removed = 0;
     for (let i = arr.length - 1; i >= 0; i--) {
-      const info = normFeedItem(arr[i]);
-      if (!info) continue;
-      const reason = matchRule(info);
-      if (reason) {
-        recordBlock(reason, info, "NET");
-        arr.splice(i, 1);
-        removed++;
+      try {
+        const info = normFeedItem(arr[i]);
+        if (!info) continue;
+        const reason = matchRule(info);
+        if (reason) {
+          recordBlock(reason, info, "NET");
+          arr.splice(i, 1);
+          removed++;
+        }
+      } catch (e) {
       }
     }
     if (removed) log(`拦截层 删除 ${removed} 项 @ ${url.split("?")[0]}`);
@@ -1615,7 +1618,8 @@
     const label = upName || uid;
     const addLocal = () => {
       if (upName) CONFIG.uidNames[String(uid)] = upName;
-      addToList(CONFIG.block.uids, String(uid));
+      if (quiet) pushUnique(CONFIG.block.uids, [String(uid)]);
+      else addToList(CONFIG.block.uids, String(uid));
     };
     const csrf = getCookie("bili_jct");
     if (!csrf) {
@@ -1692,6 +1696,10 @@
         failed.forEach((f) => byCode[f.code] = (byCode[f.code] || 0) + 1);
         log("批量拉黑失败按 code 分布：", byCode, failed);
       }
+      if (list.length) {
+        saveConfig();
+        emitRulesChanged();
+      }
       cb && cb({ added, already, failed, total: list.length });
     };
     const next = () => {
@@ -1746,9 +1754,10 @@
           cb && cb(false);
           return;
         }
-        doBlacklistMany(targets, (n, total) => {
-          toast(total > 1 ? `联合投稿：已拉黑 ${n}/${total} 位作者` : `已拉黑：${targets[0].name || targets[0].uid}`);
-          cb && cb(n > 0);
+        doBlacklistMany(targets, (r) => {
+          const ok = r.added + r.already;
+          toast(targets.length > 1 ? `联合投稿：已拉黑 ${ok}/${r.total} 位作者${r.failed.length ? `（失败 ${r.failed.length}）` : ""}` : `已拉黑：${targets[0].name || targets[0].uid}`);
+          cb && cb(ok > 0);
         });
       });
       return;

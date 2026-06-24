@@ -4,8 +4,9 @@
 // 注：GM POST 详情与多态回调暂以 any 处理，保留 @ts-nocheck（渐进类型化）。
 import { fetchView, riskGuard } from './api';
 import { getCookie } from './util';
-import { CONFIG } from './config';
-import { addToList } from './rules';
+import { CONFIG, saveConfig } from './config';
+import { addToList, pushUnique } from './rules';
+import { emitRulesChanged } from './events';
 import { toast } from './ui/toast';
 import { extractCardInfo } from './cardinfo';
 import { logBlocked } from './stats';
@@ -32,7 +33,9 @@ function doBlacklist(uid, upName, cb, quiet) {
   const label = upName || uid;
   const addLocal = () => {
     if (upName) CONFIG.uidNames[String(uid)] = upName;
-    addToList(CONFIG.block.uids, String(uid));
+    // 批量(quiet) 不逐条存盘/重扫——由 doBlacklistMany.finish 统一一次 saveConfig+重扫，避免 N 次全页重扫卡顿。
+    if (quiet) pushUnique(CONFIG.block.uids, [String(uid)]);
+    else addToList(CONFIG.block.uids, String(uid));
   };
   const csrf = getCookie('bili_jct');
   if (!csrf) {
@@ -115,6 +118,11 @@ export function doBlacklistMany(targets, cb, onProgress) {
       failed.forEach((f) => (byCode[f.code] = (byCode[f.code] || 0) + 1));
       log('批量拉黑失败按 code 分布：', byCode, failed);
     }
+    // 批量本地屏蔽（含失败降级项）已逐条 pushUnique 进 block.uids，这里统一一次存盘 + 重扫（避免逐条 N 次重扫）。
+    if (list.length) {
+      saveConfig();
+      emitRulesChanged();
+    }
     cb && cb({ added, already, failed, total: list.length });
   };
   const next = () => {
@@ -174,9 +182,11 @@ export function blacklistUp(info, cb, cardEl) {
         cb && cb(false);
         return;
       }
-      doBlacklistMany(targets, (n, total) => {
-        toast(total > 1 ? `联合投稿：已拉黑 ${n}/${total} 位作者` : `已拉黑：${targets[0].name || targets[0].uid}`);
-        cb && cb(n > 0);
+      doBlacklistMany(targets, (r) => {
+        // 修正：doBlacklistMany 回调的是结果对象 {added,already,failed,total}，旧代码误按 (n,total) 取参导致文案/cb 恒错。
+        const ok = r.added + r.already;
+        toast(targets.length > 1 ? `联合投稿：已拉黑 ${ok}/${r.total} 位作者${r.failed.length ? `（失败 ${r.failed.length}）` : ''}` : `已拉黑：${targets[0].name || targets[0].uid}`);
+        cb && cb(ok > 0);
       });
     });
     return;

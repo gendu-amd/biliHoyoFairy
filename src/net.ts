@@ -41,13 +41,17 @@ function filterFeedJson(url, json) {
   if (!arr || !arr.length) return 0;
   let removed = 0;
   for (let i = arr.length - 1; i >= 0; i--) {
-    const info = normFeedItem(arr[i]);
-    if (!info) continue; // 白名单由 matchRule 内部短路，无需在此重复判断
-    const reason = matchRule(info);
-    if (reason) {
-      recordBlock(reason, info, 'NET');
-      arr.splice(i, 1);
-      removed++;
+    try {
+      const info = normFeedItem(arr[i]);
+      if (!info) continue; // 白名单由 matchRule 内部短路，无需在此重复判断
+      const reason = matchRule(info);
+      if (reason) {
+        recordBlock(reason, info, 'NET');
+        arr.splice(i, 1);
+        removed++;
+      }
+    } catch (e) {
+      // 逐项容错：单条畸形 item 抛错只跳过该项，不让整条响应放弃过滤（B站偶发异形数据时尤其重要）
     }
   }
   if (removed) log(`拦截层 删除 ${removed} 项 @ ${url.split('?')[0]}`);
