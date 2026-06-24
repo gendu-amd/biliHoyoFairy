@@ -1823,10 +1823,79 @@
     cb && cb(false);
   }
 
+  // src/ui/confirm.ts
+  var current = null;
+  function confirmModal(message, opts = {}) {
+    return new Promise((resolve) => {
+      if (current) {
+        current.remove();
+        current = null;
+      }
+      const back = document.createElement("div");
+      back.className = "bfb-modal-back";
+      const box = document.createElement("div");
+      box.className = "bfb-modal" + (opts.danger ? " danger" : "");
+      box.setAttribute("role", "dialog");
+      box.setAttribute("aria-modal", "true");
+      const title = document.createElement("div");
+      title.className = "bfb-modal-title";
+      title.textContent = opts.title || "确认操作";
+      const msg = document.createElement("div");
+      msg.className = "bfb-modal-msg";
+      msg.textContent = message;
+      const btns = document.createElement("div");
+      btns.className = "bfb-modal-btns";
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.className = "bfb-modal-btn ghost";
+      cancel.textContent = opts.cancelText || "取消";
+      const ok = document.createElement("button");
+      ok.type = "button";
+      ok.className = "bfb-modal-btn" + (opts.danger ? " danger" : "");
+      ok.textContent = opts.okText || "确定";
+      btns.append(cancel, ok);
+      box.append(title, msg, btns);
+      back.appendChild(box);
+      (document.body || document.documentElement).appendChild(back);
+      current = back;
+      let done = false;
+      const close = (val) => {
+        if (done) return;
+        done = true;
+        document.removeEventListener("keydown", onKey, true);
+        back.remove();
+        if (current === back) current = null;
+        resolve(val);
+      };
+      const onKey = (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          close(false);
+        } else if (e.key === "Enter") {
+          e.preventDefault();
+          e.stopPropagation();
+          close(true);
+        }
+      };
+      cancel.onclick = () => close(false);
+      ok.onclick = () => close(true);
+      back.onclick = (e) => {
+        if (e.target === back) close(false);
+      };
+      document.addEventListener("keydown", onKey, true);
+      (opts.danger ? cancel : ok).focus();
+    });
+  }
+
   // src/ui/menu.ts
   function confirmBlacklist(name) {
-    return confirm(`确定拉黑「${name}」并写入账号黑名单？
-刷新后不再推荐、不可一键撤销（未登录则仅本地屏蔽）。`);
+    return confirmModal(`确定拉黑「${name}」并写入账号黑名单？
+刷新后不再推荐、不可一键撤销（未登录则仅本地屏蔽）。`, {
+      title: "拉黑确认",
+      okText: "拉黑",
+      danger: true
+    });
   }
   var ctxMenuEl = null;
   function closeCtxMenu() {
@@ -1904,7 +1973,9 @@
       items.push({
         label: `⛔ 拉黑UP「${info.up}」(同步账号黑名单)`,
         act: () => {
-          if (confirmBlacklist(info.up)) blacklistUp(info, refreshPanelIfOpen, card);
+          confirmBlacklist(info.up).then((ok) => {
+            if (ok) blacklistUp(info, refreshPanelIfOpen, card);
+          });
         }
       });
       items.push({
@@ -1995,9 +2066,11 @@
         toast("该卡片信息不足，无法拉黑");
         return;
       }
-      if (!confirmBlacklist(info.up || info.bvid)) return;
-      blacklistUp(info, refreshPanelIfOpen, hoverCard);
-      hideHoverBtn();
+      confirmBlacklist(info.up || info.bvid).then((ok) => {
+        if (!ok) return;
+        blacklistUp(info, refreshPanelIfOpen, hoverCard);
+        hideHoverBtn();
+      });
     };
     root.appendChild(hoverBtn);
     return hoverBtn;
@@ -2152,11 +2225,13 @@
         toast(`已删除 ${n} 条`);
       }, true);
       mk("清空", () => {
-        if (model.count() && confirm(`确定清空该列表全部 ${model.count()} 条？`)) {
+        if (!model.count()) return;
+        confirmModal(`确定清空该列表全部 ${model.count()} 条？此操作不可撤销。`, { title: "清空列表", okText: "清空", danger: true }).then((ok) => {
+          if (!ok) return;
           model.clear();
           selected.clear();
           renderChips();
-        }
+        });
       });
       mk("完成", () => {
         manage = false;
@@ -2340,6 +2415,17 @@
     .bfb-ctx-item:hover{background:#fff0f5;color:#fb7299}
     #bfb-toasts{position:fixed;right:18px;bottom:70px;z-index:100001;display:flex;flex-direction:column}
     .bfb-toast{background:#fff;color:#222;border-radius:12px;padding:12px 14px;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.18);max-width:320px;font-family:system-ui,Arial;border:1px solid #ffd5e2;margin-top:8px}
+    .bfb-modal-back{position:fixed;inset:0;z-index:100003;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-family:system-ui,Arial;padding:16px}
+    .bfb-modal{background:#fff;border-radius:14px;max-width:400px;width:88vw;box-shadow:0 12px 44px rgba(0,0,0,.32);overflow:hidden;animation:bfb-modal-in .14s ease-out}
+    @keyframes bfb-modal-in{from{transform:scale(.95);opacity:.4}to{transform:scale(1);opacity:1}}
+    .bfb-modal-title{padding:13px 16px;font-size:15px;font-weight:600;color:#fff;background:#fb7299}
+    .bfb-modal.danger .bfb-modal-title{background:#e74c3c}
+    .bfb-modal-msg{padding:14px 16px;font-size:13px;line-height:1.65;color:#333;white-space:pre-line;max-height:54vh;overflow:auto}
+    .bfb-modal-btns{display:flex;gap:8px;justify-content:flex-end;padding:0 16px 14px}
+    .bfb-modal-btn{border:none;border-radius:8px;padding:8px 18px;font-size:13px;cursor:pointer;background:#fb7299;color:#fff}
+    .bfb-modal-btn.ghost{background:#f0f0f0;color:#444}
+    .bfb-modal-btn.danger{background:#e74c3c}
+    .bfb-modal-btn:focus-visible{outline:2px solid #222;outline-offset:2px}
     #bfb-panel{position:fixed;top:0;right:0;width:400px;max-width:94vw;height:100vh;z-index:100000;background:#fff;box-shadow:-4px 0 24px rgba(0,0,0,.2);overflow:auto;overscroll-behavior:contain;font-family:system-ui,Arial;transform:translateX(100%);transition:transform .25s}
     #bfb-panel.open{transform:translateX(0)}
     #bfb-panel h2{margin:0;padding:14px 16px;background:#fb7299;color:#fff;font-size:16px;position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;z-index:2}
@@ -2659,13 +2745,25 @@
       toast(n ? `已加入「${p2.name}」${n} 条` : `「${p2.name}」已全部存在`);
       const API_DIM_KEYS = ["tags", "dualTags", "upBio"];
       const needsApi = Object.keys(p2.rules || {}).some((d) => API_DIM_KEYS.includes(d));
-      if (needsApi && !CONFIG.apiFilters && confirm(`「${p2.name}」含需联网读取（标签 / 简介）的规则，必须开启「精确过滤」才会生效。是否现在开启？`)) {
-        CONFIG.apiFilters = true;
-        saveConfig();
-        rescanAfterRuleChange();
+      const finishPreset = () => {
+        renderPanel(p);
+        p.classList.add("open");
+      };
+      if (needsApi && !CONFIG.apiFilters) {
+        confirmModal(`「${p2.name}」含需联网读取（标签 / 简介）的规则，必须开启「精确过滤」才会生效。是否现在开启？`, {
+          title: "开启精确过滤",
+          okText: "开启"
+        }).then((ok) => {
+          if (ok) {
+            CONFIG.apiFilters = true;
+            saveConfig();
+            rescanAfterRuleChange();
+          }
+          finishPreset();
+        });
+      } else {
+        finishPreset();
       }
-      renderPanel(p);
-      p.classList.add("open");
     };
     const byCat = {};
     PRESET_LIBRARY.forEach((pp) => (byCat[pp.cat] = byCat[pp.cat] || []).push(pp));
@@ -2817,14 +2915,16 @@
           });
         };
         row.querySelector(".sub-del").onclick = () => {
-          if (!confirm("删除该订阅？其规则将立即移除")) return;
-          CONFIG.subscriptions.splice(idx, 1);
-          const st = loadSubStore();
-          delete st[sub.url];
-          saveSubStore(st);
-          saveConfig();
-          rescanAfterRuleChange();
-          renderSubList();
+          confirmModal("删除该订阅？其规则将立即移除。", { title: "删除订阅", okText: "删除", danger: true }).then((ok) => {
+            if (!ok) return;
+            CONFIG.subscriptions.splice(idx, 1);
+            const st = loadSubStore();
+            delete st[sub.url];
+            saveSubStore(st);
+            saveConfig();
+            rescanAfterRuleChange();
+            renderSubList();
+          });
         };
         subListEl.appendChild(row);
       });
@@ -2889,42 +2989,50 @@
 其中 ${toResolve.length} 位需联网解析 UID（稍慢）` : "";
       const skipTip = noInfo ? `
 （${noInfo} 张信息不足已跳过）` : "";
-      if (!confirm(`将拉黑当前页约 ${est} 位 UP。${slowTip}${skipTip}
-
-会写入账号黑名单且不可一键撤销，确定？`)) return;
-      const runBlacklist = (all) => {
-        const btn = batch.querySelector("#bfb-batch-block");
-        const origLabel = btn.textContent;
-        btn.disabled = true;
-        toast(`开始拉黑 ${all.length} 位…`);
-        doBlacklistMany(
-          all,
-          (r) => {
-            btn.disabled = false;
-            btn.textContent = origLabel;
-            toast(`批量拉黑完成：新拉黑 ${r.added}，已在黑名单 ${r.already}${r.failed.length ? `，失败 ${r.failed.length}（多为未登录/风控/已满）` : ""}`);
-            refreshPanelIfOpen2();
-          },
-          (pg) => {
-            btn.textContent = pg.paused ? `⚠ 风控暂停 ${pg.wait}s · ${pg.done}/${pg.total}` : `拉黑中 ${pg.done}/${pg.total}…`;
-          }
-        );
-      };
-      if (!toResolve.length) {
-        runBlacklist(direct);
-        return;
-      }
-      toast(`正在解析 ${toResolve.length} 个 UID…`);
-      const resolved = [];
-      let pending = toResolve.length;
-      toResolve.forEach((t) => {
-        fetchView(t.bvid, (d) => {
-          if (d && d.owner) resolved.push({ uid: String(d.owner.mid), name: d.owner.name || t.name });
-          if (CONFIG.blacklistCollab && d && Array.isArray(d.staff)) {
-            d.staff.forEach((s) => resolved.push({ uid: String(s.mid), name: s.name || "" }));
-          }
-          if (--pending === 0) runBlacklist(direct.concat(resolved));
+      const proceed = () => {
+        const runBlacklist = (all) => {
+          const btn = batch.querySelector("#bfb-batch-block");
+          const origLabel = btn.textContent;
+          btn.disabled = true;
+          toast(`开始拉黑 ${all.length} 位…`);
+          doBlacklistMany(
+            all,
+            (r) => {
+              btn.disabled = false;
+              btn.textContent = origLabel;
+              toast(`批量拉黑完成：新拉黑 ${r.added}，已在黑名单 ${r.already}${r.failed.length ? `，失败 ${r.failed.length}（多为未登录/风控/已满）` : ""}`);
+              refreshPanelIfOpen2();
+            },
+            (pg) => {
+              btn.textContent = pg.paused ? `⚠ 风控暂停 ${pg.wait}s · ${pg.done}/${pg.total}` : `拉黑中 ${pg.done}/${pg.total}…`;
+            }
+          );
+        };
+        if (!toResolve.length) {
+          runBlacklist(direct);
+          return;
+        }
+        toast(`正在解析 ${toResolve.length} 个 UID…`);
+        const resolved = [];
+        let pending = toResolve.length;
+        toResolve.forEach((t) => {
+          fetchView(t.bvid, (d) => {
+            if (d && d.owner) resolved.push({ uid: String(d.owner.mid), name: d.owner.name || t.name });
+            if (CONFIG.blacklistCollab && d && Array.isArray(d.staff)) {
+              d.staff.forEach((s) => resolved.push({ uid: String(s.mid), name: s.name || "" }));
+            }
+            if (--pending === 0) runBlacklist(direct.concat(resolved));
+          });
         });
+      };
+      confirmModal(`将拉黑当前页约 ${est} 位 UP。${slowTip}${skipTip}
+
+会写入账号黑名单且不可一键撤销。`, {
+        title: "批量拉黑确认",
+        okText: `拉黑约 ${est} 位`,
+        danger: true
+      }).then((ok) => {
+        if (ok) proceed();
       });
     };
     const listSec = document.createElement("div");
@@ -3005,55 +3113,66 @@
       const nameTip = names.length ? `
 另有 ${names.length} 个只有名称（无 UID）→ 仅本地屏蔽，不写账号` : "";
       const limitTip = uids.length > 200 ? "\n数量较多：账号黑名单有总量上限，且单日大批量操作更易触发风控，建议分批进行。" : "";
-      if (uids.length && !confirm(`将把 ${uids.length} 个 UID 写入你的账号黑名单（限速约 ${est} 秒起，触发风控会自动暂停续传、耗时更久），不可一键撤销。${nameTip}${limitTip}
-
-执行期间请保持此页面打开，可随时点「停止」中断。确定继续？`)) return;
-      const nLocal = addLocalMany([], names);
-      if (!uids.length) {
-        toast(`无 UID 可账号拉黑；已本地屏蔽 ${nLocal} 个名称`);
-        renderPanel(p);
-        p.classList.add("open");
-        return;
-      }
-      toast(`开始拉黑 ${uids.length} 个…执行期间请勿关闭面板`);
-      listStatus.textContent = `准备拉黑 ${uids.length} 个…`;
-      const stopBtn = listSec.querySelector("#bfb-list-stop");
-      const blockBtn = listSec.querySelector("#bfb-list-block");
-      const resetButtons = () => {
-        stopBtn.style.display = "none";
-        stopBtn.disabled = false;
-        stopBtn.textContent = "⏹ 停止";
-        blockBtn.disabled = false;
-      };
-      const ctl = doBlacklistMany(
-        uids.map((u) => ({ uid: u, name: "" })),
-        (r) => {
-          resetButtons();
-          const failUids = r.failed.map((f) => f.uid);
-          const byCode = {};
-          r.failed.forEach((f) => byCode[f.code] = (byCode[f.code] || 0) + 1);
-          const failBreak = Object.entries(byCode).map(([c, n]) => `${REL_ERR[c] || "code " + c}×${n}`).join("、");
-          const head = r.cancelled ? `⏹ 已停止（已处理 ${r.done}/${r.total}）：` : `✅ 完成（共 ${r.total}）：`;
-          listStatus.innerHTML = `${head}<b>新拉黑 ${r.added}</b>` + (r.already ? ` · 此前已在黑名单 ${r.already}` : "") + (failUids.length ? ` · <b style="color:#e74c3c">失败 ${failUids.length}</b>（${escapeHtml(failBreak)}；已回填可重试）` : "") + (nLocal ? ` · 另本地屏蔽 ${nLocal} 名称` : "") + `<br><span style="color:#888">官方黑名单本次新增 = 新拉黑 ${r.added} 个（“已在黑名单”的不会再叠加；如仍对不上，多为风控/已满，开调试模式看控制台 code 明细）</span>`;
-          const remain = r.cancelled ? uids.slice(r.done) : [];
-          const refill = failUids.concat(remain);
-          listTa.value = refill.length ? refill.join("\n") : "";
-          toast(`${r.cancelled ? "已停止" : "完成"}：新拉黑 ${r.added}，已在黑名单 ${r.already}，失败 ${failUids.length}`);
-          if (panelStatsRefresh) panelStatsRefresh();
-        },
-        (pg) => {
-          listStatus.textContent = pg.paused ? `⚠ 触发风控，已暂停约 ${pg.wait}s 后自动继续 · 进度 ${pg.done}/${pg.total}（新拉黑 ${pg.added}，已在 ${pg.already}，失败 ${pg.fail}）` : `拉黑中 ${pg.done}/${pg.total} · 新拉黑 ${pg.added}${pg.already ? `，已在 ${pg.already}` : ""}${pg.fail ? `，失败 ${pg.fail}` : ""}…`;
-          if (panelStatsRefresh) panelStatsRefresh();
+      const run = () => {
+        const nLocal = addLocalMany([], names);
+        if (!uids.length) {
+          toast(`无 UID 可账号拉黑；已本地屏蔽 ${nLocal} 个名称`);
+          renderPanel(p);
+          p.classList.add("open");
+          return;
         }
-      );
-      blockBtn.disabled = true;
-      stopBtn.style.display = "";
-      stopBtn.onclick = () => {
-        stopBtn.disabled = true;
-        stopBtn.textContent = "停止中…";
-        listStatus.textContent = "停止中：等当前这一个完成后收尾…";
-        ctl.cancel();
+        toast(`开始拉黑 ${uids.length} 个…执行期间请勿关闭面板`);
+        listStatus.textContent = `准备拉黑 ${uids.length} 个…`;
+        const stopBtn = listSec.querySelector("#bfb-list-stop");
+        const blockBtn = listSec.querySelector("#bfb-list-block");
+        const resetButtons = () => {
+          stopBtn.style.display = "none";
+          stopBtn.disabled = false;
+          stopBtn.textContent = "⏹ 停止";
+          blockBtn.disabled = false;
+        };
+        const ctl = doBlacklistMany(
+          uids.map((u) => ({ uid: u, name: "" })),
+          (r) => {
+            resetButtons();
+            const failUids = r.failed.map((f) => f.uid);
+            const byCode = {};
+            r.failed.forEach((f) => byCode[f.code] = (byCode[f.code] || 0) + 1);
+            const failBreak = Object.entries(byCode).map(([c, n]) => `${REL_ERR[c] || "code " + c}×${n}`).join("、");
+            const head = r.cancelled ? `⏹ 已停止（已处理 ${r.done}/${r.total}）：` : `✅ 完成（共 ${r.total}）：`;
+            listStatus.innerHTML = `${head}<b>新拉黑 ${r.added}</b>` + (r.already ? ` · 此前已在黑名单 ${r.already}` : "") + (failUids.length ? ` · <b style="color:#e74c3c">失败 ${failUids.length}</b>（${escapeHtml(failBreak)}；已回填可重试）` : "") + (nLocal ? ` · 另本地屏蔽 ${nLocal} 名称` : "") + `<br><span style="color:#888">官方黑名单本次新增 = 新拉黑 ${r.added} 个（“已在黑名单”的不会再叠加；如仍对不上，多为风控/已满，开调试模式看控制台 code 明细）</span>`;
+            const remain = r.cancelled ? uids.slice(r.done) : [];
+            const refill = failUids.concat(remain);
+            listTa.value = refill.length ? refill.join("\n") : "";
+            toast(`${r.cancelled ? "已停止" : "完成"}：新拉黑 ${r.added}，已在黑名单 ${r.already}，失败 ${failUids.length}`);
+            if (panelStatsRefresh) panelStatsRefresh();
+          },
+          (pg) => {
+            listStatus.textContent = pg.paused ? `⚠ 触发风控，已暂停约 ${pg.wait}s 后自动继续 · 进度 ${pg.done}/${pg.total}（新拉黑 ${pg.added}，已在 ${pg.already}，失败 ${pg.fail}）` : `拉黑中 ${pg.done}/${pg.total} · 新拉黑 ${pg.added}${pg.already ? `，已在 ${pg.already}` : ""}${pg.fail ? `，失败 ${pg.fail}` : ""}…`;
+            if (panelStatsRefresh) panelStatsRefresh();
+          }
+        );
+        blockBtn.disabled = true;
+        stopBtn.style.display = "";
+        stopBtn.onclick = () => {
+          stopBtn.disabled = true;
+          stopBtn.textContent = "停止中…";
+          listStatus.textContent = "停止中：等当前这一个完成后收尾…";
+          ctl.cancel();
+        };
       };
+      if (uids.length) {
+        confirmModal(
+          `将把 ${uids.length} 个 UID 写入你的账号黑名单（限速约 ${est} 秒起，触发风控会自动暂停续传、耗时更久），不可一键撤销。${nameTip}${limitTip}
+
+执行期间请保持此页面打开，可随时点「停止」中断。`,
+          { title: "批量拉黑确认", okText: `拉黑 ${uids.length} 个`, danger: true }
+        ).then((ok) => {
+          if (ok) run();
+        });
+      } else {
+        run();
+      }
     };
     const tool = document.createElement("div");
     tool.className = "sec toolbar";
@@ -3070,13 +3189,14 @@
       toast("已清空计数与本次记录");
     };
     tool.querySelector("#bfb-reset").onclick = () => {
-      if (confirm("确定恢复默认配置？现有规则将清空。")) {
+      confirmModal("确定恢复默认配置？现有规则将全部清空，不可撤销。", { title: "恢复默认", okText: "恢复默认", danger: true }).then((ok) => {
+        if (!ok) return;
         Object.assign(CONFIG, structuredClone(DEFAULT_CONFIG));
         saveConfig();
         rescanAfterRuleChange();
         renderPanel(p);
         p.classList.add("open");
-      }
+      });
     };
     const logSec = document.createElement("div");
     logSec.className = "sec";

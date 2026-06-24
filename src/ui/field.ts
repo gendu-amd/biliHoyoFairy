@@ -6,6 +6,7 @@ import { addToList, removeFromList } from '../rules';
 import { splitRuleInput } from '../match/normalize';
 import { fetchCard } from '../api';
 import { toast } from './toast';
+import { confirmModal } from './confirm';
 
 // 记住每个字段的折叠状态（renderPanel 重建时保留）。
 const collapseState = {};
@@ -96,11 +97,13 @@ export function renderListField(host, o) {
       toast(`已删除 ${n} 条`);
     }, true);
     mk('清空', () => {
-      if (model.count() && confirm(`确定清空该列表全部 ${model.count()} 条？`)) {
+      if (!model.count()) return;
+      confirmModal(`确定清空该列表全部 ${model.count()} 条？此操作不可撤销。`, { title: '清空列表', okText: '清空', danger: true }).then((ok) => {
+        if (!ok) return;
         model.clear();
         selected.clear();
         renderChips();
-      }
+      });
     });
     mk('完成', () => {
       manage = false;

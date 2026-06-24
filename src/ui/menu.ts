@@ -10,11 +10,16 @@ import { blockVideo } from '../dom';
 import { blacklistUp } from '../blacklist';
 import { addToList } from '../rules';
 import { toast } from './toast';
+import { confirmModal } from './confirm';
 import { refreshPanelIfOpen, openPanel } from './hooks';
 
-// 账号拉黑是不可一键撤销的账号写操作，且与「本地屏蔽」相邻、易误点 → 执行前二次确认。
+// 账号拉黑是不可一键撤销的账号写操作，且与「本地屏蔽」相邻、易误点 → 执行前二次确认（样式化弹窗，Promise<boolean>）。
 function confirmBlacklist(name) {
-  return confirm(`确定拉黑「${name}」并写入账号黑名单？\n刷新后不再推荐、不可一键撤销（未登录则仅本地屏蔽）。`);
+  return confirmModal(`确定拉黑「${name}」并写入账号黑名单？\n刷新后不再推荐、不可一键撤销（未登录则仅本地屏蔽）。`, {
+    title: '拉黑确认',
+    okText: '拉黑',
+    danger: true,
+  });
 }
 
 let ctxMenuEl = null;
@@ -100,7 +105,9 @@ export function onContextMenu(e) {
     items.push({
       label: `⛔ 拉黑UP「${info.up}」(同步账号黑名单)`,
       act: () => {
-        if (confirmBlacklist(info.up)) blacklistUp(info, refreshPanelIfOpen, card);
+        confirmBlacklist(info.up).then((ok) => {
+          if (ok) blacklistUp(info, refreshPanelIfOpen, card);
+        });
       },
     });
     items.push({
@@ -203,9 +210,11 @@ function ensureHoverBtn() {
       toast('该卡片信息不足，无法拉黑');
       return;
     }
-    if (!confirmBlacklist(info.up || info.bvid)) return;
-    blacklistUp(info, refreshPanelIfOpen, hoverCard);
-    hideHoverBtn();
+    confirmBlacklist(info.up || info.bvid).then((ok) => {
+      if (!ok) return;
+      blacklistUp(info, refreshPanelIfOpen, hoverCard);
+      hideHoverBtn();
+    });
   };
   root.appendChild(hoverBtn);
   return hoverBtn;

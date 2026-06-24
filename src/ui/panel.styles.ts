@@ -11,6 +11,17 @@
     .bfb-ctx-item:hover{background:#fff0f5;color:#fb7299}
     #bfb-toasts{position:fixed;right:18px;bottom:70px;z-index:100001;display:flex;flex-direction:column}
     .bfb-toast{background:#fff;color:#222;border-radius:12px;padding:12px 14px;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.18);max-width:320px;font-family:system-ui,Arial;border:1px solid #ffd5e2;margin-top:8px}
+    .bfb-modal-back{position:fixed;inset:0;z-index:100003;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-family:system-ui,Arial;padding:16px}
+    .bfb-modal{background:#fff;border-radius:14px;max-width:400px;width:88vw;box-shadow:0 12px 44px rgba(0,0,0,.32);overflow:hidden;animation:bfb-modal-in .14s ease-out}
+    @keyframes bfb-modal-in{from{transform:scale(.95);opacity:.4}to{transform:scale(1);opacity:1}}
+    .bfb-modal-title{padding:13px 16px;font-size:15px;font-weight:600;color:#fff;background:#fb7299}
+    .bfb-modal.danger .bfb-modal-title{background:#e74c3c}
+    .bfb-modal-msg{padding:14px 16px;font-size:13px;line-height:1.65;color:#333;white-space:pre-line;max-height:54vh;overflow:auto}
+    .bfb-modal-btns{display:flex;gap:8px;justify-content:flex-end;padding:0 16px 14px}
+    .bfb-modal-btn{border:none;border-radius:8px;padding:8px 18px;font-size:13px;cursor:pointer;background:#fb7299;color:#fff}
+    .bfb-modal-btn.ghost{background:#f0f0f0;color:#444}
+    .bfb-modal-btn.danger{background:#e74c3c}
+    .bfb-modal-btn:focus-visible{outline:2px solid #222;outline-offset:2px}
     #bfb-panel{position:fixed;top:0;right:0;width:400px;max-width:94vw;height:100vh;z-index:100000;background:#fff;box-shadow:-4px 0 24px rgba(0,0,0,.2);overflow:auto;overscroll-behavior:contain;font-family:system-ui,Arial;transform:translateX(100%);transition:transform .25s}
     #bfb-panel.open{transform:translateX(0)}
     #bfb-panel h2{margin:0;padding:14px 16px;background:#fb7299;color:#fff;font-size:16px;position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;z-index:2}
