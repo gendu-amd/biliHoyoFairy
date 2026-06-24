@@ -1,7 +1,7 @@
 // 统一日志 + 错误边界。debug 关时 log 零开销；logErr 始终输出，便于线上排查。
 import { CONFIG } from './config';
 
-const BADGE = 'color:#fff;background:#fb7299;padding:0 4px;border-radius:3px'; // 控制台日志的品牌徽标样式
+export const BADGE = 'color:#fff;background:#fb7299;padding:0 4px;border-radius:3px'; // 控制台日志的品牌徽标样式
 
 export function log(...args: unknown[]): void {
   if (CONFIG.debug) console.log('%c[biliHoyoFairy]%c', BADGE, 'color:inherit', ...args);

@@ -67,126 +67,6 @@
   var UNSAFE_KEYS = /* @__PURE__ */ new Set(["__proto__", "constructor", "prototype"]);
   var RISK_CODES = /* @__PURE__ */ new Set([-352, -412, -509, -799]);
 
-  // src/util.ts
-  function getCookie(name) {
-    const m = document.cookie.match(new RegExp("(^|;\\s*)" + name + "=([^;]*)"));
-    return m ? decodeURIComponent(m[2]) : "";
-  }
-  function parseDuration(s) {
-    if (!s) return null;
-    const parts = s.trim().split(":").map((x) => parseInt(x, 10));
-    if (parts.length < 2 || parts.some((n) => Number.isNaN(n))) return null;
-    return parts.reduce((acc, n) => acc * 60 + n, 0);
-  }
-  function parseCount(s) {
-    if (!s) return null;
-    const t = s.trim().replace(/[,\s]/g, "");
-    const m = t.match(/^([\d.]+)\s*(万|亿)?/);
-    if (!m) return null;
-    let n = parseFloat(m[1]);
-    if (Number.isNaN(n)) return null;
-    if (m[2] === "万") n *= 1e4;
-    else if (m[2] === "亿") n *= 1e8;
-    return Math.round(n);
-  }
-  function escapeHtml(s) {
-    return (s || "").replace(
-      /[&<>"']/g,
-      (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
-    );
-  }
-
-  // src/match/normalize.ts
-  var lc = (s) => (s || "").toString().trim().toLowerCase();
-  function toHalfWidth(s) {
-    return (s || "").toString().replace(/[\uFF01-\uFF5E]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 65248)).replace(/\u3000/g, " ");
-  }
-  var escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  var INVISIBLE_RE = /[\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]/g;
-  var stripInvisible = (s) => (s || "").toString().replace(INVISIBLE_RE, "");
-  var SEP_RE = /[\s_.·・･﹒。,，、;；:：!！?？~～^*"'`|｜/\\()（）【】<>《》[\]—-]+/g;
-  var getFuzzy = () => false;
-  function configureFuzzy(fn) {
-    getFuzzy = fn;
-  }
-  function normMatch(s) {
-    let t = stripInvisible(toHalfWidth(s)).toLowerCase();
-    if (getFuzzy()) t = t.replace(SEP_RE, "");
-    return t;
-  }
-  function compileLines(lines) {
-    const plainParts = [];
-    const regexes = [];
-    for (const raw of lines || []) {
-      const line = (raw || "").trim();
-      if (!line) continue;
-      const m = line.match(/^\/(.*)\/([a-z]*)$/);
-      if (m) {
-        try {
-          const flags = m[2] || "i";
-          regexes.push(new RegExp(m[1], flags.includes("i") ? flags : flags + "i"));
-        } catch (e) {
-        }
-      } else {
-        const w = normMatch(line);
-        if (w) plainParts.push(escapeRe(w));
-      }
-    }
-    let plain = null;
-    if (plainParts.length) {
-      try {
-        plain = new RegExp(plainParts.join("|"), "i");
-      } catch (e) {
-      }
-    }
-    return { plain, regexes, empty: !plain && !regexes.length };
-  }
-  function textHit(text, matcher) {
-    if (!text || !matcher) return false;
-    if (matcher.plain && matcher.plain.test(normMatch(text))) return true;
-    if (matcher.regexes.length) {
-      const t = stripInvisible(text);
-      for (const r of matcher.regexes) if (r.test(t)) return true;
-    }
-    return false;
-  }
-  function compileScopedKeywords(lines) {
-    const buckets = { all: [], title: [], up: [], part: [] };
-    for (const raw of lines || []) {
-      const line = (raw || "").trim();
-      if (!line) continue;
-      const m = !line.startsWith("/") && line.match(/^(title|up|part)\s*:\s*(.+)$/i);
-      if (m) buckets[m[1].toLowerCase()].push(m[2].trim());
-      else buckets.all.push(line);
-    }
-    return {
-      all: compileLines(buckets.all),
-      title: compileLines(buckets.title),
-      up: compileLines(buckets.up),
-      part: compileLines(buckets.part)
-    };
-  }
-  function kwHit(scoped, field, text) {
-    if (!scoped || !text) return false;
-    return textHit(text, scoped.all) || textHit(text, scoped[field]);
-  }
-  function splitRuleInput(raw) {
-    const out = [];
-    for (const ln of String(raw || "").split("\n")) {
-      const s = ln.trim();
-      if (!s) continue;
-      if (s[0] === "/") {
-        out.push(s);
-        continue;
-      }
-      for (const x of s.split(/[,，;；]/)) {
-        const v = x.trim();
-        if (v) out.push(v);
-      }
-    }
-    return out;
-  }
-
   // src/config.ts
   var DEFAULT_CONFIG = {
     enabled: true,
@@ -326,13 +206,13 @@
   }
 
   // src/logging.ts
-  var BADGE2 = "color:#fff;background:#fb7299;padding:0 4px;border-radius:3px";
+  var BADGE = "color:#fff;background:#fb7299;padding:0 4px;border-radius:3px";
   function log(...args) {
-    if (CONFIG.debug) console.log("%c[biliHoyoFairy]%c", BADGE2, "color:inherit", ...args);
+    if (CONFIG.debug) console.log("%c[biliHoyoFairy]%c", BADGE, "color:inherit", ...args);
   }
   function logErr(where, e) {
     try {
-      console.warn(`%c[biliHoyoFairy]%c ${where}`, BADGE2, "color:#e74c3c", e);
+      console.warn(`%c[biliHoyoFairy]%c ${where}`, BADGE, "color:#e74c3c", e);
     } catch (_) {
     }
   }
@@ -347,105 +227,33 @@
     };
   }
 
-  // src/presets.ts
-  var PRESET_LIBRARY = [
-    { cat: "游戏黑水", name: "库洛系(鸣潮/库洛)", desc: "鸣潮 / 库洛 / 战双 等相关词", rules: { keywords: ["库洛", "库洛游戏", "呜哇", "鸣潮", "战双", "战双帕弥什", "漂泊者", "漂泊神游", "寄生神游", "寄生社区"] } },
-    { cat: "引战", name: "引战话术", desc: "挑动对立的话术片段（已收敛正则、防误伤）", rules: { keywords: ["/接触wuwa后|大脑发生的异变/"] } },
-    { cat: "引战", name: "引战标签", desc: "抹黑 / 拉踩类标签（需开「精确过滤」才匹配标签）", rules: { tags: ["/米哈一儿|一哭|二抄|三自爆/"] } },
-    { cat: "标题党 / 营销", name: "标题党", desc: "震惊体 + 一口气看完", rules: { keywords: ["/(一口气|一次性|一天|分钟|分半|小时)(看完|带你看完|直接看完)/", "/震惊|竟然|万万没想到/"] } },
-    { cat: "标题党 / 营销", name: "营销号UP名", desc: "常见营销号账号名", rules: { keywords: ["今日话题", "话题酱", "今日知乎", "大型纪录片"] } },
-    { cat: "标题党 / 营销", name: "软传销", desc: "日入月入 / 为自己打工", rules: { keywords: ["/(日入|日赚|月入|月赚)\\d+/", "/(小时|内耗).+为自己打工/"] } },
-    { cat: "其它", name: "MBTI", rules: { keywords: ["/MBTI|[IE][SN][TF][JP]|I人|E人/"] } },
-    { cat: "其它", name: "梗视频", rules: { keywords: ["科目三", "猫meme", "/是什么梗|梗百科|大型[纪记]录片/"] } },
-    { cat: "其它", name: "含日语标题", rules: { keywords: ["/[ぁ-ヶ]/"] } }
-  ];
-
-  // src/subscriptions/parse.ts
-  var SUB_DIMS = ["uids", "upNames", "keywords", "partitions", "tags", "upBio", "bvids"];
-  var SUB_LINE_PREFIX = { uid: "uids", up: "upNames", kw: "keywords", part: "partitions", tag: "tags", bio: "upBio", bv: "bvids" };
-  var SUB_PREFIX_RE = new RegExp("^(" + Object.keys(SUB_LINE_PREFIX).join("|") + ")\\s*:\\s*(.+)$", "i");
-  var SUB_CAP = { uids: 5e4, upNames: 5e4, bvids: 5e4 };
-  var SUB_CAP_DEFAULT = 5e3;
-  function migrateSub(obj) {
-    return obj || {};
+  // src/util.ts
+  function getCookie(name) {
+    const m = document.cookie.match(new RegExp("(^|;\\s*)" + name + "=([^;]*)"));
+    return m ? decodeURIComponent(m[2]) : "";
   }
-  function sanitizeSubRules(rawRules) {
-    const out = {};
-    for (const dim of SUB_DIMS) {
-      const arr = rawRules && rawRules[dim];
-      if (!Array.isArray(arr)) continue;
-      const max = SUB_CAP[dim] || SUB_CAP_DEFAULT;
-      const seen = /* @__PURE__ */ new Set();
-      const clean = [];
-      for (const x of arr) {
-        if (typeof x !== "string") continue;
-        const v = x.trim();
-        if (!v || seen.has(v)) continue;
-        seen.add(v);
-        clean.push(v);
-        if (clean.length >= max) break;
-      }
-      if (clean.length) out[dim] = clean;
-    }
-    return out;
+  function parseDuration(s) {
+    if (!s) return null;
+    const parts = s.trim().split(":").map((x) => parseInt(x, 10));
+    if (parts.length < 2 || parts.some((n) => Number.isNaN(n))) return null;
+    return parts.reduce((acc, n) => acc * 60 + n, 0);
   }
-  function parseSubscription(text) {
-    const t = (text || "").trim();
-    if (!t) throw new Error("空内容");
-    if (t[0] === "{") {
-      const obj = migrateSub(JSON.parse(t));
-      const meta2 = obj && obj.meta && typeof obj.meta === "object" ? obj.meta : {};
-      let rawRules = obj && obj.rules;
-      if (!rawRules && obj && obj.config && obj.config.block) rawRules = obj.config.block;
-      return { meta: meta2, rules: sanitizeSubRules(rawRules) };
-    }
-    const meta = {};
-    const buckets = {};
-    for (let line of t.split(/\r?\n/)) {
-      line = line.trim();
-      if (!line) continue;
-      if (line[0] === "!") {
-        const m = line.slice(1).match(/^\s*([a-zA-Z][\w-]*)\s*:\s*(.+)$/);
-        if (m) meta[m[1]] = m[2].trim();
-        continue;
-      }
-      line = line.replace(/\s+#.*$/, "").trim();
-      if (!line) continue;
-      const pm = !line.startsWith("/") && line.match(SUB_PREFIX_RE);
-      const dim = pm ? SUB_LINE_PREFIX[pm[1].toLowerCase()] : "keywords";
-      const val = pm ? pm[2].trim() : line;
-      (buckets[dim] = buckets[dim] || []).push(val);
-    }
-    return { meta, rules: sanitizeSubRules(buckets) };
+  function parseCount(s) {
+    if (!s) return null;
+    const t = s.trim().replace(/[,\s]/g, "");
+    const m = t.match(/^([\d.]+)\s*(万|亿)?/);
+    if (!m) return null;
+    let n = parseFloat(m[1]);
+    if (Number.isNaN(n)) return null;
+    if (m[2] === "万") n *= 1e4;
+    else if (m[2] === "亿") n *= 1e8;
+    return Math.round(n);
   }
-
-  // src/subscriptions/store.ts
-  function loadSubStore() {
-    try {
-      return JSON.parse(GM_getValue(SUB_STORE_KEY, "") || "{}") || {};
-    } catch (e) {
-      return {};
-    }
-  }
-  function saveSubStore(store) {
-    try {
-      GM_setValue(SUB_STORE_KEY, JSON.stringify(store));
-    } catch (e) {
-    }
-  }
-  function collectSubRules() {
-    const store = loadSubStore();
-    const merged = {};
-    for (const sub of CONFIG.subscriptions || []) {
-      if (!sub || !sub.enabled || !sub.url) continue;
-      const e = store[sub.url];
-      if (!e || !e.ok || !e.rules) continue;
-      for (const dim of SUB_DIMS) {
-        const arr = e.rules[dim];
-        if (Array.isArray(arr) && arr.length) (merged[dim] = merged[dim] || []).push(...arr);
-      }
-    }
-    return merged;
+  function escapeHtml(s) {
+    return (s || "").replace(
+      /[&<>"']/g,
+      (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
+    );
   }
 
   // src/cardinfo.ts
@@ -589,220 +397,183 @@
     return false;
   }
 
-  // src/stats.ts
-  var blockedLog = [];
-  var sessionBlocked = 0;
-  function setSessionBlocked(n) {
-    sessionBlocked = n;
+  // src/match/normalize.ts
+  var lc = (s) => (s || "").toString().trim().toLowerCase();
+  function toHalfWidth(s) {
+    return (s || "").toString().replace(/[\uFF01-\uFF5E]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 65248)).replace(/\u3000/g, " ");
   }
-  function tallyLog() {
-    const t = {};
-    for (const b of blockedLog) t[b.reason] = (t[b.reason] || 0) + 1;
+  var escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  var INVISIBLE_RE = /[\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]/g;
+  var stripInvisible = (s) => (s || "").toString().replace(INVISIBLE_RE, "");
+  var SEP_RE = /[\s_.·・･﹒。,，、;；:：!！?？~～^*"'`|｜/\\()（）【】<>《》[\]—-]+/g;
+  var getFuzzy = () => false;
+  function configureFuzzy(fn) {
+    getFuzzy = fn;
+  }
+  function normMatch(s) {
+    let t = stripInvisible(toHalfWidth(s)).toLowerCase();
+    if (getFuzzy()) t = t.replace(SEP_RE, "");
     return t;
   }
-  function logBlocked(reason, info, src) {
-    blockedLog.unshift({
-      title: info && info.title || "",
-      up: info && info.up || "",
-      uid: info && info.uid || "",
-      bvid: info && info.bvid || "",
-      link: info && info.link || "",
-      src: src || "DOM",
-      reason,
-      t: Date.now()
-    });
-    if (blockedLog.length > 300) blockedLog.pop();
-  }
-  var onRecorded = () => {
-  };
-  function setStatsListener(fn) {
-    onRecorded = fn;
-  }
-  function recordBlock(reason, info, src) {
-    logBlocked(reason, info, src);
-    sessionBlocked++;
-    CONFIG.blockedCount++;
-    onRecorded();
-    scheduleSave();
-    log(`拦截🚫 ${reason} ${info && info.up ? info.up + " · " : ""}${info && info.title || "(无标题)"}`);
-  }
-
-  // src/ui/hooks.ts
-  var _refreshPanelIfOpen = () => {
-  };
-  var _openPanel = () => {
-  };
-  var _isPanelOpen = () => false;
-  function setPanelHooks(h) {
-    if (h.refreshPanelIfOpen) _refreshPanelIfOpen = h.refreshPanelIfOpen;
-    if (h.openPanel) _openPanel = h.openPanel;
-    if (h.isPanelOpen) _isPanelOpen = h.isPanelOpen;
-  }
-  function refreshPanelIfOpen() {
-    _refreshPanelIfOpen();
-  }
-  function openPanel() {
-    _openPanel();
-  }
-
-  // src/ui/toast.ts
-  function updateBadge() {
-    let b = document.getElementById("bfb-badge");
-    if (!b) {
-      b = document.createElement("div");
-      b.id = "bfb-badge";
-      b.title = "点击打开设置";
-      b.onclick = openPanel;
-      document.body.appendChild(b);
-    }
-    b.classList.toggle("off", !CONFIG.enabled);
-    b.textContent = CONFIG.enabled ? `🛡 已拦截 ${sessionBlocked}（共${CONFIG.blockedCount}）` : "🛡 已暂停";
-  }
-  function toastContainer() {
-    let c = document.getElementById("bfb-toasts");
-    if (!c) {
-      c = document.createElement("div");
-      c.id = "bfb-toasts";
-      document.body.appendChild(c);
-    }
-    return c;
-  }
-  function toast(msg) {
-    const t = document.createElement("div");
-    t.className = "bfb-toast";
-    t.textContent = msg;
-    toastContainer().appendChild(t);
-    setTimeout(() => t.remove(), 4e3);
-  }
-
-  // src/api.ts
-  var riskGuard = {
-    until: 0,
-    strikes: 0,
-    blocked() {
-      return Date.now() < this.until;
-    },
-    remaining() {
-      return Math.max(0, this.until - Date.now());
-    },
-    // 任何联网响应都喂进来：风控码→升级退避；正常码→冷却期过后清零。
-    note(code) {
-      if (code == null || !RISK_CODES.has(code)) {
-        if (code === 0 && this.strikes && !this.blocked()) this.strikes = 0;
-        return;
-      }
-      const wasBlocked = this.blocked();
-      this.strikes = Math.min(this.strikes + 1, 6);
-      const backoff = Math.min(6e4, 2e3 * 2 ** (this.strikes - 1));
-      this.until = Date.now() + backoff;
-      if (!wasBlocked) {
-        logErr("风控熔断", `code ${code}，暂停联网 ${Math.round(backoff / 1e3)}s`);
-        toast(`⚠️ 触发 B 站风控(code ${code})，已暂停联网 ${Math.round(backoff / 1e3)} 秒以保护账号`);
-      }
-    }
-  };
-  var API = {
-    view: /* @__PURE__ */ new Map(),
-    tag: /* @__PURE__ */ new Map(),
-    card: /* @__PURE__ */ new Map(),
-    queue: [],
-    active: 0,
-    waiting: false,
-    CONCURRENCY: 3,
-    DELAY: 120
-  };
-  function apiPump() {
-    if (riskGuard.blocked()) {
-      if (!API.waiting) {
-        API.waiting = true;
-        setTimeout(() => {
-          API.waiting = false;
-          apiPump();
-        }, riskGuard.remaining() + 50);
-      }
-      return;
-    }
-    while (API.active < API.CONCURRENCY && API.queue.length) {
-      const task = API.queue.shift();
-      API.active++;
-      task(() => {
-        setTimeout(() => {
-          API.active--;
-          apiPump();
-        }, API.DELAY);
-      });
-    }
-  }
-  function apiEnqueue(task) {
-    API.queue.push(task);
-    apiPump();
-  }
-  function gmGet(url, cb) {
-    if (typeof GM_xmlhttpRequest !== "function") {
-      cb(null);
-      return;
-    }
-    GM_xmlhttpRequest({
-      method: "GET",
-      url,
-      withCredentials: true,
-      timeout: 12e3,
-      onload: (r) => {
+  function compileLines(lines) {
+    const plainParts = [];
+    const regexes = [];
+    for (const raw of lines || []) {
+      const line = (raw || "").trim();
+      if (!line) continue;
+      const m = line.match(/^\/(.*)\/([a-z]*)$/);
+      if (m) {
         try {
-          const j = JSON.parse(r.responseText);
-          riskGuard.note(j && j.code);
-          cb(j);
+          const flags = m[2] || "i";
+          regexes.push(new RegExp(m[1], flags.includes("i") ? flags : flags + "i"));
         } catch (e) {
-          cb(null);
         }
-      },
-      onerror: () => cb(null),
-      ontimeout: () => cb(null)
-    });
+      } else {
+        const w = normMatch(line);
+        if (w) plainParts.push(escapeRe(w));
+      }
+    }
+    let plain = null;
+    if (plainParts.length) {
+      try {
+        plain = new RegExp(plainParts.join("|"), "i");
+      } catch (e) {
+      }
+    }
+    return { plain, regexes, empty: !plain && !regexes.length };
   }
-  function fetchView(bvid, cb) {
-    if (!bvid) return cb(null);
-    if (API.view.has(bvid)) return cb(API.view.get(bvid));
-    apiEnqueue((done) => {
-      gmGet("https://api.bilibili.com/x/web-interface/view?bvid=" + encodeURIComponent(bvid), (j) => {
-        const d = j && j.code === 0 ? j.data : null;
-        API.view.set(bvid, d);
-        if (d && d.owner && d.owner.mid && d.owner.name) {
-          CONFIG.uidNames[String(d.owner.mid)] = d.owner.name;
-          scheduleSave();
-        }
-        cb(d);
-        done();
-      });
-    });
+  function textHit(text, matcher) {
+    if (!text || !matcher) return false;
+    if (matcher.plain && matcher.plain.test(normMatch(text))) return true;
+    if (matcher.regexes.length) {
+      const t = stripInvisible(text);
+      for (const r of matcher.regexes) if (r.test(t)) return true;
+    }
+    return false;
   }
-  function fetchTags(bvid, cb) {
-    if (!bvid) return cb(null);
-    if (API.tag.has(bvid)) return cb(API.tag.get(bvid));
-    apiEnqueue((done) => {
-      gmGet("https://api.bilibili.com/x/web-interface/view/detail/tag?bvid=" + encodeURIComponent(bvid), (j) => {
-        const arr = j && j.code === 0 && Array.isArray(j.data) ? j.data.map((x) => x.tag_name).filter(Boolean) : null;
-        API.tag.set(bvid, arr);
-        cb(arr);
-        done();
-      });
-    });
+  function compileScopedKeywords(lines) {
+    const buckets = { all: [], title: [], up: [], part: [] };
+    for (const raw of lines || []) {
+      const line = (raw || "").trim();
+      if (!line) continue;
+      const m = !line.startsWith("/") && line.match(/^(title|up|part)\s*:\s*(.+)$/i);
+      if (m) buckets[m[1].toLowerCase()].push(m[2].trim());
+      else buckets.all.push(line);
+    }
+    return {
+      all: compileLines(buckets.all),
+      title: compileLines(buckets.title),
+      up: compileLines(buckets.up),
+      part: compileLines(buckets.part)
+    };
   }
-  function fetchCard(mid, cb) {
-    if (!mid) return cb(null);
-    if (API.card.has(mid)) return cb(API.card.get(mid));
-    apiEnqueue((done) => {
-      gmGet("https://api.bilibili.com/x/web-interface/card?mid=" + encodeURIComponent(mid), (j) => {
-        const d = j && j.code === 0 ? j.data : null;
-        API.card.set(mid, d);
-        cb(d);
-        done();
-      });
-    });
+  function kwHit(scoped, field, text) {
+    if (!scoped || !text) return false;
+    return textHit(text, scoped.all) || textHit(text, scoped[field]);
   }
-  function cachedUid(bvid) {
-    const d = bvid && API.view.get(bvid);
-    return d && d.owner && d.owner.mid ? String(d.owner.mid) : "";
+  function splitRuleInput(raw) {
+    const out = [];
+    for (const ln of String(raw || "").split("\n")) {
+      const s = ln.trim();
+      if (!s) continue;
+      if (s[0] === "/") {
+        out.push(s);
+        continue;
+      }
+      for (const x of s.split(/[,，;；]/)) {
+        const v = x.trim();
+        if (v) out.push(v);
+      }
+    }
+    return out;
+  }
+
+  // src/subscriptions/parse.ts
+  var SUB_DIMS = ["uids", "upNames", "keywords", "partitions", "tags", "upBio", "bvids"];
+  var SUB_LINE_PREFIX = { uid: "uids", up: "upNames", kw: "keywords", part: "partitions", tag: "tags", bio: "upBio", bv: "bvids" };
+  var SUB_PREFIX_RE = new RegExp("^(" + Object.keys(SUB_LINE_PREFIX).join("|") + ")\\s*:\\s*(.+)$", "i");
+  var SUB_CAP = { uids: 5e4, upNames: 5e4, bvids: 5e4 };
+  var SUB_CAP_DEFAULT = 5e3;
+  function migrateSub(obj) {
+    return obj || {};
+  }
+  function sanitizeSubRules(rawRules) {
+    const out = {};
+    for (const dim of SUB_DIMS) {
+      const arr = rawRules && rawRules[dim];
+      if (!Array.isArray(arr)) continue;
+      const max = SUB_CAP[dim] || SUB_CAP_DEFAULT;
+      const seen = /* @__PURE__ */ new Set();
+      const clean = [];
+      for (const x of arr) {
+        if (typeof x !== "string") continue;
+        const v = x.trim();
+        if (!v || seen.has(v)) continue;
+        seen.add(v);
+        clean.push(v);
+        if (clean.length >= max) break;
+      }
+      if (clean.length) out[dim] = clean;
+    }
+    return out;
+  }
+  function parseSubscription(text) {
+    const t = (text || "").trim();
+    if (!t) throw new Error("空内容");
+    if (t[0] === "{") {
+      const obj = migrateSub(JSON.parse(t));
+      const meta2 = obj && obj.meta && typeof obj.meta === "object" ? obj.meta : {};
+      let rawRules = obj && obj.rules;
+      if (!rawRules && obj && obj.config && obj.config.block) rawRules = obj.config.block;
+      return { meta: meta2, rules: sanitizeSubRules(rawRules) };
+    }
+    const meta = {};
+    const buckets = {};
+    for (let line of t.split(/\r?\n/)) {
+      line = line.trim();
+      if (!line) continue;
+      if (line[0] === "!") {
+        const m = line.slice(1).match(/^\s*([a-zA-Z][\w-]*)\s*:\s*(.+)$/);
+        if (m) meta[m[1]] = m[2].trim();
+        continue;
+      }
+      line = line.replace(/\s+#.*$/, "").trim();
+      if (!line) continue;
+      const pm = !line.startsWith("/") && line.match(SUB_PREFIX_RE);
+      const dim = pm ? SUB_LINE_PREFIX[pm[1].toLowerCase()] : "keywords";
+      const val = pm ? pm[2].trim() : line;
+      (buckets[dim] = buckets[dim] || []).push(val);
+    }
+    return { meta, rules: sanitizeSubRules(buckets) };
+  }
+
+  // src/subscriptions/store.ts
+  function loadSubStore() {
+    try {
+      return JSON.parse(GM_getValue(SUB_STORE_KEY, "") || "{}") || {};
+    } catch (e) {
+      return {};
+    }
+  }
+  function saveSubStore(store) {
+    try {
+      GM_setValue(SUB_STORE_KEY, JSON.stringify(store));
+    } catch (e) {
+    }
+  }
+  function collectSubRules() {
+    const store = loadSubStore();
+    const merged = {};
+    for (const sub of CONFIG.subscriptions || []) {
+      if (!sub || !sub.enabled || !sub.url) continue;
+      const e = store[sub.url];
+      if (!e || !e.ok || !e.rules) continue;
+      for (const dim of SUB_DIMS) {
+        const arr = e.rules[dim];
+        if (Array.isArray(arr) && arr.length) (merged[dim] = merged[dim] || []).push(...arr);
+      }
+    }
+    return merged;
   }
 
   // src/match/engine.ts
@@ -970,6 +741,44 @@
       if (r) return r;
     }
     return null;
+  }
+
+  // src/stats.ts
+  var blockedLog = [];
+  var sessionBlocked = 0;
+  function setSessionBlocked(n) {
+    sessionBlocked = n;
+  }
+  function tallyLog() {
+    const t = {};
+    for (const b of blockedLog) t[b.reason] = (t[b.reason] || 0) + 1;
+    return t;
+  }
+  function logBlocked(reason, info, src) {
+    blockedLog.unshift({
+      title: info && info.title || "",
+      up: info && info.up || "",
+      uid: info && info.uid || "",
+      bvid: info && info.bvid || "",
+      link: info && info.link || "",
+      src: src || "DOM",
+      reason,
+      t: Date.now()
+    });
+    if (blockedLog.length > 300) blockedLog.pop();
+  }
+  var onRecorded = () => {
+  };
+  function setStatsListener(fn) {
+    onRecorded = fn;
+  }
+  function recordBlock(reason, info, src) {
+    logBlocked(reason, info, src);
+    sessionBlocked++;
+    CONFIG.blockedCount++;
+    onRecorded();
+    scheduleSave();
+    log(`拦截🚫 ${reason} ${info && info.up ? info.up + " · " : ""}${info && info.title || "(无标题)"}`);
   }
 
   // src/net.ts
@@ -1154,6 +963,54 @@
     }
   }
 
+  // src/ui/hooks.ts
+  var _refreshPanelIfOpen = () => {
+  };
+  var _openPanel = () => {
+  };
+  var _isPanelOpen = () => false;
+  function setPanelHooks(h) {
+    if (h.refreshPanelIfOpen) _refreshPanelIfOpen = h.refreshPanelIfOpen;
+    if (h.openPanel) _openPanel = h.openPanel;
+    if (h.isPanelOpen) _isPanelOpen = h.isPanelOpen;
+  }
+  function refreshPanelIfOpen() {
+    _refreshPanelIfOpen();
+  }
+  function openPanel() {
+    _openPanel();
+  }
+
+  // src/ui/toast.ts
+  function updateBadge() {
+    let b = document.getElementById("bfb-badge");
+    if (!b) {
+      b = document.createElement("div");
+      b.id = "bfb-badge";
+      b.title = "点击打开设置";
+      b.onclick = openPanel;
+      document.body.appendChild(b);
+    }
+    b.classList.toggle("off", !CONFIG.enabled);
+    b.textContent = CONFIG.enabled ? `🛡 已拦截 ${sessionBlocked}（共${CONFIG.blockedCount}）` : "🛡 已暂停";
+  }
+  function toastContainer() {
+    let c = document.getElementById("bfb-toasts");
+    if (!c) {
+      c = document.createElement("div");
+      c.id = "bfb-toasts";
+      document.body.appendChild(c);
+    }
+    return c;
+  }
+  function toast(msg) {
+    const t = document.createElement("div");
+    t.className = "bfb-toast";
+    t.textContent = msg;
+    toastContainer().appendChild(t);
+    setTimeout(() => t.remove(), 4e3);
+  }
+
   // src/events.ts
   var handler = () => {
   };
@@ -1162,25 +1019,6 @@
   }
   function emitRulesChanged() {
     handler();
-  }
-
-  // src/rules.ts
-  function addToList(arr, value) {
-    const v = (value ? String(value) : "").trim();
-    if (!v) return false;
-    if (arr.map(String).includes(v)) return false;
-    arr.push(v);
-    saveConfig();
-    emitRulesChanged();
-    return true;
-  }
-  function removeFromList(arr, value) {
-    const i = arr.map(String).indexOf(String(value));
-    if (i >= 0) {
-      arr.splice(i, 1);
-      saveConfig();
-      emitRulesChanged();
-    }
   }
 
   // src/subscriptions/refresh.ts
@@ -1432,6 +1270,324 @@
     }, 300);
   }
 
+  // src/hotsearch.ts
+  var HOTSEARCH_SELECTORS = [
+    ".trending",
+    ".search-panel .trending-list",
+    ".search-panel-popover .trending",
+    '.bili-header [class*="trending"]',
+    '.center-search-container [class*="trending"]',
+    '.search-panel [class*="trending"]',
+    '.history-panel [class*="trending"]'
+  ];
+  function applyHotSearchStyle() {
+    let st = document.getElementById("bfb-hotsearch-style");
+    if (CONFIG.hideHotSearch) {
+      if (!st) {
+        st = document.createElement("style");
+        st.id = "bfb-hotsearch-style";
+        document.head.appendChild(st);
+      }
+      st.textContent = HOTSEARCH_SELECTORS.join(",") + "{display:none !important}";
+    } else if (st) {
+      st.remove();
+    }
+  }
+
+  // src/api.ts
+  var riskGuard = {
+    until: 0,
+    strikes: 0,
+    blocked() {
+      return Date.now() < this.until;
+    },
+    remaining() {
+      return Math.max(0, this.until - Date.now());
+    },
+    // 任何联网响应都喂进来：风控码→升级退避；正常码→冷却期过后清零。
+    note(code) {
+      if (code == null || !RISK_CODES.has(code)) {
+        if (code === 0 && this.strikes && !this.blocked()) this.strikes = 0;
+        return;
+      }
+      const wasBlocked = this.blocked();
+      this.strikes = Math.min(this.strikes + 1, 6);
+      const backoff = Math.min(6e4, 2e3 * 2 ** (this.strikes - 1));
+      this.until = Date.now() + backoff;
+      if (!wasBlocked) {
+        logErr("风控熔断", `code ${code}，暂停联网 ${Math.round(backoff / 1e3)}s`);
+        toast(`⚠️ 触发 B 站风控(code ${code})，已暂停联网 ${Math.round(backoff / 1e3)} 秒以保护账号`);
+      }
+    }
+  };
+  var API = {
+    view: /* @__PURE__ */ new Map(),
+    tag: /* @__PURE__ */ new Map(),
+    card: /* @__PURE__ */ new Map(),
+    queue: [],
+    active: 0,
+    waiting: false,
+    CONCURRENCY: 3,
+    DELAY: 120
+  };
+  function apiPump() {
+    if (riskGuard.blocked()) {
+      if (!API.waiting) {
+        API.waiting = true;
+        setTimeout(() => {
+          API.waiting = false;
+          apiPump();
+        }, riskGuard.remaining() + 50);
+      }
+      return;
+    }
+    while (API.active < API.CONCURRENCY && API.queue.length) {
+      const task = API.queue.shift();
+      API.active++;
+      task(() => {
+        setTimeout(() => {
+          API.active--;
+          apiPump();
+        }, API.DELAY);
+      });
+    }
+  }
+  function apiEnqueue(task) {
+    API.queue.push(task);
+    apiPump();
+  }
+  function gmGet(url, cb) {
+    if (typeof GM_xmlhttpRequest !== "function") {
+      cb(null);
+      return;
+    }
+    GM_xmlhttpRequest({
+      method: "GET",
+      url,
+      withCredentials: true,
+      timeout: 12e3,
+      onload: (r) => {
+        try {
+          const j = JSON.parse(r.responseText);
+          riskGuard.note(j && j.code);
+          cb(j);
+        } catch (e) {
+          cb(null);
+        }
+      },
+      onerror: () => cb(null),
+      ontimeout: () => cb(null)
+    });
+  }
+  function fetchView(bvid, cb) {
+    if (!bvid) return cb(null);
+    if (API.view.has(bvid)) return cb(API.view.get(bvid));
+    apiEnqueue((done) => {
+      gmGet("https://api.bilibili.com/x/web-interface/view?bvid=" + encodeURIComponent(bvid), (j) => {
+        const d = j && j.code === 0 ? j.data : null;
+        API.view.set(bvid, d);
+        if (d && d.owner && d.owner.mid && d.owner.name) {
+          CONFIG.uidNames[String(d.owner.mid)] = d.owner.name;
+          scheduleSave();
+        }
+        cb(d);
+        done();
+      });
+    });
+  }
+  function fetchTags(bvid, cb) {
+    if (!bvid) return cb(null);
+    if (API.tag.has(bvid)) return cb(API.tag.get(bvid));
+    apiEnqueue((done) => {
+      gmGet("https://api.bilibili.com/x/web-interface/view/detail/tag?bvid=" + encodeURIComponent(bvid), (j) => {
+        const arr = j && j.code === 0 && Array.isArray(j.data) ? j.data.map((x) => x.tag_name).filter(Boolean) : null;
+        API.tag.set(bvid, arr);
+        cb(arr);
+        done();
+      });
+    });
+  }
+  function fetchCard(mid, cb) {
+    if (!mid) return cb(null);
+    if (API.card.has(mid)) return cb(API.card.get(mid));
+    apiEnqueue((done) => {
+      gmGet("https://api.bilibili.com/x/web-interface/card?mid=" + encodeURIComponent(mid), (j) => {
+        const d = j && j.code === 0 ? j.data : null;
+        API.card.set(mid, d);
+        cb(d);
+        done();
+      });
+    });
+  }
+  function cachedUid(bvid) {
+    const d = bvid && API.view.get(bvid);
+    return d && d.owner && d.owner.mid ? String(d.owner.mid) : "";
+  }
+
+  // src/rules.ts
+  function addToList(arr, value) {
+    const v = (value ? String(value) : "").trim();
+    if (!v) return false;
+    if (arr.map(String).includes(v)) return false;
+    arr.push(v);
+    saveConfig();
+    emitRulesChanged();
+    return true;
+  }
+  function removeFromList(arr, value) {
+    const i = arr.map(String).indexOf(String(value));
+    if (i >= 0) {
+      arr.splice(i, 1);
+      saveConfig();
+      emitRulesChanged();
+    }
+  }
+
+  // src/dom.ts
+  var countedEls = /* @__PURE__ */ new WeakSet();
+  function clearVisual(card) {
+    card.style.display = "";
+    card.classList.remove("bfb-review");
+    const t = card.querySelector(":scope > .bfb-tag");
+    if (t) t.remove();
+    card.removeAttribute(ATTR_BLOCKED);
+    const cell = cellOf(card);
+    if (cell !== card) cell.style.display = "";
+  }
+  function markCard(card, reason, info) {
+    card.classList.add("bfb-review");
+    if (card.querySelector(":scope > .bfb-tag")) return;
+    const tag = document.createElement("div");
+    tag.className = "bfb-tag";
+    const rs = document.createElement("span");
+    rs.className = "rs";
+    rs.textContent = "已判定拦截 · " + reason;
+    tag.appendChild(rs);
+    if (info.up || info.uid || info.bvid) {
+      const pass = document.createElement("button");
+      pass.textContent = "✅放行";
+      pass.title = "误伤了？把该 UP 加白名单，永不再拦";
+      pass.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (info.uid) addToList(CONFIG.allow.uids, info.uid);
+        else if (info.up) addToList(CONFIG.allow.upNames, info.up);
+        else if (info.bvid) addToList(CONFIG.allow.keywords, info.title || info.bvid);
+        toast("已放行：" + (info.up || info.title || info.bvid));
+        refreshPanelIfOpen();
+      };
+      tag.appendChild(pass);
+    }
+    card.appendChild(tag);
+  }
+  function blockVideo(card, reason, info) {
+    if (CONFIG.reviewMode) {
+      markCard(card, reason, info);
+    } else {
+      const cell = cellOf(card);
+      if (!isUnsafeHideTarget(cell)) cell.style.display = "none";
+      card.style.display = "none";
+    }
+    card.setAttribute(ATTR_BLOCKED, "1");
+    if (countedEls.has(card)) return;
+    countedEls.add(card);
+    recordBlock(reason, info, "DOM");
+  }
+  var processCard = safe("processCard", function(card) {
+    if (!CONFIG.enabled) return;
+    if (card.getAttribute(PROCESSED)) return;
+    const info = extractCardInfo(card, M.needUid);
+    if (!info.title && !info.up && !info.isLive) return;
+    card.setAttribute(PROCESSED, "1");
+    card._bfbInfo = info;
+    const hit = matchRule(info);
+    if (!hit) log(`放行✅ | 标题:${info.title || "(无)"} | UP:${info.up || "(无)"} | 标签:${info.partition || "(无)"}`);
+    if (hit) {
+      blockVideo(card, hit, info);
+      return;
+    }
+    if (info.bvid && apiRulesActive()) evaluateApi(card, info);
+  });
+  function evaluateApi(card, info) {
+    if (card.getAttribute(ATTR_API)) return;
+    card.setAttribute(ATTR_API, "1");
+    const need = apiNeeds();
+    let view = null;
+    let tags = null;
+    let cardData = null;
+    let pending = 0;
+    const finish = () => {
+      if (pending > 0) return;
+      if (!CONFIG.enabled || isWhitelisted(info)) return;
+      const hit = matchApi(info, view, tags, cardData);
+      if (hit) blockVideo(card, hit, info);
+      else log(`API放行 | ${info.title || ""}`);
+    };
+    const afterView = () => {
+      if (need.needCard) {
+        const mid = info.uid || view && view.owner && view.owner.mid;
+        if (mid) {
+          pending++;
+          fetchCard(mid, (c) => {
+            cardData = c;
+            pending--;
+            finish();
+          });
+        }
+      }
+      finish();
+    };
+    if (need.needView) {
+      pending++;
+      fetchView(info.bvid, (v) => {
+        view = v;
+        pending--;
+        afterView();
+      });
+    }
+    if (need.needTag) {
+      pending++;
+      fetchTags(info.bvid, (t) => {
+        tags = t;
+        pending--;
+        finish();
+      });
+    }
+  }
+  function queryCards() {
+    const out = Array.from(document.querySelectorAll(VIDEO_CARD_SELECTOR));
+    for (const r of shadowRoots) {
+      if (!r.host || !r.host.isConnected) {
+        shadowRoots.delete(r);
+        continue;
+      }
+      try {
+        const found = r.querySelectorAll(VIDEO_CARD_SELECTOR);
+        if (found.length) out.push(...found);
+      } catch (e) {
+      }
+    }
+    return out;
+  }
+  function scanAll() {
+    if (!CONFIG.enabled) return;
+    queryCards().forEach((card) => {
+      if (card.getAttribute(PROCESSED)) return;
+      if (card.closest && card.closest(".recommended-swipe")) return;
+      processCard(card);
+    });
+  }
+  function rescanAfterRuleChange() {
+    rebuildRules();
+    document.querySelectorAll("[" + PROCESSED + "]").forEach((el) => {
+      el.removeAttribute(PROCESSED);
+      el.removeAttribute(ATTR_API);
+      clearVisual(el);
+    });
+    scanAll();
+    scanComments();
+  }
+
   // src/blacklist.ts
   function resolveUidByBvid(bvid, cb) {
     fetchView(bvid, (d) => {
@@ -1616,174 +1772,215 @@
     cb && cb(false);
   }
 
-  // src/hotsearch.ts
-  var HOTSEARCH_SELECTORS = [
-    ".trending",
-    ".search-panel .trending-list",
-    ".search-panel-popover .trending",
-    '.bili-header [class*="trending"]',
-    '.center-search-container [class*="trending"]',
-    '.search-panel [class*="trending"]',
-    '.history-panel [class*="trending"]'
-  ];
-  function applyHotSearchStyle() {
-    let st = document.getElementById("bfb-hotsearch-style");
-    if (CONFIG.hideHotSearch) {
-      if (!st) {
-        st = document.createElement("style");
-        st.id = "bfb-hotsearch-style";
-        document.head.appendChild(st);
+  // src/ui/menu.ts
+  var ctxMenuEl = null;
+  function closeCtxMenu() {
+    if (ctxMenuEl) {
+      ctxMenuEl.remove();
+      ctxMenuEl = null;
+    }
+  }
+  function onContextMenu(e) {
+    if (!CONFIG.enabled || !CONFIG.rightClickBlock) return;
+    if (CONFIG.comment.enabled) {
+      const cmtHost = findCommentHost(e);
+      if (cmtHost) {
+        const c = readCmt(cmtHost);
+        const citems = [];
+        const csel = window.getSelection && window.getSelection().toString().trim() || "";
+        if (csel && csel.length <= 30) {
+          citems.push({
+            label: `🚫 评论含「${csel}」关键词`,
+            act: () => {
+              addToList(CONFIG.comment.keywords, csel);
+              toast(`已加入评论关键词：${csel}`);
+              refreshPanelIfOpen();
+            }
+          });
+        }
+        if (c.uname) {
+          citems.push({
+            label: `🚫 屏蔽评论用户「${c.uname}」`,
+            act: () => {
+              addToList(CONFIG.comment.userNames, c.uname);
+              toast(`已屏蔽评论用户：${c.uname}`);
+              refreshPanelIfOpen();
+            }
+          });
+        }
+        if (citems.length) {
+          e.preventDefault();
+          e.stopPropagation();
+          closeCtxMenu();
+          renderCtxMenu(e, citems);
+          return;
+        }
       }
-      st.textContent = HOTSEARCH_SELECTORS.join(",") + "{display:none !important}";
-    } else if (st) {
-      st.remove();
+    }
+    const card = e.target.closest(VIDEO_CARD_SELECTOR);
+    if (!card) return;
+    const info = extractCardInfo(card, true);
+    if (!info.up && !info.bvid) return;
+    e.preventDefault();
+    e.stopPropagation();
+    closeCtxMenu();
+    const items = [];
+    const sel = window.getSelection && window.getSelection().toString().trim() || "";
+    if (sel && sel.length <= 30) {
+      items.push({
+        label: `🚫 屏蔽含「${sel}」关键词`,
+        act: () => {
+          addToList(CONFIG.block.keywords, sel);
+          toast(`已加入关键词：${sel}`);
+          refreshPanelIfOpen();
+        }
+      });
+    }
+    if (info.up) {
+      items.push({
+        label: `🚫 屏蔽UP「${info.up}」`,
+        act: () => {
+          if (info.uid) addToList(CONFIG.block.uids, info.uid);
+          else addToList(CONFIG.block.upNames, info.up);
+          toast(`已屏蔽 UP：${info.up}`);
+          refreshPanelIfOpen();
+        }
+      });
+      items.push({
+        label: `⛔ 拉黑UP「${info.up}」(同步账号黑名单)`,
+        act: () => blacklistUp(info, refreshPanelIfOpen, card)
+      });
+      items.push({
+        label: `⭐ 加白名单(永不屏蔽此UP)`,
+        act: () => {
+          addToList(CONFIG.allow.upNames, info.up);
+          toast(`已加入白名单：${info.up}`);
+          refreshPanelIfOpen();
+        }
+      });
+    }
+    if (info.bvid) {
+      items.push({
+        label: `🚫 屏蔽此视频 (${info.bvid})`,
+        act: () => {
+          addToList(CONFIG.block.bvids, info.bvid);
+          toast(`已屏蔽视频：${info.bvid}`);
+          refreshPanelIfOpen();
+        }
+      });
+    }
+    items.push({
+      label: "🙈 隐藏这一张",
+      act: () => {
+        card.setAttribute(PROCESSED, "1");
+        blockVideo(card, "手动", info);
+      }
+    });
+    items.push({ label: "⚙️ 打开设置面板", act: openPanel });
+    renderCtxMenu(e, items);
+  }
+  function renderCtxMenu(e, items) {
+    const menu = document.createElement("div");
+    menu.id = "bfb-ctxmenu";
+    items.forEach((it) => {
+      const row = document.createElement("div");
+      row.className = "bfb-ctx-item";
+      row.textContent = it.label;
+      row.onclick = () => {
+        closeCtxMenu();
+        it.act();
+      };
+      menu.appendChild(row);
+    });
+    document.body.appendChild(menu);
+    menu.style.left = Math.min(e.clientX, window.innerWidth - 270) + "px";
+    menu.style.top = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 10) + "px";
+    ctxMenuEl = menu;
+  }
+  function findCommentHost(e) {
+    const path = e.composedPath && e.composedPath() || [];
+    for (const el of path) {
+      if (el && el.tagName && CMT_TAGS[el.tagName] !== void 0) return el;
+    }
+    return null;
+  }
+  document.addEventListener("click", closeCtxMenu, true);
+  document.addEventListener("scroll", closeCtxMenu, true);
+  var overlayHost = null;
+  var overlayRoot = null;
+  function getOverlayRoot() {
+    if (overlayRoot) return overlayRoot;
+    overlayHost = document.createElement("div");
+    overlayHost.id = "bfb-overlay-host";
+    overlayHost.style.cssText = "position:fixed;inset:0;z-index:100002;pointer-events:none;contain:layout style";
+    overlayRoot = overlayHost.attachShadow({ mode: "open" });
+    const st = document.createElement("style");
+    st.textContent = ".blk{position:fixed;pointer-events:auto;background:rgba(251,114,153,.95);color:#fff;border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.28);font-family:system-ui,Arial;user-select:none;display:none}.blk:hover{background:#fb7299}";
+    overlayRoot.appendChild(st);
+    (document.documentElement || document.body).appendChild(overlayHost);
+    return overlayRoot;
+  }
+  var hoverBtn = null;
+  var hoverCard = null;
+  function ensureHoverBtn() {
+    if (hoverBtn) return hoverBtn;
+    const root = getOverlayRoot();
+    hoverBtn = document.createElement("div");
+    hoverBtn.className = "blk";
+    hoverBtn.textContent = "⛔ 拉黑";
+    hoverBtn.title = "拉黑该 UP（同步账号黑名单）";
+    hoverBtn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!hoverCard) return;
+      const info = hoverCard._bfbInfo || extractCardInfo(hoverCard);
+      if (!info.up && !info.bvid) {
+        toast("该卡片信息不足，无法拉黑");
+        return;
+      }
+      blacklistUp(info, refreshPanelIfOpen, hoverCard);
+      hideHoverBtn();
+    };
+    root.appendChild(hoverBtn);
+    return hoverBtn;
+  }
+  function hideHoverBtn() {
+    if (hoverBtn) hoverBtn.style.display = "none";
+    hoverCard = null;
+  }
+  function positionHoverBtn(card) {
+    const r = card.getBoundingClientRect();
+    if (r.width < 80 || r.height < 60) return hideHoverBtn();
+    const b = ensureHoverBtn();
+    b.style.left = Math.max(8, r.left + 8) + "px";
+    b.style.top = Math.max(8, r.top + 8) + "px";
+    b.style.display = "block";
+    hoverCard = card;
+  }
+  function onCardHover(e) {
+    if (!CONFIG.enabled || !CONFIG.cardHoverBtn) return;
+    const t = e.target;
+    if (t === overlayHost) return;
+    const card = t.closest && t.closest(VIDEO_CARD_SELECTOR);
+    if (card) {
+      if (card !== hoverCard) positionHoverBtn(card);
+    } else {
+      hideHoverBtn();
     }
   }
 
-  // src/dom.ts
-  var countedEls = /* @__PURE__ */ new WeakSet();
-  function clearVisual(card) {
-    card.style.display = "";
-    card.classList.remove("bfb-review");
-    const t = card.querySelector(":scope > .bfb-tag");
-    if (t) t.remove();
-    card.removeAttribute(ATTR_BLOCKED);
-    const cell = cellOf(card);
-    if (cell !== card) cell.style.display = "";
-  }
-  function markCard(card, reason, info) {
-    card.classList.add("bfb-review");
-    if (card.querySelector(":scope > .bfb-tag")) return;
-    const tag = document.createElement("div");
-    tag.className = "bfb-tag";
-    const rs = document.createElement("span");
-    rs.className = "rs";
-    rs.textContent = "已判定拦截 · " + reason;
-    tag.appendChild(rs);
-    if (info.up || info.uid || info.bvid) {
-      const pass = document.createElement("button");
-      pass.textContent = "✅放行";
-      pass.title = "误伤了？把该 UP 加白名单，永不再拦";
-      pass.onclick = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (info.uid) addToList(CONFIG.allow.uids, info.uid);
-        else if (info.up) addToList(CONFIG.allow.upNames, info.up);
-        else if (info.bvid) addToList(CONFIG.allow.keywords, info.title || info.bvid);
-        toast("已放行：" + (info.up || info.title || info.bvid));
-        refreshPanelIfOpen();
-      };
-      tag.appendChild(pass);
-    }
-    card.appendChild(tag);
-  }
-  function blockVideo(card, reason, info) {
-    if (CONFIG.reviewMode) {
-      markCard(card, reason, info);
-    } else {
-      const cell = cellOf(card);
-      if (!isUnsafeHideTarget(cell)) cell.style.display = "none";
-      card.style.display = "none";
-    }
-    card.setAttribute(ATTR_BLOCKED, "1");
-    if (countedEls.has(card)) return;
-    countedEls.add(card);
-    recordBlock(reason, info, "DOM");
-  }
-  var processCard = safe("processCard", function(card) {
-    if (!CONFIG.enabled) return;
-    if (card.getAttribute(PROCESSED)) return;
-    const info = extractCardInfo(card, M.needUid);
-    if (!info.title && !info.up && !info.isLive) return;
-    card.setAttribute(PROCESSED, "1");
-    card._bfbInfo = info;
-    const hit = matchRule(info);
-    if (!hit) log(`放行✅ | 标题:${info.title || "(无)"} | UP:${info.up || "(无)"} | 标签:${info.partition || "(无)"}`);
-    if (hit) {
-      blockVideo(card, hit, info);
-      return;
-    }
-    if (info.bvid && apiRulesActive()) evaluateApi(card, info);
-  });
-  function evaluateApi(card, info) {
-    if (card.getAttribute(ATTR_API)) return;
-    card.setAttribute(ATTR_API, "1");
-    const need = apiNeeds();
-    let view = null;
-    let tags = null;
-    let cardData = null;
-    let pending = 0;
-    const finish = () => {
-      if (pending > 0) return;
-      if (!CONFIG.enabled || isWhitelisted(info)) return;
-      const hit = matchApi(info, view, tags, cardData);
-      if (hit) blockVideo(card, hit, info);
-      else log(`API放行 | ${info.title || ""}`);
-    };
-    const afterView = () => {
-      if (need.needCard) {
-        const mid = info.uid || view && view.owner && view.owner.mid;
-        if (mid) {
-          pending++;
-          fetchCard(mid, (c) => {
-            cardData = c;
-            pending--;
-            finish();
-          });
-        }
-      }
-      finish();
-    };
-    if (need.needView) {
-      pending++;
-      fetchView(info.bvid, (v) => {
-        view = v;
-        pending--;
-        afterView();
-      });
-    }
-    if (need.needTag) {
-      pending++;
-      fetchTags(info.bvid, (t) => {
-        tags = t;
-        pending--;
-        finish();
-      });
-    }
-  }
-  function queryCards() {
-    const out = Array.from(document.querySelectorAll(VIDEO_CARD_SELECTOR));
-    for (const r of shadowRoots) {
-      if (!r.host || !r.host.isConnected) {
-        shadowRoots.delete(r);
-        continue;
-      }
-      try {
-        const found = r.querySelectorAll(VIDEO_CARD_SELECTOR);
-        if (found.length) out.push(...found);
-      } catch (e) {
-      }
-    }
-    return out;
-  }
-  function scanAll() {
-    if (!CONFIG.enabled) return;
-    queryCards().forEach((card) => {
-      if (card.getAttribute(PROCESSED)) return;
-      if (card.closest && card.closest(".recommended-swipe")) return;
-      processCard(card);
-    });
-  }
-  function rescanAfterRuleChange() {
-    rebuildRules();
-    document.querySelectorAll("[" + PROCESSED + "]").forEach((el) => {
-      el.removeAttribute(PROCESSED);
-      el.removeAttribute(ATTR_API);
-      clearVisual(el);
-    });
-    scanAll();
-    scanComments();
-  }
+  // src/presets.ts
+  var PRESET_LIBRARY = [
+    { cat: "游戏黑水", name: "库洛系(鸣潮/库洛)", desc: "鸣潮 / 库洛 / 战双 等相关词", rules: { keywords: ["库洛", "库洛游戏", "呜哇", "鸣潮", "战双", "战双帕弥什", "漂泊者", "漂泊神游", "寄生神游", "寄生社区"] } },
+    { cat: "引战", name: "引战话术", desc: "挑动对立的话术片段（已收敛正则、防误伤）", rules: { keywords: ["/接触wuwa后|大脑发生的异变/"] } },
+    { cat: "引战", name: "引战标签", desc: "抹黑 / 拉踩类标签（需开「精确过滤」才匹配标签）", rules: { tags: ["/米哈一儿|一哭|二抄|三自爆/"] } },
+    { cat: "标题党 / 营销", name: "标题党", desc: "震惊体 + 一口气看完", rules: { keywords: ["/(一口气|一次性|一天|分钟|分半|小时)(看完|带你看完|直接看完)/", "/震惊|竟然|万万没想到/"] } },
+    { cat: "标题党 / 营销", name: "营销号UP名", desc: "常见营销号账号名", rules: { keywords: ["今日话题", "话题酱", "今日知乎", "大型纪录片"] } },
+    { cat: "标题党 / 营销", name: "软传销", desc: "日入月入 / 为自己打工", rules: { keywords: ["/(日入|日赚|月入|月赚)\\d+/", "/(小时|内耗).+为自己打工/"] } },
+    { cat: "其它", name: "MBTI", rules: { keywords: ["/MBTI|[IE][SN][TF][JP]|I人|E人/"] } },
+    { cat: "其它", name: "梗视频", rules: { keywords: ["科目三", "猫meme", "/是什么梗|梗百科|大型[纪记]录片/"] } },
+    { cat: "其它", name: "含日语标题", rules: { keywords: ["/[ぁ-ヶ]/"] } }
+  ];
 
   // src/ui/field.ts
   var collapseState = {};
@@ -2047,237 +2244,9 @@
     });
   }
 
-  // src/ui/menu.ts
-  var ctxMenuEl = null;
-  function closeCtxMenu() {
-    if (ctxMenuEl) {
-      ctxMenuEl.remove();
-      ctxMenuEl = null;
-    }
-  }
-  function onContextMenu(e) {
-    if (!CONFIG.enabled || !CONFIG.rightClickBlock) return;
-    if (CONFIG.comment.enabled) {
-      const cmtHost = findCommentHost(e);
-      if (cmtHost) {
-        const c = readCmt(cmtHost);
-        const citems = [];
-        const csel = window.getSelection && window.getSelection().toString().trim() || "";
-        if (csel && csel.length <= 30) {
-          citems.push({
-            label: `🚫 评论含「${csel}」关键词`,
-            act: () => {
-              addToList(CONFIG.comment.keywords, csel);
-              toast(`已加入评论关键词：${csel}`);
-              refreshPanelIfOpen();
-            }
-          });
-        }
-        if (c.uname) {
-          citems.push({
-            label: `🚫 屏蔽评论用户「${c.uname}」`,
-            act: () => {
-              addToList(CONFIG.comment.userNames, c.uname);
-              toast(`已屏蔽评论用户：${c.uname}`);
-              refreshPanelIfOpen();
-            }
-          });
-        }
-        if (citems.length) {
-          e.preventDefault();
-          e.stopPropagation();
-          closeCtxMenu();
-          renderCtxMenu(e, citems);
-          return;
-        }
-      }
-    }
-    const card = e.target.closest(VIDEO_CARD_SELECTOR);
-    if (!card) return;
-    const info = extractCardInfo(card, true);
-    if (!info.up && !info.bvid) return;
-    e.preventDefault();
-    e.stopPropagation();
-    closeCtxMenu();
-    const items = [];
-    const sel = window.getSelection && window.getSelection().toString().trim() || "";
-    if (sel && sel.length <= 30) {
-      items.push({
-        label: `🚫 屏蔽含「${sel}」关键词`,
-        act: () => {
-          addToList(CONFIG.block.keywords, sel);
-          toast(`已加入关键词：${sel}`);
-          refreshPanelIfOpen();
-        }
-      });
-    }
-    if (info.up) {
-      items.push({
-        label: `🚫 屏蔽UP「${info.up}」`,
-        act: () => {
-          if (info.uid) addToList(CONFIG.block.uids, info.uid);
-          else addToList(CONFIG.block.upNames, info.up);
-          toast(`已屏蔽 UP：${info.up}`);
-          refreshPanelIfOpen();
-        }
-      });
-      items.push({
-        label: `⛔ 拉黑UP「${info.up}」(同步账号黑名单)`,
-        act: () => blacklistUp(info, refreshPanelIfOpen, card)
-      });
-      items.push({
-        label: `⭐ 加白名单(永不屏蔽此UP)`,
-        act: () => {
-          addToList(CONFIG.allow.upNames, info.up);
-          toast(`已加入白名单：${info.up}`);
-          refreshPanelIfOpen();
-        }
-      });
-    }
-    if (info.bvid) {
-      items.push({
-        label: `🚫 屏蔽此视频 (${info.bvid})`,
-        act: () => {
-          addToList(CONFIG.block.bvids, info.bvid);
-          toast(`已屏蔽视频：${info.bvid}`);
-          refreshPanelIfOpen();
-        }
-      });
-    }
-    items.push({
-      label: "🙈 隐藏这一张",
-      act: () => {
-        card.setAttribute(PROCESSED, "1");
-        blockVideo(card, "手动", info);
-      }
-    });
-    items.push({ label: "⚙️ 打开设置面板", act: openPanel });
-    renderCtxMenu(e, items);
-  }
-  function renderCtxMenu(e, items) {
-    const menu = document.createElement("div");
-    menu.id = "bfb-ctxmenu";
-    items.forEach((it) => {
-      const row = document.createElement("div");
-      row.className = "bfb-ctx-item";
-      row.textContent = it.label;
-      row.onclick = () => {
-        closeCtxMenu();
-        it.act();
-      };
-      menu.appendChild(row);
-    });
-    document.body.appendChild(menu);
-    menu.style.left = Math.min(e.clientX, window.innerWidth - 270) + "px";
-    menu.style.top = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 10) + "px";
-    ctxMenuEl = menu;
-  }
-  function findCommentHost(e) {
-    const path = e.composedPath && e.composedPath() || [];
-    for (const el of path) {
-      if (el && el.tagName && CMT_TAGS[el.tagName] !== void 0) return el;
-    }
-    return null;
-  }
-  document.addEventListener("click", closeCtxMenu, true);
-  document.addEventListener("scroll", closeCtxMenu, true);
-  var overlayHost = null;
-  var overlayRoot = null;
-  function getOverlayRoot() {
-    if (overlayRoot) return overlayRoot;
-    overlayHost = document.createElement("div");
-    overlayHost.id = "bfb-overlay-host";
-    overlayHost.style.cssText = "position:fixed;inset:0;z-index:100002;pointer-events:none;contain:layout style";
-    overlayRoot = overlayHost.attachShadow({ mode: "open" });
-    const st = document.createElement("style");
-    st.textContent = ".blk{position:fixed;pointer-events:auto;background:rgba(251,114,153,.95);color:#fff;border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.28);font-family:system-ui,Arial;user-select:none;display:none}.blk:hover{background:#fb7299}";
-    overlayRoot.appendChild(st);
-    (document.documentElement || document.body).appendChild(overlayHost);
-    return overlayRoot;
-  }
-  var hoverBtn = null;
-  var hoverCard = null;
-  function ensureHoverBtn() {
-    if (hoverBtn) return hoverBtn;
-    const root = getOverlayRoot();
-    hoverBtn = document.createElement("div");
-    hoverBtn.className = "blk";
-    hoverBtn.textContent = "⛔ 拉黑";
-    hoverBtn.title = "拉黑该 UP（同步账号黑名单）";
-    hoverBtn.onclick = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (!hoverCard) return;
-      const info = hoverCard._bfbInfo || extractCardInfo(hoverCard);
-      if (!info.up && !info.bvid) {
-        toast("该卡片信息不足，无法拉黑");
-        return;
-      }
-      blacklistUp(info, refreshPanelIfOpen, hoverCard);
-      hideHoverBtn();
-    };
-    root.appendChild(hoverBtn);
-    return hoverBtn;
-  }
-  function hideHoverBtn() {
-    if (hoverBtn) hoverBtn.style.display = "none";
-    hoverCard = null;
-  }
-  function positionHoverBtn(card) {
-    const r = card.getBoundingClientRect();
-    if (r.width < 80 || r.height < 60) return hideHoverBtn();
-    const b = ensureHoverBtn();
-    b.style.left = Math.max(8, r.left + 8) + "px";
-    b.style.top = Math.max(8, r.top + 8) + "px";
-    b.style.display = "block";
-    hoverCard = card;
-  }
-  function onCardHover(e) {
-    if (!CONFIG.enabled || !CONFIG.cardHoverBtn) return;
-    const t = e.target;
-    if (t === overlayHost) return;
-    const card = t.closest && t.closest(VIDEO_CARD_SELECTOR);
-    if (card) {
-      if (card !== hoverCard) positionHoverBtn(card);
-    } else {
-      hideHoverBtn();
-    }
-  }
-
-  // src/main.ts
-  (function() {
-    "use strict";
-    configureCardDetect(() => ({ detectAd: CONFIG.hideAd, detectLive: CONFIG.hideLiveCard }));
-    setPanelHooks({
-      refreshPanelIfOpen: () => refreshPanelIfOpen2(),
-      openPanel: () => openPanel2(),
-      isPanelOpen: () => isPanelOpen()
-    });
-    setStatsListener(() => {
-      if (document.body) updateBadge();
-      if (panelStatsRefresh && isPanelOpen()) panelStatsRefresh();
-    });
-    setRulesChangedHandler(() => rescanAfterRuleChange());
-    function installShadowHook() {
-      if (Element.prototype.attachShadow.__bfb) return;
-      const orig = Element.prototype.attachShadow;
-      const wrapped = function(init) {
-        const root = orig.call(this, init);
-        try {
-          shadowRoots.add(root);
-          if (CMT_TAGS[this.tagName] !== void 0) scheduleCommentScan();
-        } catch (e) {
-        }
-        return root;
-      };
-      wrapped.__bfb = true;
-      try {
-        Element.prototype.attachShadow = wrapped;
-      } catch (e) {
-      }
-    }
-    let panelStatsRefresh = null;
-    GM_addStyle(`
+  // src/ui/panel.ts
+  var panelStatsRefresh = null;
+  GM_addStyle(`
     .bfb-review{outline:2px solid #fb7299 !important;outline-offset:-2px;border-radius:8px;position:relative !important}
     .bfb-tag{position:absolute;top:6px;left:6px;z-index:9;display:flex;align-items:center;gap:6px;background:rgba(251,114,153,.95);color:#fff;border-radius:8px;padding:3px 6px;font-size:11px;font-family:system-ui,Arial;box-shadow:0 2px 6px rgba(0,0,0,.25)}
     .bfb-tag .rs{white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis}
@@ -2369,80 +2338,80 @@
     @keyframes bfb-fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
     #bfb-panel .grp-tip{padding:8px 16px;font-size:11px;color:#aaa;background:#fafafa;border-bottom:1px solid #f0f0f0}
   `);
-    let activeTab = "base";
-    function buildPanel() {
-      if (panelEl()) return;
-      const p = document.createElement("div");
-      p.id = "bfb-panel";
-      ["keydown", "keypress", "keyup", "input"].forEach((ev) => {
-        p.addEventListener(ev, (e) => {
-          if (e.target && e.target.matches && e.target.matches("input, textarea, select")) e.stopPropagation();
-        });
+  var activeTab = "base";
+  function buildPanel() {
+    if (panelEl()) return;
+    const p = document.createElement("div");
+    p.id = "bfb-panel";
+    ["keydown", "keypress", "keyup", "input"].forEach((ev) => {
+      p.addEventListener(ev, (e) => {
+        if (e.target && e.target.matches && e.target.matches("input, textarea, select")) e.stopPropagation();
       });
-      document.body.appendChild(p);
-      renderPanel(p);
-    }
-    const PANEL_TABS = [
-      ["base", "⚙ 基础", "常规开关与卡片类型过滤"],
-      ["black", "🚫 黑名单", "按标题 / UP主 / 分区屏蔽，即时生效。规则用 /.../ 包裹表示正则（如 /震惊.*竟然/），否则按关键词包含匹配（不分大小写）"],
-      ["api", "🛰 进阶", "播放量、时长，以及标签 / 数据等更细致的过滤（标签类需开启下方的「精确过滤」）"],
-      ["comment", "💬 评论", "过滤视频/动态评论区的引战、水军、营销与 AI 评论（读评论数据隐藏，仅在有评论的页面生效；与视频规则相互独立）"],
-      ["allow", "⭐ 白名单", "命中白名单的内容永不隐藏，优先级最高"],
-      ["tools", "🧰 工具", "预置库 / 重置 / 屏蔽记录"]
-    ];
-    const BLACK_FIELDS = [
-      { key: "keywords", label: "🎯 关键词", placeholder: "如：原神 或 /震惊.*竟然/", hint: "一次命中 标题 / UP主名 / 分区（纯本地、免联网）。普通词=包含即拦；/.../ 包裹=正则，如 /一口气.*看完/。可加作用域前缀只匹配某字段：title:词 / up:词 / part:词（如 up:营销号 只按 UP 名拦）。想按视频标签拦截请用下方「视频标签」（需开精确过滤）。" },
-      { kind: "up", label: "UP 主", hint: "输入 UP 名 或 UID（纯数字自动识别为 UID）；可一次粘贴多条，用逗号或换行分隔。" },
-      { key: "bvids", label: "BV 号", placeholder: "如：BV1xx411c7XX", hint: "按视频 BV 号精确屏蔽单个视频。" },
-      { key: "partitions", label: "视频分区", placeholder: "如：资讯 或 /综艺|娱乐/", hint: "按视频分区(tname)屏蔽，网络拦截层最准。普通词=包含即拦；/.../ 包裹=正则。" }
-    ];
-    const API_CHIP_FIELDS = [
-      { key: "tags", label: "视频标签", placeholder: "如：原神 或 /鬼畜|二创/", hint: "匹配视频的完整标签(tag)，需开启上方「精确过滤」。普通词=包含即拦；/.../ 包裹=正则。" },
-      { key: "dualTags", label: "组合标签", placeholder: "如：原神 鸣潮（空格分隔）", groupMode: true, hint: "同时含这一组里所有标签才屏蔽，专治对立引战内容；需开启「精确过滤」。" },
-      { key: "upBio", label: "UP 简介关键词", placeholder: "如：商务合作", hint: "匹配 UP 主个人简介，需开启「精确过滤」。" }
-    ];
-    const ALLOW_FIELDS = [
-      { scope: "allow", key: "keywords", label: "关键词", placeholder: "喜欢的题材", hint: "命中即永不隐藏（优先级最高）。作用于 视频标题 与 UP 主名；普通词=包含，/.../ =正则。" },
-      { scope: "allow", key: "upNames", label: "UP 主名", placeholder: "喜欢的 UP 主名", hint: "该 UP 的视频永不隐藏（按名称精确匹配）。" },
-      { scope: "allow", key: "uids", label: "UID", placeholder: "喜欢的 UP 的 UID（纯数字）", hint: "该 UP 的视频永不隐藏（按 UID 精确匹配，最可靠）。" }
-    ];
-    function renderPanel(p) {
-      p.innerHTML = "";
-      panelStatsRefresh = null;
-      const h2 = document.createElement("h2");
-      h2.innerHTML = `🛡 biliHoyoFairy · 抗击黑潮 <small style="font-weight:normal;opacity:.6;font-size:12px">v${VERSION} · ${pageType()}</small> <span class="x">✕</span>`;
-      p.appendChild(h2);
-      h2.querySelector(".x").onclick = closePanel;
-      const tabBar = document.createElement("div");
-      tabBar.className = "tabs";
-      p.appendChild(tabBar);
-      if (!PANEL_TABS.some(([id]) => id === activeTab)) activeTab = "base";
-      const G = {};
-      PANEL_TABS.forEach(([id, label, tip]) => {
-        const tb = document.createElement("button");
-        tb.className = "tab" + (id === activeTab ? " active" : "");
-        tb.textContent = label;
-        tabBar.appendChild(tb);
-        const g = document.createElement("div");
-        g.className = "bfb-group" + (id === activeTab ? " active" : "");
-        const tipEl = document.createElement("div");
-        tipEl.className = "grp-tip";
-        tipEl.textContent = tip;
-        g.appendChild(tipEl);
-        p.appendChild(g);
-        G[id] = g;
-        tb.onclick = () => {
-          activeTab = id;
-          tabBar.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
-          tb.classList.add("active");
-          Object.values(G).forEach((x) => x.classList.remove("active"));
-          g.classList.add("active");
-          p.scrollTop = 0;
-        };
-      });
-      const sw = document.createElement("div");
-      sw.className = "sec";
-      sw.innerHTML = `
+    });
+    document.body.appendChild(p);
+    renderPanel(p);
+  }
+  var PANEL_TABS = [
+    ["base", "⚙ 基础", "常规开关与卡片类型过滤"],
+    ["black", "🚫 黑名单", "按标题 / UP主 / 分区屏蔽，即时生效。规则用 /.../ 包裹表示正则（如 /震惊.*竟然/），否则按关键词包含匹配（不分大小写）"],
+    ["api", "🛰 进阶", "播放量、时长，以及标签 / 数据等更细致的过滤（标签类需开启下方的「精确过滤」）"],
+    ["comment", "💬 评论", "过滤视频/动态评论区的引战、水军、营销与 AI 评论（读评论数据隐藏，仅在有评论的页面生效；与视频规则相互独立）"],
+    ["allow", "⭐ 白名单", "命中白名单的内容永不隐藏，优先级最高"],
+    ["tools", "🧰 工具", "预置库 / 重置 / 屏蔽记录"]
+  ];
+  var BLACK_FIELDS = [
+    { key: "keywords", label: "🎯 关键词", placeholder: "如：原神 或 /震惊.*竟然/", hint: "一次命中 标题 / UP主名 / 分区（纯本地、免联网）。普通词=包含即拦；/.../ 包裹=正则，如 /一口气.*看完/。可加作用域前缀只匹配某字段：title:词 / up:词 / part:词（如 up:营销号 只按 UP 名拦）。想按视频标签拦截请用下方「视频标签」（需开精确过滤）。" },
+    { kind: "up", label: "UP 主", hint: "输入 UP 名 或 UID（纯数字自动识别为 UID）；可一次粘贴多条，用逗号或换行分隔。" },
+    { key: "bvids", label: "BV 号", placeholder: "如：BV1xx411c7XX", hint: "按视频 BV 号精确屏蔽单个视频。" },
+    { key: "partitions", label: "视频分区", placeholder: "如：资讯 或 /综艺|娱乐/", hint: "按视频分区(tname)屏蔽，网络拦截层最准。普通词=包含即拦；/.../ 包裹=正则。" }
+  ];
+  var API_CHIP_FIELDS = [
+    { key: "tags", label: "视频标签", placeholder: "如：原神 或 /鬼畜|二创/", hint: "匹配视频的完整标签(tag)，需开启上方「精确过滤」。普通词=包含即拦；/.../ 包裹=正则。" },
+    { key: "dualTags", label: "组合标签", placeholder: "如：原神 鸣潮（空格分隔）", groupMode: true, hint: "同时含这一组里所有标签才屏蔽，专治对立引战内容；需开启「精确过滤」。" },
+    { key: "upBio", label: "UP 简介关键词", placeholder: "如：商务合作", hint: "匹配 UP 主个人简介，需开启「精确过滤」。" }
+  ];
+  var ALLOW_FIELDS = [
+    { scope: "allow", key: "keywords", label: "关键词", placeholder: "喜欢的题材", hint: "命中即永不隐藏（优先级最高）。作用于 视频标题 与 UP 主名；普通词=包含，/.../ =正则。" },
+    { scope: "allow", key: "upNames", label: "UP 主名", placeholder: "喜欢的 UP 主名", hint: "该 UP 的视频永不隐藏（按名称精确匹配）。" },
+    { scope: "allow", key: "uids", label: "UID", placeholder: "喜欢的 UP 的 UID（纯数字）", hint: "该 UP 的视频永不隐藏（按 UID 精确匹配，最可靠）。" }
+  ];
+  function renderPanel(p) {
+    p.innerHTML = "";
+    panelStatsRefresh = null;
+    const h2 = document.createElement("h2");
+    h2.innerHTML = `🛡 biliHoyoFairy · 抗击黑潮 <small style="font-weight:normal;opacity:.6;font-size:12px">v${VERSION} · ${pageType()}</small> <span class="x">✕</span>`;
+    p.appendChild(h2);
+    h2.querySelector(".x").onclick = closePanel;
+    const tabBar = document.createElement("div");
+    tabBar.className = "tabs";
+    p.appendChild(tabBar);
+    if (!PANEL_TABS.some(([id]) => id === activeTab)) activeTab = "base";
+    const G = {};
+    PANEL_TABS.forEach(([id, label, tip]) => {
+      const tb = document.createElement("button");
+      tb.className = "tab" + (id === activeTab ? " active" : "");
+      tb.textContent = label;
+      tabBar.appendChild(tb);
+      const g = document.createElement("div");
+      g.className = "bfb-group" + (id === activeTab ? " active" : "");
+      const tipEl = document.createElement("div");
+      tipEl.className = "grp-tip";
+      tipEl.textContent = tip;
+      g.appendChild(tipEl);
+      p.appendChild(g);
+      G[id] = g;
+      tb.onclick = () => {
+        activeTab = id;
+        tabBar.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
+        tb.classList.add("active");
+        Object.values(G).forEach((x) => x.classList.remove("active"));
+        g.classList.add("active");
+        p.scrollTop = 0;
+      };
+    });
+    const sw = document.createElement("div");
+    sw.className = "sec";
+    sw.innerHTML = `
       <div class="switch"><input type="checkbox" id="bfb-enabled"> 启用拦截</div>
       <div class="switch"><input type="checkbox" id="bfb-review"> 🔍 审查模式（不隐藏，标记被拦视频+就地放行，便于核对）</div>
       <div class="switch"><input type="checkbox" id="bfb-rclick"> 右键卡片弹菜单（屏蔽/拉黑/加白名单）</div>
@@ -2451,79 +2420,79 @@
       <div class="switch"><input type="checkbox" id="bfb-fuzzy"> 反绕过模糊匹配（"原 神 / 原.神" 也拦；隐形字符始终拦）</div>
       <div class="switch"><input type="checkbox" id="bfb-debug"> 调试模式（控制台逐卡打印拦/放原因）</div>
       <div class="hint">所有开关与规则均<b>即时生效</b>，无需保存。<b>审查模式</b>切换后建议<b>刷新页面</b>以核对完整结果。真正“从推荐流消失”请用<b>拉黑</b>。</div>`;
-      G.base.appendChild(sw);
-      bindControl(sw, "bfb-enabled", CONFIG, "enabled", {
-        after: () => {
-          updateBadge();
-          rescanAfterRuleChange();
-        }
-      });
-      bindControl(sw, "bfb-review", CONFIG, "reviewMode", { after: rescanAfterRuleChange });
-      bindControl(sw, "bfb-rclick", CONFIG, "rightClickBlock");
-      bindControl(sw, "bfb-hoverbtn", CONFIG, "cardHoverBtn", { after: hideHoverBtn });
-      bindControl(sw, "bfb-collab", CONFIG, "blacklistCollab");
-      bindControl(sw, "bfb-fuzzy", CONFIG, "fuzzyMatch", { after: rescanAfterRuleChange });
-      bindControl(sw, "bfb-debug", CONFIG, "debug", { after: rescanAfterRuleChange });
-      const ct = document.createElement("div");
-      ct.className = "sec";
-      ct.innerHTML = `
+    G.base.appendChild(sw);
+    bindControl(sw, "bfb-enabled", CONFIG, "enabled", {
+      after: () => {
+        updateBadge();
+        rescanAfterRuleChange();
+      }
+    });
+    bindControl(sw, "bfb-review", CONFIG, "reviewMode", { after: rescanAfterRuleChange });
+    bindControl(sw, "bfb-rclick", CONFIG, "rightClickBlock");
+    bindControl(sw, "bfb-hoverbtn", CONFIG, "cardHoverBtn", { after: hideHoverBtn });
+    bindControl(sw, "bfb-collab", CONFIG, "blacklistCollab");
+    bindControl(sw, "bfb-fuzzy", CONFIG, "fuzzyMatch", { after: rescanAfterRuleChange });
+    bindControl(sw, "bfb-debug", CONFIG, "debug", { after: rescanAfterRuleChange });
+    const ct = document.createElement("div");
+    ct.className = "sec";
+    ct.innerHTML = `
       <label>卡片类型过滤</label>
       <div class="switch"><input type="checkbox" id="bfb-ad"> 屏蔽广告/推广卡片</div>
       <div class="switch"><input type="checkbox" id="bfb-live"> 屏蔽信息流里的直播推荐卡</div>
       <div class="switch"><input type="checkbox" id="bfb-hotsearch"> 屏蔽搜索框热搜词</div>
       <div class="hint">广告为自动识别，偶有误差；可在下方「屏蔽记录」核对实际拦了什么。直播卡=首页/动态里链向直播间的推荐卡。</div>`;
-      G.base.appendChild(ct);
-      bindControl(ct, "bfb-ad", CONFIG, "hideAd", { after: rescanAfterRuleChange });
-      bindControl(ct, "bfb-live", CONFIG, "hideLiveCard", { after: rescanAfterRuleChange });
-      bindControl(ct, "bfb-hotsearch", CONFIG, "hideHotSearch", { after: applyHotSearchStyle });
-      renderFields(G.black, BLACK_FIELDS);
-      const num = document.createElement("div");
-      num.className = "sec";
-      num.innerHTML = `<label>播放量 / 时长</label>
+    G.base.appendChild(ct);
+    bindControl(ct, "bfb-ad", CONFIG, "hideAd", { after: rescanAfterRuleChange });
+    bindControl(ct, "bfb-live", CONFIG, "hideLiveCard", { after: rescanAfterRuleChange });
+    bindControl(ct, "bfb-hotsearch", CONFIG, "hideHotSearch", { after: applyHotSearchStyle });
+    renderFields(G.black, BLACK_FIELDS);
+    const num = document.createElement("div");
+    num.className = "sec";
+    num.innerHTML = `<label>播放量 / 时长</label>
       <div class="switch" style="margin-top:4px;font-weight:400">播放量低于 <input type="number" id="bfb-minviews" min="0" step="0.1" style="width:64px"> 万则屏蔽（0=不启用）</div>
       <div class="switch" style="margin-top:8px;font-weight:400">时长　最短 <input type="number" id="bfb-dmin" min="0" style="width:64px"> 秒　最长 <input type="number" id="bfb-dmax" min="0" style="width:64px"> 秒</div>
       <div class="switch" style="margin-top:8px;font-weight:400">营销号：点赞率低于 <input type="number" id="bfb-spamratio" min="0" max="100" step="0.1" style="width:56px"> % 且播放≥ <input type="number" id="bfb-spamviews" min="0" step="1" style="width:56px"> 万 则屏蔽</div>
       <div class="hint">填 0 表示该项不启用。营销号/搬运号常"高播放、极低赞"。⚠ 点赞率<b>仅在接口返回点赞数时生效（主要是首页推荐流）</b>；拿不到点赞数的卡片（部分 SSR / 动态）会跳过此项，不影响其它规则。</div>`;
-      G.api.appendChild(num);
-      bindControl(num, "bfb-minviews", CONFIG.block, "minViews", { number: true, after: rescanAfterRuleChange });
-      bindControl(num, "bfb-dmin", CONFIG.block, "minDuration", { number: true, int: true, after: rescanAfterRuleChange });
-      bindControl(num, "bfb-dmax", CONFIG.block, "maxDuration", { number: true, int: true, after: rescanAfterRuleChange });
-      bindControl(num, "bfb-spamratio", CONFIG.block, "spamLikeRatio", { number: true, after: rescanAfterRuleChange });
-      bindControl(num, "bfb-spamviews", CONFIG.block, "spamMinViews", { number: true, int: true, after: rescanAfterRuleChange });
-      const feed = document.createElement("div");
-      feed.className = "sec";
-      feed.innerHTML = `<label>信息流加载</label>
+    G.api.appendChild(num);
+    bindControl(num, "bfb-minviews", CONFIG.block, "minViews", { number: true, after: rescanAfterRuleChange });
+    bindControl(num, "bfb-dmin", CONFIG.block, "minDuration", { number: true, int: true, after: rescanAfterRuleChange });
+    bindControl(num, "bfb-dmax", CONFIG.block, "maxDuration", { number: true, int: true, after: rescanAfterRuleChange });
+    bindControl(num, "bfb-spamratio", CONFIG.block, "spamLikeRatio", { number: true, after: rescanAfterRuleChange });
+    bindControl(num, "bfb-spamviews", CONFIG.block, "spamMinViews", { number: true, int: true, after: rescanAfterRuleChange });
+    const feed = document.createElement("div");
+    feed.className = "sec";
+    feed.innerHTML = `<label>信息流加载</label>
       <div class="switch"><input type="checkbox" id="bfb-boost"> 增大首页推荐每批加载数量</div>
       <div class="hint">拦截层会删掉命中项，开启后让每批多取一些视频，删后信息流更饱满。下次加载 / 刷新生效；个别情况下可能影响载入，异常就关掉。</div>`;
-      G.api.appendChild(feed);
-      bindControl(feed, "bfb-boost", CONFIG, "boostFeedLoad");
-      const api = document.createElement("div");
-      api.className = "sec api";
-      api.innerHTML = `
+    G.api.appendChild(feed);
+    bindControl(feed, "bfb-boost", CONFIG, "boostFeedLoad");
+    const api = document.createElement("div");
+    api.className = "sec api";
+    api.innerHTML = `
       <label>🛰 精确过滤</label>
       <div class="switch"><input type="checkbox" id="bfb-api"> <b>启用精确过滤</b></div>
       <div class="hint">开启后会按需读取视频标签、UP 简介等数据来判断，命中时卡片会略有延迟才被隐藏；不开启则完全不联网。</div>
       <div id="bfb-api-body" style="margin-top:6px">
         <div class="switch"><input type="checkbox" id="bfb-charging"> 屏蔽充电专属视频</div>
       </div>`;
-      G.api.appendChild(api);
-      const apiBody = api.querySelector("#bfb-api-body");
-      const syncApiBody = () => {
-        apiBody.style.opacity = CONFIG.apiFilters ? "1" : ".4";
-        apiBody.style.pointerEvents = CONFIG.apiFilters ? "auto" : "none";
-      };
-      bindControl(api, "bfb-api", CONFIG, "apiFilters", {
-        after: () => {
-          syncApiBody();
-          rescanAfterRuleChange();
-        }
-      });
-      bindControl(api, "bfb-charging", CONFIG, "hideCharging", { after: rescanAfterRuleChange });
-      syncApiBody();
-      renderFields(G.api, API_CHIP_FIELDS);
-      const cmt = document.createElement("div");
-      cmt.className = "sec";
-      cmt.innerHTML = `
+    G.api.appendChild(api);
+    const apiBody = api.querySelector("#bfb-api-body");
+    const syncApiBody = () => {
+      apiBody.style.opacity = CONFIG.apiFilters ? "1" : ".4";
+      apiBody.style.pointerEvents = CONFIG.apiFilters ? "auto" : "none";
+    };
+    bindControl(api, "bfb-api", CONFIG, "apiFilters", {
+      after: () => {
+        syncApiBody();
+        rescanAfterRuleChange();
+      }
+    });
+    bindControl(api, "bfb-charging", CONFIG, "hideCharging", { after: rescanAfterRuleChange });
+    syncApiBody();
+    renderFields(G.api, API_CHIP_FIELDS);
+    const cmt = document.createElement("div");
+    cmt.className = "sec";
+    cmt.innerHTML = `
       <label>💬 评论区过滤</label>
       <div class="switch"><input type="checkbox" id="bfb-cmt"> <b>启用评论区过滤</b></div>
       <div class="hint">读取评论数据后隐藏命中的评论，仅在有评论的页面（播放页 / 动态 / 空间等）生效。下面规则与视频黑名单互相独立。</div>
@@ -2541,333 +2510,333 @@
         <div class="switch"><input type="checkbox" id="bfb-cmt-pin"> 置顶评论</div>
         <div class="switch"><input type="checkbox" id="bfb-cmt-me"> 我自己 / @我 的评论</div>
       </div>`;
-      G.comment.appendChild(cmt);
-      const cmtBody = cmt.querySelector("#bfb-cmt-body");
-      const syncCmtBody = () => {
-        cmtBody.style.opacity = CONFIG.comment.enabled ? "1" : ".4";
-        cmtBody.style.pointerEvents = CONFIG.comment.enabled ? "auto" : "none";
-      };
-      bindControl(cmt, "bfb-cmt", CONFIG.comment, "enabled", {
-        after: () => {
-          syncCmtBody();
-          rescanAfterRuleChange();
-        }
-      });
-      bindControl(cmt, "bfb-cmt-level", CONFIG.comment, "minLevel", { number: true, int: true, after: rescanAfterRuleChange });
-      bindControl(cmt, "bfb-cmt-noface", CONFIG.comment, "hideNoFace", { after: rescanAfterRuleChange });
-      bindControl(cmt, "bfb-cmt-bot", CONFIG.comment, "hideBot", { after: rescanAfterRuleChange });
-      bindControl(cmt, "bfb-cmt-callbot", CONFIG.comment, "hideCallBot", { after: rescanAfterRuleChange });
-      bindControl(cmt, "bfb-cmt-ad", CONFIG.comment, "hideAd", { after: rescanAfterRuleChange });
-      bindControl(cmt, "bfb-cmt-callonly", CONFIG.comment, "hideCallOnly", { after: rescanAfterRuleChange });
-      bindControl(cmt, "bfb-cmt-emoji", CONFIG.comment, "hideEmojiOnly", { after: rescanAfterRuleChange });
-      bindControl(cmt, "bfb-cmt-collapse", CONFIG.comment, "collapse", { after: rescanAfterRuleChange });
-      bindControl(cmt, "bfb-cmt-up", CONFIG.comment, "allowUp", { after: rescanAfterRuleChange });
-      bindControl(cmt, "bfb-cmt-pin", CONFIG.comment, "allowPin", { after: rescanAfterRuleChange });
-      bindControl(cmt, "bfb-cmt-me", CONFIG.comment, "allowMe", { after: rescanAfterRuleChange });
-      syncCmtBody();
-      renderListField(G.comment, {
-        label: "🚫 评论关键词",
-        placeholder: "如：引战词 或 /.../　",
-        hint: "评论正文命中即隐藏。普通词=包含；/.../ =正则。与视频关键词相互独立。",
-        model: chipModel(CONFIG.comment.keywords)
-      });
-      renderListField(G.comment, {
-        label: "🚫 评论用户名（精确）",
-        placeholder: "精确用户名",
-        hint: "按评论者用户名精确隐藏其评论。可在评论区右键用户名快捷加入。",
-        model: chipModel(CONFIG.comment.userNames)
-      });
-      renderListField(G.comment, {
-        label: "🚫 用户名关键词",
-        placeholder: "如：营销 或 /.../",
-        hint: "按评论者昵称关键词隐藏。普通词=包含；/.../ =正则。",
-        model: chipModel(CONFIG.comment.userNameKeywords)
-      });
-      renderFields(G.allow, ALLOW_FIELDS);
-      const preset = document.createElement("div");
-      preset.className = "sec";
-      preset.innerHTML = '<label>预置规则库（点一下加入对应黑名单，可叠加）</label><div class="hint">这只是「一键灌词」入口，本身不是规则；点完后真正生效的规则在「黑名单」页可增删。需要持续更新的大名单请用「规则订阅」。</div><div id="bfb-presets"></div>';
-      G.tools.appendChild(preset);
-      const presetBox = preset.querySelector("#bfb-presets");
-      const applyPreset = (p2) => {
-        let n = 0;
-        for (const dim of Object.keys(p2.rules || {})) {
-          const arr = CONFIG.block[dim];
-          if (!Array.isArray(arr)) continue;
-          for (const v of p2.rules[dim]) {
-            const s = String(v).trim();
-            if (s && !arr.map(String).includes(s)) {
-              arr.push(s);
-              n++;
-            }
+    G.comment.appendChild(cmt);
+    const cmtBody = cmt.querySelector("#bfb-cmt-body");
+    const syncCmtBody = () => {
+      cmtBody.style.opacity = CONFIG.comment.enabled ? "1" : ".4";
+      cmtBody.style.pointerEvents = CONFIG.comment.enabled ? "auto" : "none";
+    };
+    bindControl(cmt, "bfb-cmt", CONFIG.comment, "enabled", {
+      after: () => {
+        syncCmtBody();
+        rescanAfterRuleChange();
+      }
+    });
+    bindControl(cmt, "bfb-cmt-level", CONFIG.comment, "minLevel", { number: true, int: true, after: rescanAfterRuleChange });
+    bindControl(cmt, "bfb-cmt-noface", CONFIG.comment, "hideNoFace", { after: rescanAfterRuleChange });
+    bindControl(cmt, "bfb-cmt-bot", CONFIG.comment, "hideBot", { after: rescanAfterRuleChange });
+    bindControl(cmt, "bfb-cmt-callbot", CONFIG.comment, "hideCallBot", { after: rescanAfterRuleChange });
+    bindControl(cmt, "bfb-cmt-ad", CONFIG.comment, "hideAd", { after: rescanAfterRuleChange });
+    bindControl(cmt, "bfb-cmt-callonly", CONFIG.comment, "hideCallOnly", { after: rescanAfterRuleChange });
+    bindControl(cmt, "bfb-cmt-emoji", CONFIG.comment, "hideEmojiOnly", { after: rescanAfterRuleChange });
+    bindControl(cmt, "bfb-cmt-collapse", CONFIG.comment, "collapse", { after: rescanAfterRuleChange });
+    bindControl(cmt, "bfb-cmt-up", CONFIG.comment, "allowUp", { after: rescanAfterRuleChange });
+    bindControl(cmt, "bfb-cmt-pin", CONFIG.comment, "allowPin", { after: rescanAfterRuleChange });
+    bindControl(cmt, "bfb-cmt-me", CONFIG.comment, "allowMe", { after: rescanAfterRuleChange });
+    syncCmtBody();
+    renderListField(G.comment, {
+      label: "🚫 评论关键词",
+      placeholder: "如：引战词 或 /.../　",
+      hint: "评论正文命中即隐藏。普通词=包含；/.../ =正则。与视频关键词相互独立。",
+      model: chipModel(CONFIG.comment.keywords)
+    });
+    renderListField(G.comment, {
+      label: "🚫 评论用户名（精确）",
+      placeholder: "精确用户名",
+      hint: "按评论者用户名精确隐藏其评论。可在评论区右键用户名快捷加入。",
+      model: chipModel(CONFIG.comment.userNames)
+    });
+    renderListField(G.comment, {
+      label: "🚫 用户名关键词",
+      placeholder: "如：营销 或 /.../",
+      hint: "按评论者昵称关键词隐藏。普通词=包含；/.../ =正则。",
+      model: chipModel(CONFIG.comment.userNameKeywords)
+    });
+    renderFields(G.allow, ALLOW_FIELDS);
+    const preset = document.createElement("div");
+    preset.className = "sec";
+    preset.innerHTML = '<label>预置规则库（点一下加入对应黑名单，可叠加）</label><div class="hint">这只是「一键灌词」入口，本身不是规则；点完后真正生效的规则在「黑名单」页可增删。需要持续更新的大名单请用「规则订阅」。</div><div id="bfb-presets"></div>';
+    G.tools.appendChild(preset);
+    const presetBox = preset.querySelector("#bfb-presets");
+    const applyPreset = (p2) => {
+      let n = 0;
+      for (const dim of Object.keys(p2.rules || {})) {
+        const arr = CONFIG.block[dim];
+        if (!Array.isArray(arr)) continue;
+        for (const v of p2.rules[dim]) {
+          const s = String(v).trim();
+          if (s && !arr.map(String).includes(s)) {
+            arr.push(s);
+            n++;
           }
         }
-        if (n) {
-          saveConfig();
-          rescanAfterRuleChange();
-        }
-        toast(n ? `已加入「${p2.name}」${n} 条` : `「${p2.name}」已全部存在`);
-        const API_DIM_KEYS = ["tags", "dualTags", "upBio"];
-        const needsApi = Object.keys(p2.rules || {}).some((d) => API_DIM_KEYS.includes(d));
-        if (needsApi && !CONFIG.apiFilters && confirm(`「${p2.name}」含需联网读取（标签 / 简介）的规则，必须开启「精确过滤」才会生效。是否现在开启？`)) {
-          CONFIG.apiFilters = true;
-          saveConfig();
-          rescanAfterRuleChange();
-        }
-        renderPanel(p);
-        p.classList.add("open");
-      };
-      const byCat = {};
-      PRESET_LIBRARY.forEach((pp) => (byCat[pp.cat] = byCat[pp.cat] || []).push(pp));
-      Object.keys(byCat).forEach((cat) => {
-        const cl = document.createElement("div");
-        cl.style.cssText = "font-size:12px;color:#888;margin:8px 0 4px";
-        cl.textContent = cat;
-        presetBox.appendChild(cl);
-        const bar = document.createElement("div");
-        bar.className = "toolbar";
-        byCat[cat].forEach((pp) => {
-          const btn = document.createElement("button");
-          btn.className = "act ghost";
-          btn.textContent = "+ " + pp.name;
-          if (pp.desc) btn.title = pp.desc;
-          btn.onclick = () => applyPreset(pp);
-          bar.appendChild(btn);
-        });
-        presetBox.appendChild(bar);
+      }
+      if (n) {
+        saveConfig();
+        rescanAfterRuleChange();
+      }
+      toast(n ? `已加入「${p2.name}」${n} 条` : `「${p2.name}」已全部存在`);
+      const API_DIM_KEYS = ["tags", "dualTags", "upBio"];
+      const needsApi = Object.keys(p2.rules || {}).some((d) => API_DIM_KEYS.includes(d));
+      if (needsApi && !CONFIG.apiFilters && confirm(`「${p2.name}」含需联网读取（标签 / 简介）的规则，必须开启「精确过滤」才会生效。是否现在开启？`)) {
+        CONFIG.apiFilters = true;
+        saveConfig();
+        rescanAfterRuleChange();
+      }
+      renderPanel(p);
+      p.classList.add("open");
+    };
+    const byCat = {};
+    PRESET_LIBRARY.forEach((pp) => (byCat[pp.cat] = byCat[pp.cat] || []).push(pp));
+    Object.keys(byCat).forEach((cat) => {
+      const cl = document.createElement("div");
+      cl.style.cssText = "font-size:12px;color:#888;margin:8px 0 4px";
+      cl.textContent = cat;
+      presetBox.appendChild(cl);
+      const bar = document.createElement("div");
+      bar.className = "toolbar";
+      byCat[cat].forEach((pp) => {
+        const btn = document.createElement("button");
+        btn.className = "act ghost";
+        btn.textContent = "+ " + pp.name;
+        if (pp.desc) btn.title = pp.desc;
+        btn.onclick = () => applyPreset(pp);
+        bar.appendChild(btn);
       });
-      const retest = document.createElement("div");
-      retest.className = "sec";
-      retest.innerHTML = `<label>🧪 正则测试器（仅调试用，不影响规则）</label>
+      presetBox.appendChild(bar);
+    });
+    const retest = document.createElement("div");
+    retest.className = "sec";
+    retest.innerHTML = `<label>🧪 正则测试器（仅调试用，不影响规则）</label>
       <div class="addrow"><input type="text" id="bfb-re-pat" placeholder="正则或普通词，如 /一口气.*看完/i"></div>
       <div class="addrow" style="margin-top:6px"><input type="text" id="bfb-re-txt" placeholder="样例文本（粘个标题来试）"></div>
       <div class="hint" id="bfb-re-out" style="margin-top:6px">输入正则与样例文本，实时显示是否命中。/.../ 按正则，否则按普通词（包含即命中）。</div>`;
-      G.tools.appendChild(retest);
-      const rePat = retest.querySelector("#bfb-re-pat");
-      const reTxt = retest.querySelector("#bfb-re-txt");
-      const reOut = retest.querySelector("#bfb-re-out");
-      const runReTest = () => {
-        const pat = (rePat.value || "").trim();
-        const txt = reTxt.value || "";
-        if (!pat) {
-          reOut.textContent = "输入正则与样例文本，实时显示是否命中。";
-          reOut.style.color = "";
-          return;
-        }
-        let re;
-        const m = pat.match(/^\/(.*)\/([a-z]*)$/);
-        try {
-          re = m ? new RegExp(m[1], m[2].includes("i") ? m[2] : m[2] + "i") : new RegExp(escapeRe(pat), "i");
-        } catch (e) {
-          reOut.textContent = "⚠ 正则语法错误：" + e.message;
-          reOut.style.color = "#e74c3c";
-          return;
-        }
-        if (!txt) {
-          reOut.textContent = `已就绪（${m ? "正则" : "普通词"}），输入样例文本看是否命中。`;
-          reOut.style.color = "";
-          return;
-        }
-        const hit = re.test(txt);
-        reOut.textContent = hit ? "✅ 命中" : "✗ 未命中";
-        reOut.style.color = hit ? "#1b7a3d" : "#999";
-      };
-      rePat.oninput = runReTest;
-      reTxt.oninput = runReTest;
-      const io = document.createElement("div");
-      io.className = "sec";
-      io.innerHTML = `<label>规则配置 导入 / 导出（备份 / 分享给其他人）</label>
+    G.tools.appendChild(retest);
+    const rePat = retest.querySelector("#bfb-re-pat");
+    const reTxt = retest.querySelector("#bfb-re-txt");
+    const reOut = retest.querySelector("#bfb-re-out");
+    const runReTest = () => {
+      const pat = (rePat.value || "").trim();
+      const txt = reTxt.value || "";
+      if (!pat) {
+        reOut.textContent = "输入正则与样例文本，实时显示是否命中。";
+        reOut.style.color = "";
+        return;
+      }
+      let re;
+      const m = pat.match(/^\/(.*)\/([a-z]*)$/);
+      try {
+        re = m ? new RegExp(m[1], m[2].includes("i") ? m[2] : m[2] + "i") : new RegExp(escapeRe(pat), "i");
+      } catch (e) {
+        reOut.textContent = "⚠ 正则语法错误：" + e.message;
+        reOut.style.color = "#e74c3c";
+        return;
+      }
+      if (!txt) {
+        reOut.textContent = `已就绪（${m ? "正则" : "普通词"}），输入样例文本看是否命中。`;
+        reOut.style.color = "";
+        return;
+      }
+      const hit = re.test(txt);
+      reOut.textContent = hit ? "✅ 命中" : "✗ 未命中";
+      reOut.style.color = hit ? "#1b7a3d" : "#999";
+    };
+    rePat.oninput = runReTest;
+    reTxt.oninput = runReTest;
+    const io = document.createElement("div");
+    io.className = "sec";
+    io.innerHTML = `<label>规则配置 导入 / 导出（备份 / 分享给其他人）</label>
       <div class="toolbar"><button class="act" id="bfb-export">⬇ 导出为文件</button><button class="act ghost" id="bfb-import">⬆ 从文件导入</button></div>
       <div class="hint">导出你的全部过滤规则与开关（不含统计/缓存/个人偏好）。导入时：规则列表取<b>并集</b>（不会丢现有规则），开关以导入值为准。</div>`;
-      G.tools.appendChild(io);
-      io.querySelector("#bfb-export").onclick = () => {
-        const blob = new Blob([exportConfig()], { type: "application/json" });
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = `biliHoyoFairy-rules-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.json`;
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(a.href), 2e3);
-        toast("已导出规则配置文件");
-      };
-      io.querySelector("#bfb-import").onclick = () => {
-        const inp = document.createElement("input");
-        inp.type = "file";
-        inp.accept = "application/json,.json";
-        inp.onchange = () => {
-          const f = inp.files && inp.files[0];
-          if (!f) return;
-          const r = new FileReader();
-          r.onload = () => {
-            try {
-              const parsed = JSON.parse(r.result);
-              const incoming = parsed && parsed.config ? parsed.config : parsed;
-              if (!incoming || typeof incoming !== "object") throw new Error("bad");
-              const draft = structuredClone(CONFIG);
-              mergeImport(draft, incoming);
-              const okObj = (o) => o && typeof o === "object" && !Array.isArray(o);
-              if (!okObj(draft.block) || !okObj(draft.allow)) throw new Error("bad");
-              Object.assign(CONFIG, draft);
-              saveConfig();
-              rescanAfterRuleChange();
-              renderPanel(p);
-              p.classList.add("open");
-              toast("已导入并合并规则配置");
-            } catch (e) {
-              toast("导入失败：文件不是有效的配置 JSON");
-            }
-          };
-          r.readAsText(f);
+    G.tools.appendChild(io);
+    io.querySelector("#bfb-export").onclick = () => {
+      const blob = new Blob([exportConfig()], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `biliHoyoFairy-rules-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2e3);
+      toast("已导出规则配置文件");
+    };
+    io.querySelector("#bfb-import").onclick = () => {
+      const inp = document.createElement("input");
+      inp.type = "file";
+      inp.accept = "application/json,.json";
+      inp.onchange = () => {
+        const f = inp.files && inp.files[0];
+        if (!f) return;
+        const r = new FileReader();
+        r.onload = () => {
+          try {
+            const parsed = JSON.parse(r.result);
+            const incoming = parsed && parsed.config ? parsed.config : parsed;
+            if (!incoming || typeof incoming !== "object") throw new Error("bad");
+            const draft = structuredClone(CONFIG);
+            mergeImport(draft, incoming);
+            const okObj = (o) => o && typeof o === "object" && !Array.isArray(o);
+            if (!okObj(draft.block) || !okObj(draft.allow)) throw new Error("bad");
+            Object.assign(CONFIG, draft);
+            saveConfig();
+            rescanAfterRuleChange();
+            renderPanel(p);
+            p.classList.add("open");
+            toast("已导入并合并规则配置");
+          } catch (e) {
+            toast("导入失败：文件不是有效的配置 JSON");
+          }
         };
-        inp.click();
+        r.readAsText(f);
       };
-      const subSec = document.createElement("div");
-      subSec.className = "sec";
-      subSec.innerHTML = `<label>规则订阅（从 URL 自动拉取并合并黑名单）</label>
+      inp.click();
+    };
+    const subSec = document.createElement("div");
+    subSec.className = "sec";
+    subSec.innerHTML = `<label>规则订阅（从 URL 自动拉取并合并黑名单）</label>
       <div class="addrow"><input type="text" id="bfb-sub-url" placeholder="订阅 URL（JSON 或文本，如 GitHub raw）"></div>
       <div class="addrow" style="margin-top:6px"><input type="text" id="bfb-sub-name" placeholder="备注名（可选）"><button id="bfb-sub-add">添加</button></div>
       <div class="hint">订阅只并入<b>黑名单</b>（UID/UP名/关键词/分区/标签/简介/BV），不影响你的白名单与开关；启用后按列表声明的周期自动刷新。</div>
       <div class="toolbar" style="margin-top:8px"><button class="act ghost" id="bfb-sub-refresh">🔄 全部刷新</button></div>
       <div id="bfb-sub-list" style="margin-top:8px"></div>`;
-      G.tools.appendChild(subSec);
-      const subListEl = subSec.querySelector("#bfb-sub-list");
-      const fmtSubTime = (t) => t ? new Date(t).toLocaleString() : "从未";
-      const renderSubList = () => {
-        subListEl.innerHTML = "";
-        const store = loadSubStore();
-        const subs = CONFIG.subscriptions || [];
-        if (!subs.length) {
-          const e = document.createElement("div");
-          e.className = "empty";
-          e.textContent = "（暂无订阅，添加 URL 后会显示在这里）";
-          subListEl.appendChild(e);
-          return;
-        }
-        subs.forEach((sub, idx) => {
-          const e = store[sub.url] || {};
-          const status = e.ok ? `✅ ${e.count || 0} 条 · ${fmtSubTime(e.lastSync)}` : e.error ? `⚠ ${e.error}` : "未同步";
-          const row = document.createElement("div");
-          row.style.cssText = "border:1px solid #eee;border-radius:8px;padding:8px;margin-top:6px;background:#fafafa";
-          row.innerHTML = `
+    G.tools.appendChild(subSec);
+    const subListEl = subSec.querySelector("#bfb-sub-list");
+    const fmtSubTime = (t) => t ? new Date(t).toLocaleString() : "从未";
+    const renderSubList = () => {
+      subListEl.innerHTML = "";
+      const store = loadSubStore();
+      const subs = CONFIG.subscriptions || [];
+      if (!subs.length) {
+        const e = document.createElement("div");
+        e.className = "empty";
+        e.textContent = "（暂无订阅，添加 URL 后会显示在这里）";
+        subListEl.appendChild(e);
+        return;
+      }
+      subs.forEach((sub, idx) => {
+        const e = store[sub.url] || {};
+        const status = e.ok ? `✅ ${e.count || 0} 条 · ${fmtSubTime(e.lastSync)}` : e.error ? `⚠ ${e.error}` : "未同步";
+        const row = document.createElement("div");
+        row.style.cssText = "border:1px solid #eee;border-radius:8px;padding:8px;margin-top:6px;background:#fafafa";
+        row.innerHTML = `
           <label class="switch" style="margin:0"><input type="checkbox" class="sub-en" ${sub.enabled ? "checked" : ""}> <b>${escapeHtml(sub.name || metaGet(e.meta, "title") || "订阅")}</b></label>
           <div style="font-size:11px;color:#aaa;word-break:break-all;margin-top:4px">${escapeHtml(sub.url)}</div>
           <div style="font-size:11px;color:#888;margin-top:4px">${escapeHtml(status)}</div>
           <div class="chip-bar"><button class="chip-act sub-refresh">刷新</button><button class="chip-act sub-del">删除</button></div>`;
-          row.querySelector(".sub-en").onchange = (ev) => {
-            sub.enabled = ev.target.checked;
-            saveConfig();
-            rescanAfterRuleChange();
-          };
-          row.querySelector(".sub-refresh").onclick = () => {
-            toast("刷新中…");
-            syncSubscription(sub.url, (ok) => {
-              rescanAfterRuleChange();
-              renderSubList();
-              toast(ok ? "已刷新" : "刷新失败");
-            });
-          };
-          row.querySelector(".sub-del").onclick = () => {
-            if (!confirm("删除该订阅？其规则将立即移除")) return;
-            CONFIG.subscriptions.splice(idx, 1);
-            const st = loadSubStore();
-            delete st[sub.url];
-            saveSubStore(st);
-            saveConfig();
+        row.querySelector(".sub-en").onchange = (ev) => {
+          sub.enabled = ev.target.checked;
+          saveConfig();
+          rescanAfterRuleChange();
+        };
+        row.querySelector(".sub-refresh").onclick = () => {
+          toast("刷新中…");
+          syncSubscription(sub.url, (ok) => {
             rescanAfterRuleChange();
             renderSubList();
-          };
-          subListEl.appendChild(row);
-        });
-      };
-      renderSubList();
-      subSec.querySelector("#bfb-sub-add").onclick = () => {
-        const urlEl = subSec.querySelector("#bfb-sub-url");
-        const nameEl = subSec.querySelector("#bfb-sub-name");
-        const url = (urlEl.value || "").trim();
-        const name = (nameEl.value || "").trim();
-        if (!/^https?:\/\//i.test(url)) return toast("请输入有效的 http(s) URL");
-        if ((CONFIG.subscriptions || []).some((s) => s.url === url)) return toast("该订阅已存在");
-        CONFIG.subscriptions = CONFIG.subscriptions || [];
-        CONFIG.subscriptions.push({ url, name, enabled: true });
-        saveConfig();
-        urlEl.value = "";
-        nameEl.value = "";
-        renderSubList();
-        toast("已添加，正在拉取…");
-        syncSubscription(url, (ok) => {
-          rescanAfterRuleChange();
-          renderSubList();
-          toast(ok ? "订阅已同步" : "拉取失败，请检查 URL");
-        });
-      };
-      subSec.querySelector("#bfb-sub-refresh").onclick = () => {
-        toast("刷新全部订阅…");
-        refreshSubscriptions(true, (n) => {
-          renderSubList();
-          toast(`已刷新（${n} 条有更新）`);
-        });
-      };
-      const batch = document.createElement("div");
-      batch.className = "sec";
-      batch.innerHTML = `<label>批量拉黑</label>
-      <button class="act" id="bfb-batch-block" style="width:100%">⛔ 拉黑当前页所有已屏蔽的 UP</button>
-      <div class="hint">扫描本页所有被屏蔽的卡片并拉黑其 UP；拿不到 UID 的会用 BV 号联网解析。此操作写入账号黑名单、不可一键撤销，会二次确认。</div>`;
-      G.tools.appendChild(batch);
-      batch.querySelector("#bfb-batch-block").onclick = () => {
-        const blocked = document.querySelectorAll("[" + ATTR_BLOCKED + "]");
-        if (!blocked.length) {
-          toast("当前页还没有被屏蔽的卡片，先用规则屏蔽再批量拉黑");
-          return;
-        }
-        const direct = [];
-        const toResolve = [];
-        let noInfo = 0;
-        blocked.forEach((card) => {
-          const i = extractCardInfo(card);
-          const cu = !i.uid && i.bvid ? cachedUid(i.bvid) : "";
-          if (i.uid) direct.push({ uid: String(i.uid), name: i.up || "" });
-          else if (cu) direct.push({ uid: cu, name: i.up || "" });
-          else if (i.bvid) toResolve.push({ bvid: i.bvid, name: i.up || "" });
-          else noInfo++;
-        });
-        const est = direct.length + toResolve.length;
-        if (!est) {
-          toast(`本页 ${blocked.length} 张已屏蔽，但都拿不到 UID/BV，无法拉黑`);
-          return;
-        }
-        const slowTip = toResolve.length ? `
-其中 ${toResolve.length} 位需联网解析 UID（稍慢）` : "";
-        const skipTip = noInfo ? `
-（${noInfo} 张信息不足已跳过）` : "";
-        if (!confirm(`将拉黑当前页约 ${est} 位 UP。${slowTip}${skipTip}
-
-会写入账号黑名单且不可一键撤销，确定？`)) return;
-        const runBlacklist = (all) => {
-          toast(`开始拉黑 ${all.length} 位…`);
-          doBlacklistMany(all, (r) => {
-            toast(`批量拉黑完成：新拉黑 ${r.added}，已在黑名单 ${r.already}${r.failed.length ? `，失败 ${r.failed.length}（多为未登录/风控/已满）` : ""}`);
-            refreshPanelIfOpen2();
+            toast(ok ? "已刷新" : "刷新失败");
           });
         };
-        if (!toResolve.length) {
-          runBlacklist(direct);
-          return;
-        }
-        toast(`正在解析 ${toResolve.length} 个 UID…`);
-        const resolved = [];
-        let pending = toResolve.length;
-        toResolve.forEach((t) => {
-          fetchView(t.bvid, (d) => {
-            if (d && d.owner) resolved.push({ uid: String(d.owner.mid), name: d.owner.name || t.name });
-            if (CONFIG.blacklistCollab && d && Array.isArray(d.staff)) {
-              d.staff.forEach((s) => resolved.push({ uid: String(s.mid), name: s.name || "" }));
-            }
-            if (--pending === 0) runBlacklist(direct.concat(resolved));
-          });
+        row.querySelector(".sub-del").onclick = () => {
+          if (!confirm("删除该订阅？其规则将立即移除")) return;
+          CONFIG.subscriptions.splice(idx, 1);
+          const st = loadSubStore();
+          delete st[sub.url];
+          saveSubStore(st);
+          saveConfig();
+          rescanAfterRuleChange();
+          renderSubList();
+        };
+        subListEl.appendChild(row);
+      });
+    };
+    renderSubList();
+    subSec.querySelector("#bfb-sub-add").onclick = () => {
+      const urlEl = subSec.querySelector("#bfb-sub-url");
+      const nameEl = subSec.querySelector("#bfb-sub-name");
+      const url = (urlEl.value || "").trim();
+      const name = (nameEl.value || "").trim();
+      if (!/^https?:\/\//i.test(url)) return toast("请输入有效的 http(s) URL");
+      if ((CONFIG.subscriptions || []).some((s) => s.url === url)) return toast("该订阅已存在");
+      CONFIG.subscriptions = CONFIG.subscriptions || [];
+      CONFIG.subscriptions.push({ url, name, enabled: true });
+      saveConfig();
+      urlEl.value = "";
+      nameEl.value = "";
+      renderSubList();
+      toast("已添加，正在拉取…");
+      syncSubscription(url, (ok) => {
+        rescanAfterRuleChange();
+        renderSubList();
+        toast(ok ? "订阅已同步" : "拉取失败，请检查 URL");
+      });
+    };
+    subSec.querySelector("#bfb-sub-refresh").onclick = () => {
+      toast("刷新全部订阅…");
+      refreshSubscriptions(true, (n) => {
+        renderSubList();
+        toast(`已刷新（${n} 条有更新）`);
+      });
+    };
+    const batch = document.createElement("div");
+    batch.className = "sec";
+    batch.innerHTML = `<label>批量拉黑</label>
+      <button class="act" id="bfb-batch-block" style="width:100%">⛔ 拉黑当前页所有已屏蔽的 UP</button>
+      <div class="hint">扫描本页所有被屏蔽的卡片并拉黑其 UP；拿不到 UID 的会用 BV 号联网解析。此操作写入账号黑名单、不可一键撤销，会二次确认。</div>`;
+    G.tools.appendChild(batch);
+    batch.querySelector("#bfb-batch-block").onclick = () => {
+      const blocked = document.querySelectorAll("[" + ATTR_BLOCKED + "]");
+      if (!blocked.length) {
+        toast("当前页还没有被屏蔽的卡片，先用规则屏蔽再批量拉黑");
+        return;
+      }
+      const direct = [];
+      const toResolve = [];
+      let noInfo = 0;
+      blocked.forEach((card) => {
+        const i = extractCardInfo(card);
+        const cu = !i.uid && i.bvid ? cachedUid(i.bvid) : "";
+        if (i.uid) direct.push({ uid: String(i.uid), name: i.up || "" });
+        else if (cu) direct.push({ uid: cu, name: i.up || "" });
+        else if (i.bvid) toResolve.push({ bvid: i.bvid, name: i.up || "" });
+        else noInfo++;
+      });
+      const est = direct.length + toResolve.length;
+      if (!est) {
+        toast(`本页 ${blocked.length} 张已屏蔽，但都拿不到 UID/BV，无法拉黑`);
+        return;
+      }
+      const slowTip = toResolve.length ? `
+其中 ${toResolve.length} 位需联网解析 UID（稍慢）` : "";
+      const skipTip = noInfo ? `
+（${noInfo} 张信息不足已跳过）` : "";
+      if (!confirm(`将拉黑当前页约 ${est} 位 UP。${slowTip}${skipTip}
+
+会写入账号黑名单且不可一键撤销，确定？`)) return;
+      const runBlacklist = (all) => {
+        toast(`开始拉黑 ${all.length} 位…`);
+        doBlacklistMany(all, (r) => {
+          toast(`批量拉黑完成：新拉黑 ${r.added}，已在黑名单 ${r.already}${r.failed.length ? `，失败 ${r.failed.length}（多为未登录/风控/已满）` : ""}`);
+          refreshPanelIfOpen2();
         });
       };
-      const listSec = document.createElement("div");
-      listSec.className = "sec";
-      listSec.innerHTML = `<label>名单批量处理（粘贴 / 文件 / URL）</label>
+      if (!toResolve.length) {
+        runBlacklist(direct);
+        return;
+      }
+      toast(`正在解析 ${toResolve.length} 个 UID…`);
+      const resolved = [];
+      let pending = toResolve.length;
+      toResolve.forEach((t) => {
+        fetchView(t.bvid, (d) => {
+          if (d && d.owner) resolved.push({ uid: String(d.owner.mid), name: d.owner.name || t.name });
+          if (CONFIG.blacklistCollab && d && Array.isArray(d.staff)) {
+            d.staff.forEach((s) => resolved.push({ uid: String(s.mid), name: s.name || "" }));
+          }
+          if (--pending === 0) runBlacklist(direct.concat(resolved));
+        });
+      });
+    };
+    const listSec = document.createElement("div");
+    listSec.className = "sec";
+    listSec.innerHTML = `<label>名单批量处理（粘贴 / 文件 / URL）</label>
       <textarea id="bfb-list-input" rows="4" placeholder="粘贴一批 UID 或 UP 名，空格 / 逗号 / 换行 / 分号 分隔均可。&#10;纯数字按 UID；其它按 UP 名；也支持 uid:123 / up:名字 前缀。" style="width:100%;box-sizing:border-box;resize:vertical;font-family:monospace;font-size:12px;padding:6px;border:1px solid #ddd;border-radius:6px"></textarea>
       <div class="toolbar" style="margin-top:6px">
         <button class="act ghost" id="bfb-list-file">📁 从文件载入</button>
@@ -2879,243 +2848,279 @@
       </div>
       <div class="hint">「仅屏蔽」只在本地隐藏、不碰账号；「拉黑」会写入账号黑名单（刷新后不再推荐），限速执行、触发风控自动暂停续传、<b>不可一键撤销</b>、执行前二次确认。只有名称没 UID 的，拉黑时自动降级为仅本地屏蔽。拉黑成功的会进下方「屏蔽记录」。</div>
       <div id="bfb-list-status" class="stat" style="margin-top:6px;min-height:1.2em"></div>`;
-      G.tools.insertBefore(listSec, subSec);
-      const listTa = listSec.querySelector("#bfb-list-input");
-      const listStatus = listSec.querySelector("#bfb-list-status");
-      const parseList = () => {
-        const uids = [];
-        const names = [];
-        const seen = /* @__PURE__ */ new Set();
-        const addUid = (u) => {
-          if (!seen.has(u)) {
-            seen.add(u);
-            uids.push(u);
-          }
-        };
-        String(listTa.value || "").split(/[\s,，;；、]+/).forEach((tok) => {
-          const t = (tok || "").trim();
-          if (!t || t[0] === "!" || t[0] === "#") return;
-          let m;
-          if (m = t.match(/^uid:\s*(\d+)$/i)) addUid(m[1]);
-          else if (m = t.match(/^up:\s*(.+)$/i)) {
-            const nm = m[1].trim();
-            if (nm) names.push(nm);
-          } else if (/^\d{3,}$/.test(t)) addUid(t);
-          else names.push(t);
-        });
-        return { uids, names };
-      };
-      const addLocalMany = (uids, names) => {
-        let n = 0;
-        const push = (arr, v) => {
-          if (!arr.map(String).includes(String(v))) {
-            arr.push(String(v));
-            n++;
-          }
-        };
-        uids.forEach((u) => push(CONFIG.block.uids, u));
-        names.forEach((nm) => push(CONFIG.block.upNames, nm));
-        if (n) {
-          saveConfig();
-          rescanAfterRuleChange();
+    G.tools.insertBefore(listSec, subSec);
+    const listTa = listSec.querySelector("#bfb-list-input");
+    const listStatus = listSec.querySelector("#bfb-list-status");
+    const parseList = () => {
+      const uids = [];
+      const names = [];
+      const seen = /* @__PURE__ */ new Set();
+      const addUid = (u) => {
+        if (!seen.has(u)) {
+          seen.add(u);
+          uids.push(u);
         }
-        return n;
       };
-      listSec.querySelector("#bfb-list-file").onclick = () => {
-        const inp = document.createElement("input");
-        inp.type = "file";
-        inp.accept = ".txt,.csv,.json,text/plain,application/json";
-        inp.onchange = () => {
-          const f = inp.files && inp.files[0];
-          if (!f) return;
-          const r = new FileReader();
-          r.onload = () => {
-            listTa.value = (listTa.value ? listTa.value + "\n" : "") + String(r.result || "");
-            toast("已载入文件内容到输入框，确认后点 仅屏蔽 / 拉黑");
-          };
-          r.readAsText(f);
-        };
-        inp.click();
-      };
-      listSec.querySelector("#bfb-list-url").onclick = () => {
-        const url = (prompt("输入名单 URL（纯文本：每行一个 UID 或 UP 名）：") || "").trim();
-        if (!url) return;
-        if (!/^https?:\/\//i.test(url)) return toast("请输入有效的 http(s) URL");
-        if (typeof GM_xmlhttpRequest !== "function") return toast("当前环境不支持联网载入");
-        toast("载入中…");
-        GM_xmlhttpRequest({
-          method: "GET",
-          url,
-          timeout: 15e3,
-          onload: (r) => {
-            if (r.status >= 200 && r.status < 300 && r.responseText) {
-              listTa.value = (listTa.value ? listTa.value + "\n" : "") + r.responseText;
-              toast("已载入 URL 内容到输入框，确认后点 仅屏蔽 / 拉黑");
-            } else toast("载入失败：HTTP " + r.status);
-          },
-          onerror: () => toast("网络错误，载入失败"),
-          ontimeout: () => toast("载入超时")
-        });
-      };
-      listSec.querySelector("#bfb-list-hide").onclick = () => {
-        const { uids, names } = parseList();
-        if (!uids.length && !names.length) return toast("没解析到有效的 UID / 名称");
-        const n = addLocalMany(uids, names);
-        toast(`已本地屏蔽：新增 ${n} 条（解析到 UID ${uids.length} / 名称 ${names.length}）`);
-        renderPanel(p);
-        p.classList.add("open");
-      };
-      listSec.querySelector("#bfb-list-block").onclick = () => {
-        const { uids, names } = parseList();
-        if (!uids.length && !names.length) return toast("没解析到有效的 UID / 名称");
-        const est = Math.ceil(uids.length * 1.3);
-        const nameTip = names.length ? `
-另有 ${names.length} 个只有名称（无 UID）→ 仅本地屏蔽，不写账号` : "";
-        if (uids.length && !confirm(`将把 ${uids.length} 个 UID 写入你的账号黑名单（限速约 ${est} 秒起，触发风控会自动暂停续传、耗时更久），不可一键撤销。${nameTip}
-
-执行期间请保持此页面打开。确定继续？`)) return;
-        const nLocal = addLocalMany([], names);
-        if (!uids.length) {
-          toast(`无 UID 可账号拉黑；已本地屏蔽 ${nLocal} 个名称`);
-          renderPanel(p);
-          p.classList.add("open");
-          return;
+      String(listTa.value || "").split(/[\s,，;；、]+/).forEach((tok) => {
+        const t = (tok || "").trim();
+        if (!t || t[0] === "!" || t[0] === "#") return;
+        let m;
+        if (m = t.match(/^uid:\s*(\d+)$/i)) addUid(m[1]);
+        else if (m = t.match(/^up:\s*(.+)$/i)) {
+          const nm = m[1].trim();
+          if (nm) names.push(nm);
+        } else if (/^\d{3,}$/.test(t)) addUid(t);
+        else names.push(t);
+      });
+      return { uids, names };
+    };
+    const addLocalMany = (uids, names) => {
+      let n = 0;
+      const push = (arr, v) => {
+        if (!arr.map(String).includes(String(v))) {
+          arr.push(String(v));
+          n++;
         }
-        toast(`开始拉黑 ${uids.length} 个…执行期间请勿关闭面板`);
-        listStatus.textContent = `准备拉黑 ${uids.length} 个…`;
-        doBlacklistMany(
-          uids.map((u) => ({ uid: u, name: "" })),
-          (r) => {
-            const failUids = r.failed.map((f) => f.uid);
-            const byCode = {};
-            r.failed.forEach((f) => byCode[f.code] = (byCode[f.code] || 0) + 1);
-            const failBreak = Object.entries(byCode).map(([c, n]) => `${REL_ERR[c] || "code " + c}×${n}`).join("、");
-            listStatus.innerHTML = `✅ 完成（共 ${r.total}）：<b>新拉黑 ${r.added}</b>` + (r.already ? ` · 此前已在黑名单 ${r.already}` : "") + (failUids.length ? ` · <b style="color:#e74c3c">失败 ${failUids.length}</b>（${escapeHtml(failBreak)}；已回填可重试）` : "") + (nLocal ? ` · 另本地屏蔽 ${nLocal} 名称` : "") + `<br><span style="color:#888">官方黑名单本次新增 = 新拉黑 ${r.added} 个（"已在黑名单"的不会再叠加；如仍对不上，多为风控/已满，开调试模式看控制台 code 明细）</span>`;
-            listTa.value = failUids.length ? failUids.join("\n") : "";
-            toast(`完成：新拉黑 ${r.added}，已在黑名单 ${r.already}，失败 ${failUids.length}`);
-            if (panelStatsRefresh) panelStatsRefresh();
-          },
-          (pg) => {
-            listStatus.textContent = pg.paused ? `⚠ 触发风控，已暂停约 ${pg.wait}s 后自动继续 · 进度 ${pg.done}/${pg.total}（新拉黑 ${pg.added}，已在 ${pg.already}，失败 ${pg.fail}）` : `拉黑中 ${pg.done}/${pg.total} · 新拉黑 ${pg.added}${pg.already ? `，已在 ${pg.already}` : ""}${pg.fail ? `，失败 ${pg.fail}` : ""}…`;
-            if (panelStatsRefresh) panelStatsRefresh();
-          }
-        );
       };
-      const tool = document.createElement("div");
-      tool.className = "sec toolbar";
-      tool.innerHTML = `<button class="act ghost" id="bfb-clearcount">清空计数/记录</button><button class="act ghost" id="bfb-reset">恢复默认</button>`;
-      G.tools.appendChild(tool);
-      tool.querySelector("#bfb-clearcount").onclick = () => {
-        CONFIG.blockedCount = 0;
-        setSessionBlocked(0);
-        blockedLog.length = 0;
+      uids.forEach((u) => push(CONFIG.block.uids, u));
+      names.forEach((nm) => push(CONFIG.block.upNames, nm));
+      if (n) {
         saveConfig();
-        updateBadge();
-        renderPanel(p);
-        p.classList.add("open");
-        toast("已清空计数与本次记录");
+        rescanAfterRuleChange();
+      }
+      return n;
+    };
+    listSec.querySelector("#bfb-list-file").onclick = () => {
+      const inp = document.createElement("input");
+      inp.type = "file";
+      inp.accept = ".txt,.csv,.json,text/plain,application/json";
+      inp.onchange = () => {
+        const f = inp.files && inp.files[0];
+        if (!f) return;
+        const r = new FileReader();
+        r.onload = () => {
+          listTa.value = (listTa.value ? listTa.value + "\n" : "") + String(r.result || "");
+          toast("已载入文件内容到输入框，确认后点 仅屏蔽 / 拉黑");
+        };
+        r.readAsText(f);
       };
-      tool.querySelector("#bfb-reset").onclick = () => {
-        if (confirm("确定恢复默认配置？现有规则将清空。")) {
-          Object.assign(CONFIG, structuredClone(DEFAULT_CONFIG));
-          saveConfig();
-          rescanAfterRuleChange();
-          renderPanel(p);
-          p.classList.add("open");
-        }
-      };
-      const logSec = document.createElement("div");
-      logSec.className = "sec";
-      logSec.innerHTML = `<label>🔎 屏蔽记录（本次会话共 <span id="bfb-log-count">0</span> 条） <button class="act ghost" id="bfb-log-toggle" style="float:right">展开/收起</button></label><div class="stat" id="bfb-log-tally">分类：暂无</div><div id="bfb-log-list" style="display:none;max-height:240px;overflow:auto;overscroll-behavior:contain;margin-top:6px;font-size:12px"></div>`;
-      G.tools.appendChild(logSec);
-      const logList = logSec.querySelector("#bfb-log-list");
-      const logCount = logSec.querySelector("#bfb-log-count");
-      const logTally = logSec.querySelector("#bfb-log-tally");
-      const foot = document.createElement("div");
-      foot.className = "sec";
-      foot.innerHTML = `<a class="manage" href="${BLACKLIST_MANAGE_URL}" target="_blank">→ 打开 B 站官方黑名单管理页（取消拉黑/查看人数）</a>
-      <div class="stat" style="margin-top:6px">累计拦截 <span id="bfb-foot-total">0</span> 次 · 本次会话 <span id="bfb-foot-session">0</span> 次</div>`;
-      G.tools.appendChild(foot);
-      const footTotal = foot.querySelector("#bfb-foot-total");
-      const footSession = foot.querySelector("#bfb-foot-session");
-      const refreshLog = () => {
-        logCount.textContent = blockedLog.length;
-        const tally = tallyLog();
-        logTally.textContent = "分类：" + (Object.keys(tally).length ? Object.entries(tally).map(([k, v]) => `${k}×${v}`).join("  ") : "暂无");
-        footTotal.textContent = CONFIG.blockedCount;
-        footSession.textContent = sessionBlocked;
-        if (logList.style.display !== "none") {
-          logList.innerHTML = "";
-          if (!blockedLog.length) {
-            logList.innerHTML = '<div class="stat">暂无记录</div>';
-            return;
-          }
-          blockedLog.slice(0, 100).forEach((b) => {
-            const row = document.createElement("div");
-            row.className = "log-row";
-            const tx = document.createElement("span");
-            tx.className = "log-tx";
-            const desc = b.title || (b.link ? b.link.replace(/^https?:\/\//, "").slice(0, 48) : "") || b.bvid || (b.uid ? "UID " + b.uid : "") || "(无可辨识信息)";
-            const srcTag = b.src === "BL" ? '<span class="log-src net">黑</span>' : b.src === "NET" ? '<span class="log-src net">拦</span>' : b.src === "CMT" ? '<span class="log-src dom">评</span>' : '<span class="log-src dom">隐</span>';
-            tx.innerHTML = `${srcTag}<span class="log-rs">[${escapeHtml(b.reason)}]</span> ${b.up ? "<b>" + escapeHtml(b.up) + "</b> · " : ""}${escapeHtml(desc)}`;
-            tx.title = (b.up ? b.up + " · " : "") + (b.title || desc) + (b.bvid ? "  ·  " + b.bvid : "") + (b.uid ? "  ·  UID " + b.uid : "") + (b.link ? "\n" + b.link : "");
-            row.appendChild(tx);
-            if (b.up || b.uid) {
-              const pass = document.createElement("button");
-              pass.className = "log-pass";
-              pass.textContent = "✅放行";
-              pass.title = "误伤了？把该 UP 加入白名单（永不屏蔽）。DOM 隐藏的会立即恢复，网络拦截删除的刷新后恢复。";
-              pass.onclick = () => {
-                if (b.uid) addToList(CONFIG.allow.uids, b.uid);
-                else addToList(CONFIG.allow.upNames, b.up);
-                toast(`已放行并加入白名单：${b.up || "UID " + b.uid}`);
-                refreshPanelIfOpen2();
-              };
-              row.appendChild(pass);
-            }
-            if (b.up || b.uid || b.bvid) {
-              const blk = document.createElement("button");
-              blk.className = "log-blk";
-              blk.textContent = "⛔拉黑";
-              blk.title = "拉黑该 UP（同步账号黑名单）";
-              blk.onclick = () => {
-                blk.disabled = true;
-                blk.textContent = "…";
-                blacklistUp({ up: b.up, uid: b.uid, bvid: b.bvid }, () => refreshLog());
-              };
-              row.appendChild(blk);
-            }
-            logList.appendChild(row);
-          });
-        }
-      };
-      logSec.querySelector("#bfb-log-toggle").onclick = () => {
-        logList.style.display = logList.style.display === "none" ? "block" : "none";
-        refreshLog();
-      };
-      panelStatsRefresh = refreshLog;
-      refreshLog();
-    }
-    function panelEl() {
-      return document.getElementById("bfb-panel");
-    }
-    function isPanelOpen() {
-      const p = panelEl();
-      return !!(p && p.classList.contains("open"));
-    }
-    function openPanel2() {
-      buildPanel();
-      const p = panelEl();
+      inp.click();
+    };
+    listSec.querySelector("#bfb-list-url").onclick = () => {
+      const url = (prompt("输入名单 URL（纯文本：每行一个 UID 或 UP 名）：") || "").trim();
+      if (!url) return;
+      if (!/^https?:\/\//i.test(url)) return toast("请输入有效的 http(s) URL");
+      if (typeof GM_xmlhttpRequest !== "function") return toast("当前环境不支持联网载入");
+      toast("载入中…");
+      GM_xmlhttpRequest({
+        method: "GET",
+        url,
+        timeout: 15e3,
+        onload: (r) => {
+          if (r.status >= 200 && r.status < 300 && r.responseText) {
+            listTa.value = (listTa.value ? listTa.value + "\n" : "") + r.responseText;
+            toast("已载入 URL 内容到输入框，确认后点 仅屏蔽 / 拉黑");
+          } else toast("载入失败：HTTP " + r.status);
+        },
+        onerror: () => toast("网络错误，载入失败"),
+        ontimeout: () => toast("载入超时")
+      });
+    };
+    listSec.querySelector("#bfb-list-hide").onclick = () => {
+      const { uids, names } = parseList();
+      if (!uids.length && !names.length) return toast("没解析到有效的 UID / 名称");
+      const n = addLocalMany(uids, names);
+      toast(`已本地屏蔽：新增 ${n} 条（解析到 UID ${uids.length} / 名称 ${names.length}）`);
       renderPanel(p);
       p.classList.add("open");
-    }
-    function closePanel() {
-      const p = panelEl();
-      if (p) p.classList.remove("open");
-    }
-    function refreshPanelIfOpen2() {
-      if (!isPanelOpen()) return;
-      renderPanel(panelEl());
+    };
+    listSec.querySelector("#bfb-list-block").onclick = () => {
+      const { uids, names } = parseList();
+      if (!uids.length && !names.length) return toast("没解析到有效的 UID / 名称");
+      const est = Math.ceil(uids.length * 1.3);
+      const nameTip = names.length ? `
+另有 ${names.length} 个只有名称（无 UID）→ 仅本地屏蔽，不写账号` : "";
+      if (uids.length && !confirm(`将把 ${uids.length} 个 UID 写入你的账号黑名单（限速约 ${est} 秒起，触发风控会自动暂停续传、耗时更久），不可一键撤销。${nameTip}
+
+执行期间请保持此页面打开。确定继续？`)) return;
+      const nLocal = addLocalMany([], names);
+      if (!uids.length) {
+        toast(`无 UID 可账号拉黑；已本地屏蔽 ${nLocal} 个名称`);
+        renderPanel(p);
+        p.classList.add("open");
+        return;
+      }
+      toast(`开始拉黑 ${uids.length} 个…执行期间请勿关闭面板`);
+      listStatus.textContent = `准备拉黑 ${uids.length} 个…`;
+      doBlacklistMany(
+        uids.map((u) => ({ uid: u, name: "" })),
+        (r) => {
+          const failUids = r.failed.map((f) => f.uid);
+          const byCode = {};
+          r.failed.forEach((f) => byCode[f.code] = (byCode[f.code] || 0) + 1);
+          const failBreak = Object.entries(byCode).map(([c, n]) => `${REL_ERR[c] || "code " + c}×${n}`).join("、");
+          listStatus.innerHTML = `✅ 完成（共 ${r.total}）：<b>新拉黑 ${r.added}</b>` + (r.already ? ` · 此前已在黑名单 ${r.already}` : "") + (failUids.length ? ` · <b style="color:#e74c3c">失败 ${failUids.length}</b>（${escapeHtml(failBreak)}；已回填可重试）` : "") + (nLocal ? ` · 另本地屏蔽 ${nLocal} 名称` : "") + `<br><span style="color:#888">官方黑名单本次新增 = 新拉黑 ${r.added} 个（"已在黑名单"的不会再叠加；如仍对不上，多为风控/已满，开调试模式看控制台 code 明细）</span>`;
+          listTa.value = failUids.length ? failUids.join("\n") : "";
+          toast(`完成：新拉黑 ${r.added}，已在黑名单 ${r.already}，失败 ${failUids.length}`);
+          if (panelStatsRefresh) panelStatsRefresh();
+        },
+        (pg) => {
+          listStatus.textContent = pg.paused ? `⚠ 触发风控，已暂停约 ${pg.wait}s 后自动继续 · 进度 ${pg.done}/${pg.total}（新拉黑 ${pg.added}，已在 ${pg.already}，失败 ${pg.fail}）` : `拉黑中 ${pg.done}/${pg.total} · 新拉黑 ${pg.added}${pg.already ? `，已在 ${pg.already}` : ""}${pg.fail ? `，失败 ${pg.fail}` : ""}…`;
+          if (panelStatsRefresh) panelStatsRefresh();
+        }
+      );
+    };
+    const tool = document.createElement("div");
+    tool.className = "sec toolbar";
+    tool.innerHTML = `<button class="act ghost" id="bfb-clearcount">清空计数/记录</button><button class="act ghost" id="bfb-reset">恢复默认</button>`;
+    G.tools.appendChild(tool);
+    tool.querySelector("#bfb-clearcount").onclick = () => {
+      CONFIG.blockedCount = 0;
+      setSessionBlocked(0);
+      blockedLog.length = 0;
+      saveConfig();
+      updateBadge();
+      renderPanel(p);
+      p.classList.add("open");
+      toast("已清空计数与本次记录");
+    };
+    tool.querySelector("#bfb-reset").onclick = () => {
+      if (confirm("确定恢复默认配置？现有规则将清空。")) {
+        Object.assign(CONFIG, structuredClone(DEFAULT_CONFIG));
+        saveConfig();
+        rescanAfterRuleChange();
+        renderPanel(p);
+        p.classList.add("open");
+      }
+    };
+    const logSec = document.createElement("div");
+    logSec.className = "sec";
+    logSec.innerHTML = `<label>🔎 屏蔽记录（本次会话共 <span id="bfb-log-count">0</span> 条） <button class="act ghost" id="bfb-log-toggle" style="float:right">展开/收起</button></label><div class="stat" id="bfb-log-tally">分类：暂无</div><div id="bfb-log-list" style="display:none;max-height:240px;overflow:auto;overscroll-behavior:contain;margin-top:6px;font-size:12px"></div>`;
+    G.tools.appendChild(logSec);
+    const logList = logSec.querySelector("#bfb-log-list");
+    const logCount = logSec.querySelector("#bfb-log-count");
+    const logTally = logSec.querySelector("#bfb-log-tally");
+    const foot = document.createElement("div");
+    foot.className = "sec";
+    foot.innerHTML = `<a class="manage" href="${BLACKLIST_MANAGE_URL}" target="_blank">→ 打开 B 站官方黑名单管理页（取消拉黑/查看人数）</a>
+      <div class="stat" style="margin-top:6px">累计拦截 <span id="bfb-foot-total">0</span> 次 · 本次会话 <span id="bfb-foot-session">0</span> 次</div>`;
+    G.tools.appendChild(foot);
+    const footTotal = foot.querySelector("#bfb-foot-total");
+    const footSession = foot.querySelector("#bfb-foot-session");
+    const refreshLog = () => {
+      logCount.textContent = blockedLog.length;
+      const tally = tallyLog();
+      logTally.textContent = "分类：" + (Object.keys(tally).length ? Object.entries(tally).map(([k, v]) => `${k}×${v}`).join("  ") : "暂无");
+      footTotal.textContent = CONFIG.blockedCount;
+      footSession.textContent = sessionBlocked;
+      if (logList.style.display !== "none") {
+        logList.innerHTML = "";
+        if (!blockedLog.length) {
+          logList.innerHTML = '<div class="stat">暂无记录</div>';
+          return;
+        }
+        blockedLog.slice(0, 100).forEach((b) => {
+          const row = document.createElement("div");
+          row.className = "log-row";
+          const tx = document.createElement("span");
+          tx.className = "log-tx";
+          const desc = b.title || (b.link ? b.link.replace(/^https?:\/\//, "").slice(0, 48) : "") || b.bvid || (b.uid ? "UID " + b.uid : "") || "(无可辨识信息)";
+          const srcTag = b.src === "BL" ? '<span class="log-src net">黑</span>' : b.src === "NET" ? '<span class="log-src net">拦</span>' : b.src === "CMT" ? '<span class="log-src dom">评</span>' : '<span class="log-src dom">隐</span>';
+          tx.innerHTML = `${srcTag}<span class="log-rs">[${escapeHtml(b.reason)}]</span> ${b.up ? "<b>" + escapeHtml(b.up) + "</b> · " : ""}${escapeHtml(desc)}`;
+          tx.title = (b.up ? b.up + " · " : "") + (b.title || desc) + (b.bvid ? "  ·  " + b.bvid : "") + (b.uid ? "  ·  UID " + b.uid : "") + (b.link ? "\n" + b.link : "");
+          row.appendChild(tx);
+          if (b.up || b.uid) {
+            const pass = document.createElement("button");
+            pass.className = "log-pass";
+            pass.textContent = "✅放行";
+            pass.title = "误伤了？把该 UP 加入白名单（永不屏蔽）。DOM 隐藏的会立即恢复，网络拦截删除的刷新后恢复。";
+            pass.onclick = () => {
+              if (b.uid) addToList(CONFIG.allow.uids, b.uid);
+              else addToList(CONFIG.allow.upNames, b.up);
+              toast(`已放行并加入白名单：${b.up || "UID " + b.uid}`);
+              refreshPanelIfOpen2();
+            };
+            row.appendChild(pass);
+          }
+          if (b.up || b.uid || b.bvid) {
+            const blk = document.createElement("button");
+            blk.className = "log-blk";
+            blk.textContent = "⛔拉黑";
+            blk.title = "拉黑该 UP（同步账号黑名单）";
+            blk.onclick = () => {
+              blk.disabled = true;
+              blk.textContent = "…";
+              blacklistUp({ up: b.up, uid: b.uid, bvid: b.bvid }, () => refreshLog());
+            };
+            row.appendChild(blk);
+          }
+          logList.appendChild(row);
+        });
+      }
+    };
+    logSec.querySelector("#bfb-log-toggle").onclick = () => {
+      logList.style.display = logList.style.display === "none" ? "block" : "none";
+      refreshLog();
+    };
+    panelStatsRefresh = refreshLog;
+    refreshLog();
+  }
+  function panelEl() {
+    return document.getElementById("bfb-panel");
+  }
+  function isPanelOpen() {
+    const p = panelEl();
+    return !!(p && p.classList.contains("open"));
+  }
+  function openPanel2() {
+    buildPanel();
+    const p = panelEl();
+    renderPanel(p);
+    p.classList.add("open");
+  }
+  function closePanel() {
+    const p = panelEl();
+    if (p) p.classList.remove("open");
+  }
+  function refreshPanelIfOpen2() {
+    if (!isPanelOpen()) return;
+    renderPanel(panelEl());
+  }
+  function refreshStatsIfOpen() {
+    if (panelStatsRefresh && isPanelOpen()) panelStatsRefresh();
+  }
+
+  // src/main.ts
+  (function() {
+    "use strict";
+    configureCardDetect(() => ({ detectAd: CONFIG.hideAd, detectLive: CONFIG.hideLiveCard }));
+    setPanelHooks({
+      refreshPanelIfOpen: () => refreshPanelIfOpen2(),
+      openPanel: () => openPanel2(),
+      isPanelOpen: () => isPanelOpen()
+    });
+    setStatsListener(() => {
+      if (document.body) updateBadge();
+      refreshStatsIfOpen();
+    });
+    setRulesChangedHandler(() => rescanAfterRuleChange());
+    function installShadowHook() {
+      if (Element.prototype.attachShadow.__bfb) return;
+      const orig = Element.prototype.attachShadow;
+      const wrapped = function(init) {
+        const root = orig.call(this, init);
+        try {
+          shadowRoots.add(root);
+          if (CMT_TAGS[this.tagName] !== void 0) scheduleCommentScan();
+        } catch (e) {
+        }
+        return root;
+      };
+      wrapped.__bfb = true;
+      try {
+        Element.prototype.attachShadow = wrapped;
+      } catch (e) {
+      }
     }
     function start() {
       console.log(
