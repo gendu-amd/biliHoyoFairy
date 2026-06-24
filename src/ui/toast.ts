@@ -28,12 +28,33 @@ function toastContainer(): HTMLElement {
 }
 
 export type ToastKind = 'info' | 'success' | 'warn' | 'error';
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
 
 // kind 决定左侧色条（默认 info=原样）：success 绿 / warn 橙 / error 红，便于一眼区分操作结果。
-export function toast(msg: string, kind: ToastKind = 'info'): void {
+// action：可选行内按钮（如「撤销」）；带 action 时默认延长停留到 8s，给用户反应时间。
+export function toast(msg: string, kind: ToastKind = 'info', action?: ToastAction, ms?: number): void {
   const t = document.createElement('div');
   t.className = 'bfb-toast' + (kind !== 'info' ? ' ' + kind : '');
-  t.textContent = msg;
+  const span = document.createElement('span');
+  span.className = 'bfb-toast-msg';
+  span.textContent = msg;
+  t.appendChild(span);
+  const timeout = ms ?? (action ? 8000 : 4000);
+  const timer = setTimeout(() => t.remove(), timeout);
+  if (action) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'bfb-toast-act';
+    b.textContent = action.label;
+    b.onclick = () => {
+      clearTimeout(timer);
+      t.remove();
+      action.onClick();
+    };
+    t.appendChild(b);
+  }
   toastContainer().appendChild(t);
-  setTimeout(() => t.remove(), 4000);
 }

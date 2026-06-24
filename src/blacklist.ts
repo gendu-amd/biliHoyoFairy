@@ -5,7 +5,7 @@
 import { fetchView, riskGuard } from './api';
 import { getCookie } from './util';
 import { CONFIG, saveConfig } from './config';
-import { addToList, pushUnique } from './rules';
+import { addToList, pushUnique, removeFromList } from './rules';
 import { emitRulesChanged } from './events';
 import { toast } from './ui/toast';
 import { extractCardInfo } from './cardinfo';
@@ -66,7 +66,8 @@ function doBlacklist(uid, upName, cb, quiet) {
       // 成功拉黑写入屏蔽记录（单发/批量共用），让用户能看到“这次拉黑了谁”
       if (ok) logBlocked('拉黑', { up: upName || (CONFIG.uidNames && CONFIG.uidNames[String(uid)]) || '', uid: String(uid) }, 'BL');
       if (!quiet) {
-        if (code === 0) toast(`已拉黑并同步账号黑名单：${label}（刷新后不再推荐）`, 'success');
+        // 仅对「本次新拉黑(code 0)」提供撤销：22120 是此前就已在黑名单，撤销它可能误删用户早先的设置，故不提供。
+        if (code === 0) toast(`已拉黑并同步账号黑名单：${label}（刷新后不再推荐）`, 'success', { label: '撤销', onClick: () => unblockUp(String(uid), upName) });
         else if (code === 22120) toast(`「${label}」此前已在账号黑名单，已本地同步`, 'success');
         else toast(`账号侧拉黑失败（${REL_ERR[code] || msg || 'code ' + code}），已本地屏蔽：${label}`, 'warn');
       }
@@ -75,6 +76,45 @@ function doBlacklist(uid, upName, cb, quiet) {
     onerror: () => {
       addLocal();
       if (!quiet) toast(`网络错误，已本地屏蔽：${label}`, 'error');
+      cb && cb(false, null);
+    },
+  });
+}
+
+// 撤销拉黑（relation/modify act=6 取消拉黑）：账号侧移出黑名单 + 本地移出 block.uids（刷新后该 UP 恢复推荐）。
+// 给「不可逆账号写操作」一个可恢复路径：单条拉黑成功后的撤销 toast、面板屏蔽记录的撤销按钮共用。
+export function unblockUp(uid, upName, cb) {
+  const label = upName || uid;
+  const csrf = getCookie('bili_jct');
+  if (!csrf) {
+    removeFromList(CONFIG.block.uids, String(uid)); // 未登录：仅能撤销本地屏蔽
+    toast(`已移出本地屏蔽：${label}（未登录，账号黑名单未变动）`, 'warn');
+    cb && cb(false, -101);
+    return;
+  }
+  GM_xmlhttpRequest({
+    method: 'POST',
+    url: 'https://api.bilibili.com/x/relation/modify',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    data: `fid=${encodeURIComponent(uid)}&act=6&re_src=11&gaia_source=web_main&csrf=${encodeURIComponent(csrf)}`,
+    withCredentials: true,
+    onload: (res) => {
+      let code = null;
+      let msg = '';
+      try {
+        const j = JSON.parse(res.responseText);
+        code = j.code;
+        msg = j.message || '';
+      } catch (e) {}
+      riskGuard.note(code);
+      removeFromList(CONFIG.block.uids, String(uid)); // 无论账号侧成败都移出本地屏蔽，避免界面与意图不一致
+      const ok = code === 0;
+      toast(ok ? `已撤销拉黑：${label}（刷新后恢复推荐）` : `账号侧撤销失败（${REL_ERR[code] || msg || 'code ' + code}），已移出本地屏蔽：${label}`, ok ? 'success' : 'warn');
+      cb && cb(ok, code);
+    },
+    onerror: () => {
+      removeFromList(CONFIG.block.uids, String(uid));
+      toast(`网络错误，已移出本地屏蔽：${label}`, 'error');
       cb && cb(false, null);
     },
   });
