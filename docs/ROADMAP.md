@@ -4,26 +4,14 @@
 
 ## 候选功能（按优先级）
 
-### P1 · 建议做（贴合定位、投入小、差异化明显）
+### 已实现
 
-1. **触发 B 站原生「不感兴趣」反馈**
-   - 现状：我们「硬过滤 + 拉黑」只是在前端把卡片删掉/隐藏，**不回流推荐模型**。
-   - 想法：在屏蔽/拉黑的同时，顺手调用一次 B 站原生「不感兴趣」反馈接口，让推荐流**真正变好**，而不只是藏。
-   - 参考：[aisensiy/my-bilibili-rcmd](https://github.com/aisensiy/my-bilibili-rcmd)（卡片「不感兴趣」按钮 + 触发原生反馈）。
-   - 待定：核实原生反馈接口与参数、是否需要登录态、风控影响。
-
-2. **收藏 / 投币比（三连比）作为质量 / 营销号信号**
-   - 现状：已有「播放-点赞率」识别营销号。
-   - 想法：扩展为「收藏比 / 投币比」维度（同一套机制）。若 feed 的 `stat` 已带 favorite/coin 字段则近乎零成本。
-   - 参考：[BRaysMK/BiliBlockFusion](https://github.com/BRaysMK/BiliBlockFusion)、上游 hgztask/BiBiBSPUserVideoMonkeyScript。
-
-3. **bvid 级「不再显示这个视频」+ 卡片快捷按钮**
-   - 现状：屏蔽粒度是 UP / 关键词 / 拉黑（整个 UP）。
-   - 想法：针对**单条视频**的轻量隐藏（记 bvid，刷新后仍不显示），卡片 hover 出快捷按钮。比拉黑更轻。
-   - 参考：[aisensiy/my-bilibili-rcmd](https://github.com/aisensiy/my-bilibili-rcmd)。
+- **bvid 级「不再显示这个视频」+ 卡片快捷按钮**（v0.0.7）：悬停浮层「拉黑」下方新增「🚫 不看这个」，复用 `block.bvids` 单条隐藏、带撤销、可在黑名单移除。参考 [aisensiy/my-bilibili-rcmd](https://github.com/aisensiy/my-bilibili-rcmd)。
 
 ### 评估中（需更多信息 / 取舍）
 
+- **触发 B 站原生「不感兴趣」反馈**（受限，深度核查后下调）：理念好（能回流推荐模型）。但已核实——有文档的 dislike 接口（`app.bilibili.com/x/feed/dislike`、`app.biliapi.net/x/v2/view/dislike`）**都要 APP 端 `access_key`**，网页脚本只有 web cookie 拿不到；网页 PC 的「不感兴趣」走未公开 + WBI 签名的内部接口，脆弱且影响账号。结论：**网页脚本暂不可靠落地**，待 web 端可用接口明确后再议。
+- **收藏 / 投币比信号**（待验证）：首页 feed 的 `item.stat` 历史上多为 `{view, like, danmaku}` 精简集，**通常不含 favorite/coin**。若直接读 feed → 该维度恒不触发（死功能）；可靠做需每卡发详情请求（重，且与现有点赞率识营销号收益重叠）。结论：**先抓真实登录态 feed 响应确认是否含 `stat.favorite/coin` 再决定**。
 - **动态流（t.bilibili.com）按类型过滤**：当前动态页主要靠 DOM 兜底，未拦动态 feed 接口。可评估加 hook（移除充电问答、带货转发等类型）。参考 Bilibili-Evolved 动态过滤器。
 - **遮罩模式（半透明遮罩 + 原因，替代隐藏）**：我们已有「审查模式（标记 + 放行）」，接近；可加一个显示选项。参考 BiliBlockFusion 叠加层模式。
 - **更多评论维度**：仅看硬核会员、字数下限、按装扮屏蔽。参考 BiliBlockFusion。

@@ -3,7 +3,7 @@
 // @name:zh-CN   B站(bilibili)推荐流净化·屏蔽拉黑去广告 — biliHoyoFairy 抗击黑潮
 // @name:en      biliHoyoFairy — bilibili Feed Cleaner, Blocker & Account Blacklist
 // @namespace    https://github.com/gendu-amd/biliHoyoFairy
-// @version      0.0.6
+// @version      0.0.7
 // @description  B站(bilibili/哔哩哔哩)推荐流净化与屏蔽脚本：屏蔽黑流量、引战视频、商业广告与不想看的 UP 主。支持按 标签/UP主/UID/关键词(可正则)/分区/时长/播放量/BV 精准过滤；覆盖首页/热门/排行榜/搜索/播放页/动态/评论区；白名单优先防误伤；右键一键屏蔽/拉黑(同步账号黑名单)；内置预置关键词库与规则订阅。
 // @description:en  Clean up & block the bilibili recommendation feed: hide clickbait, flame-bait, ads and unwanted UP owners. Filter by tag/UP/UID/keyword(regex)/category/duration/views/BV across home, popular, ranking, search, video, dynamic pages and comments; whitelist priority; one-click block synced to the account blacklist; preset keyword library and rule subscriptions.
 // @author       gendu-amd
@@ -2175,15 +2175,16 @@
     overlayHost.style.cssText = "position:fixed;inset:0;z-index:100002;pointer-events:none;contain:layout style";
     overlayRoot = overlayHost.attachShadow({ mode: "open" });
     const st = document.createElement("style");
-    st.textContent = ".blk{position:fixed;pointer-events:auto;background:rgba(251,114,153,.95);color:#fff;border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.28);font-family:system-ui,Arial;user-select:none;display:none}.blk:hover{background:#fb7299}";
+    st.textContent = ".blk{position:fixed;pointer-events:auto;background:rgba(251,114,153,.95);color:#fff;border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.28);font-family:system-ui,Arial;user-select:none;display:none}.blk:hover{background:#fb7299}.hidev{position:fixed;pointer-events:auto;background:rgba(45,45,52,.92);color:#fff;border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.28);font-family:system-ui,Arial;user-select:none;display:none}.hidev:hover{background:#2d2d34}";
     overlayRoot.appendChild(st);
     (document.documentElement || document.body).appendChild(overlayHost);
     return overlayRoot;
   }
   var hoverBtn = null;
+  var hideVidBtn = null;
   var hoverCard = null;
-  function ensureHoverBtn() {
-    if (hoverBtn) return hoverBtn;
+  function ensureHoverBtns() {
+    if (hoverBtn) return;
     const root = getOverlayRoot();
     hoverBtn = document.createElement("div");
     hoverBtn.className = "blk";
@@ -2205,19 +2206,47 @@
       });
     };
     root.appendChild(hoverBtn);
-    return hoverBtn;
+    hideVidBtn = document.createElement("div");
+    hideVidBtn.className = "hidev";
+    hideVidBtn.textContent = "🚫 不看这个";
+    hideVidBtn.title = "不再显示这个视频（按 BV 号屏蔽，刷新后仍隐藏，可在黑名单撤销）";
+    hideVidBtn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!hoverCard) return;
+      const info = hoverCard._bfbInfo || extractCardInfo(hoverCard);
+      if (!info.bvid) {
+        toast("该卡片没有 BV 号，无法按视频隐藏", "warn");
+        return;
+      }
+      const bvid = info.bvid;
+      if (addToList(CONFIG.block.bvids, bvid)) {
+        toast(`已隐藏这个视频：${info.title || bvid}`, "success", { label: "撤销", onClick: () => removeFromList(CONFIG.block.bvids, bvid) });
+      } else {
+        toast("该视频此前已隐藏");
+      }
+      refreshPanelIfOpen();
+      hideHoverBtn();
+    };
+    root.appendChild(hideVidBtn);
   }
   function hideHoverBtn() {
     if (hoverBtn) hoverBtn.style.display = "none";
+    if (hideVidBtn) hideVidBtn.style.display = "none";
     hoverCard = null;
   }
   function positionHoverBtn(card) {
     const r = card.getBoundingClientRect();
     if (r.width < 80 || r.height < 60) return hideHoverBtn();
-    const b = ensureHoverBtn();
-    b.style.left = Math.max(8, r.left + 8) + "px";
-    b.style.top = Math.max(8, r.top + 8) + "px";
-    b.style.display = "block";
+    ensureHoverBtns();
+    const left = Math.max(8, r.left + 8);
+    const top = Math.max(8, r.top + 8);
+    hoverBtn.style.left = left + "px";
+    hoverBtn.style.top = top + "px";
+    hoverBtn.style.display = "block";
+    hideVidBtn.style.left = left + "px";
+    hideVidBtn.style.top = top + 30 + "px";
+    hideVidBtn.style.display = "block";
     hoverCard = card;
   }
   function onCardHover(e) {
@@ -2793,7 +2822,7 @@
       <div class="switch"><input type="checkbox" id="bfb-enabled"> 启用拦截</div>
       <div class="switch"><input type="checkbox" id="bfb-review"> 🔍 审查模式（不隐藏，仅标记被拦视频并提供就地放行，便于核对）</div>
       <div class="switch"><input type="checkbox" id="bfb-rclick"> 右键卡片弹出菜单（屏蔽、拉黑、加入白名单）</div>
-      <div class="switch"><input type="checkbox" id="bfb-hoverbtn"> 悬停卡片显示快捷「拉黑」按钮</div>
+      <div class="switch"><input type="checkbox" id="bfb-hoverbtn"> 悬停卡片显示快捷「拉黑 / 不看这个」按钮</div>
       <div class="switch"><input type="checkbox" id="bfb-collab"> 联合投稿一并拉黑合作者</div>
       <div class="switch"><input type="checkbox" id="bfb-fuzzy"> 反绕过模糊匹配（「原 神」「原.神」同样拦截；隐形字符始终拦截）</div>
       <div class="switch"><input type="checkbox" id="bfb-debug"> 调试模式（控制台逐卡打印拦截 / 放行原因）</div>

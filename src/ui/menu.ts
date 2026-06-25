@@ -8,7 +8,7 @@ import { extractCardInfo } from '../cardinfo';
 import { CMT_TAGS, readCmt } from '../comments';
 import { blockVideo } from '../dom';
 import { blacklistUp } from '../blacklist';
-import { addToList } from '../rules';
+import { addToList, removeFromList } from '../rules';
 import { toast } from './toast';
 import { confirmModal } from './confirm';
 import { refreshPanelIfOpen, openPanel } from './hooks';
@@ -186,16 +186,19 @@ function getOverlayRoot() {
   const st = document.createElement('style');
   st.textContent =
     '.blk{position:fixed;pointer-events:auto;background:rgba(251,114,153,.95);color:#fff;border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.28);font-family:system-ui,Arial;user-select:none;display:none}' +
-    '.blk:hover{background:#fb7299}';
+    '.blk:hover{background:#fb7299}' +
+    '.hidev{position:fixed;pointer-events:auto;background:rgba(45,45,52,.92);color:#fff;border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.28);font-family:system-ui,Arial;user-select:none;display:none}' +
+    '.hidev:hover{background:#2d2d34}';
   overlayRoot.appendChild(st);
   (document.documentElement || document.body).appendChild(overlayHost);
   return overlayRoot;
 }
 
 let hoverBtn = null;
+let hideVidBtn = null;
 let hoverCard = null;
-function ensureHoverBtn() {
-  if (hoverBtn) return hoverBtn;
+function ensureHoverBtns() {
+  if (hoverBtn) return;
   const root = getOverlayRoot();
   hoverBtn = document.createElement('div');
   hoverBtn.className = 'blk';
@@ -217,19 +220,49 @@ function ensureHoverBtn() {
     });
   };
   root.appendChild(hoverBtn);
-  return hoverBtn;
+
+  // 「不看这个」：只隐藏当前这条视频（加入 BV 屏蔽，刷新后仍隐藏，可撤销）。比拉黑整个 UP 更轻。
+  hideVidBtn = document.createElement('div');
+  hideVidBtn.className = 'hidev';
+  hideVidBtn.textContent = '🚫 不看这个';
+  hideVidBtn.title = '不再显示这个视频（按 BV 号屏蔽，刷新后仍隐藏，可在黑名单撤销）';
+  hideVidBtn.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!hoverCard) return;
+    const info = hoverCard._bfbInfo || extractCardInfo(hoverCard);
+    if (!info.bvid) {
+      toast('该卡片没有 BV 号，无法按视频隐藏', 'warn');
+      return;
+    }
+    const bvid = info.bvid;
+    if (addToList(CONFIG.block.bvids, bvid)) {
+      toast(`已隐藏这个视频：${info.title || bvid}`, 'success', { label: '撤销', onClick: () => removeFromList(CONFIG.block.bvids, bvid) });
+    } else {
+      toast('该视频此前已隐藏');
+    }
+    refreshPanelIfOpen();
+    hideHoverBtn();
+  };
+  root.appendChild(hideVidBtn);
 }
 export function hideHoverBtn() {
   if (hoverBtn) hoverBtn.style.display = 'none';
+  if (hideVidBtn) hideVidBtn.style.display = 'none';
   hoverCard = null;
 }
 function positionHoverBtn(card) {
   const r = card.getBoundingClientRect();
   if (r.width < 80 || r.height < 60) return hideHoverBtn(); // 太小的卡（如纯文本/骨架）不显示
-  const b = ensureHoverBtn();
-  b.style.left = Math.max(8, r.left + 8) + 'px';
-  b.style.top = Math.max(8, r.top + 8) + 'px';
-  b.style.display = 'block';
+  ensureHoverBtns();
+  const left = Math.max(8, r.left + 8);
+  const top = Math.max(8, r.top + 8);
+  hoverBtn.style.left = left + 'px';
+  hoverBtn.style.top = top + 'px';
+  hoverBtn.style.display = 'block';
+  hideVidBtn.style.left = left + 'px';
+  hideVidBtn.style.top = top + 30 + 'px'; // 叠在「拉黑」下方
+  hideVidBtn.style.display = 'block';
   hoverCard = card;
 }
 export function onCardHover(e) {
