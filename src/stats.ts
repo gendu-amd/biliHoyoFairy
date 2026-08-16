@@ -50,12 +50,28 @@ export function setStatsListener(fn: () => void): void {
   onRecorded = fn;
 }
 
+// UI 通知合批：一次响应过滤可能连删几十项，逐项调 onRecorded（重绘角标/面板列表）会做几十次
+// 同样的重绘。攒到本轮同步代码结束后的微任务里只通知一次——用户看到的是同一个最终数字。
+let notifyQueued = false;
+function notifyBatched(): void {
+  if (notifyQueued) return;
+  notifyQueued = true;
+  Promise.resolve().then(() => {
+    notifyQueued = false;
+    try {
+      onRecorded();
+    } catch (e) {
+      /* UI 监听器异常不能反噬记账链路 */
+    }
+    scheduleSave(); // 本身已是 1200ms 防抖，跟着合批一起走即可
+  });
+}
+
 // 记账：计数 + 日志 + 通知 UI。拦截层（无 card）与 DOM 层共用。
 export function recordBlock(reason: string, info: any, src?: string): void {
   logBlocked(reason, info, src);
   sessionBlocked++;
   CONFIG.blockedCount++;
-  onRecorded();
-  scheduleSave();
-  log(`拦截🚫 ${reason} ${info && info.up ? info.up + ' · ' : ''}${(info && info.title) || '(无标题)'}`);
+  notifyBatched();
+  log(() => `拦截🚫 ${reason} ${info && info.up ? info.up + ' · ' : ''}${(info && info.title) || '(无标题)'}`);
 }

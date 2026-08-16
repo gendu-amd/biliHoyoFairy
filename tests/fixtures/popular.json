@@ -1,0 +1,28 @@
+{
+  "code": 0,
+  "message": "0",
+  "ttl": 1,
+  "data": {
+    "list": [
+      {
+        "aid": 3001,
+        "bvid": "BV1ff411f1f1",
+        "title": "原神联动咖啡店探店",
+        "tname": "美食探店",
+        "duration": 480,
+        "owner": { "mid": 300001, "name": "样本UP戊" },
+        "stat": { "view": 700000, "like": 50000 }
+      },
+      {
+        "aid": 3002,
+        "bvid": "BV1gg411g1g1",
+        "title": "一周新闻速览",
+        "tname": "资讯",
+        "duration": 300,
+        "owner": { "mid": 300002, "name": "样本UP己" },
+        "stat": { "view": 400000, "like": 30000 }
+      }
+    ],
+    "no_more": false
+  }
+}

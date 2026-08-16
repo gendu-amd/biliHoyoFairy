@@ -4,6 +4,7 @@
 import { CONFIG } from './config';
 import { ATTR_API, ATTR_BLOCKED, PROCESSED } from './constants';
 import { cellOf, isUnsafeHideTarget, VIDEO_CARD_SELECTOR } from './page';
+import { SWIPE_BANNER } from './selectors';
 import { extractCardInfo } from './cardinfo';
 import { M, matchRule, matchApi, apiNeeds, apiRulesActive, isWhitelisted, rebuildRules } from './match/engine';
 import { fetchView, fetchTags, fetchCard } from './api';
@@ -11,7 +12,8 @@ import { recordBlock } from './stats';
 import { shadowRoots } from './shadow';
 import { scanComments } from './comments';
 import { addToList } from './rules';
-import { log, safe } from './logging';
+import { log, logErr, safe } from './logging';
+import { health } from './health';
 import { toast } from './ui/toast';
 import { refreshPanelIfOpen } from './ui/hooks';
 
@@ -80,7 +82,8 @@ export const processCard = safe('processCard', function (card) {
   card.setAttribute(PROCESSED, '1');
   card._bfbInfo = info;
   const hit = matchRule(info);
-  if (!hit) log(`放行✅ | 标题:${info.title || '(无)'} | UP:${info.up || '(无)'} | 标签:${info.partition || '(无)'}`);
+  // 惰性：这行每张卡都会走一次，debug 关时不该付拼串的代价
+  if (!hit) log(() => `放行✅ | 标题:${info.title || '(无)'} | UP:${info.up || '(无)'} | 标签:${info.partition || '(无)'}`);
   if (hit) {
     blockVideo(card, hit, info);
     return;
@@ -140,34 +143,46 @@ function evaluateApi(card, info) {
   finish();
 }
 
-// 普通 DOM 卡片 ∪ 各存活 shadow root 内的卡片。
-export function queryCards() {
-  const out = Array.from(document.querySelectorAll(VIDEO_CARD_SELECTOR));
+// 跨主文档与所有存活 shadow root 的查询。
+// 单一入口：卡片扫描与规则变更后的重扫必须用同一套根集合——只查主文档会漏掉 shadow 内的卡，
+// 导致它们的 PROCESSED 标记永远清不掉、规则改了也不重判（曾经的 bug）。
+function queryAllRoots(selector) {
+  const out = Array.from(document.querySelectorAll(selector));
   for (const r of shadowRoots) {
     if (!r.host || !r.host.isConnected) {
       shadowRoots.delete(r);
       continue;
     }
     try {
-      const found = r.querySelectorAll(VIDEO_CARD_SELECTOR);
+      const found = r.querySelectorAll(selector);
       if (found.length) out.push(...found);
-    } catch (e) {}
+    } catch (e) {
+      logErr('queryAllRoots', e); // 选择器/已失效 root 异常：跳过该 root 但要可见
+    }
   }
   return out;
 }
 
+// 普通 DOM 卡片 ∪ 各存活 shadow root 内的卡片。
+export function queryCards() {
+  return queryAllRoots(VIDEO_CARD_SELECTOR);
+}
+
 export function scanAll() {
   if (!CONFIG.enabled) return;
-  queryCards().forEach((card) => {
+  const cards = queryCards();
+  if (cards.length > health.cardsSeen) health.cardsSeen = cards.length; // 自检：选择器是否还认得出卡片
+  cards.forEach((card) => {
     if (card.getAttribute(PROCESSED)) return;
-    if (card.closest && card.closest('.recommended-swipe')) return; // 顶部轮播 banner，跳过
+    if (card.closest && card.closest(SWIPE_BANNER)) return; // 顶部轮播 banner，跳过
     processCard(card);
   });
 }
 
 export function rescanAfterRuleChange() {
   rebuildRules();
-  document.querySelectorAll('[' + PROCESSED + ']').forEach((el) => {
+  // 必须穿透 shadow：queryCards 会处理 shadow 内的卡，这里就得能把它们的标记一并清掉
+  queryAllRoots('[' + PROCESSED + ']').forEach((el) => {
     el.removeAttribute(PROCESSED);
     el.removeAttribute(ATTR_API);
     clearVisual(el);

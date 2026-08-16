@@ -3,8 +3,12 @@ import { CONFIG } from './config';
 
 export const BADGE = 'color:#fff;background:#fb7299;padding:0 4px;border-radius:3px'; // 控制台日志的品牌徽标样式
 
+// 传函数即惰性求值：debug 关时连消息都不拼。热路径（每张卡都会调一次的放行日志）用这种形式，
+// 否则模板字符串会在 99.9% 的时间里被拼出来又直接丢掉。
 export function log(...args: unknown[]): void {
-  if (CONFIG.debug) console.log('%c[biliHoyoFairy]%c', BADGE, 'color:inherit', ...args);
+  if (!CONFIG.debug) return;
+  const out = args.length === 1 && typeof args[0] === 'function' ? [(args[0] as () => unknown)()] : args;
+  console.log('%c[biliHoyoFairy]%c', BADGE, 'color:inherit', ...out);
 }
 
 export function logErr(where: string, e: unknown): void {

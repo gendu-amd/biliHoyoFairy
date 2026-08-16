@@ -10,8 +10,10 @@ import { M, ruleVersion } from './match/engine';
 import { shadowRoots } from './shadow';
 import { recordBlock } from './stats';
 import { log, safe } from './logging';
+import { COMMENT_TAGS } from './selectors';
 
-export const CMT_TAGS = { 'BILI-COMMENT-THREAD-RENDERER': false, 'BILI-COMMENT-REPLY-RENDERER': true };
+// 兼容既有引用点的别名；选择器/标签名本身登记在 ./selectors。
+export const CMT_TAGS = COMMENT_TAGS;
 
 // 归一评论正文：去掉开头“回复 @x:”、去 @提及、去 [表情] 占位，便于关键词/空洞判定。
 function cmtCleanMsg(msg, isSub) {

@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { CONFIG, DEFAULT_CONFIG, deepMerge, mergeImport, exportConfig } from '../src/config';
+import {
+  CONFIG,
+  DEFAULT_CONFIG,
+  deepMerge,
+  mergeImport,
+  exportConfig,
+  sanitizeConfigInput,
+  migrateConfig,
+} from '../src/config';
+import { SCHEMA_VERSION } from '../src/constants';
 
 describe('exportConfig：剔除不可移植键（安全红线）', () => {
   it('导出不含 subscriptions/uidNames/blockedCount/enabled/debug/reviewMode，但保留规则', () => {
@@ -54,5 +63,43 @@ describe('mergeImport', () => {
     const base: any = {};
     mergeImport(base, JSON.parse('{"__proto__":{"polluted":1}}'));
     expect(({} as any).polluted).toBeUndefined();
+  });
+});
+
+describe('sanitizeConfigInput：清洗不可信导入（安全红线）', () => {
+  it('规则字段是字符串时整条丢弃，绝不留给下游按字符遍历', () => {
+    const out = sanitizeConfigInput({ block: { keywords: '原神' } });
+    expect(out.block).toBeUndefined();
+  });
+  it('数组里的非字符串元素被剔除，字符串元素保留', () => {
+    const out = sanitizeConfigInput({ block: { keywords: ['原神', 42, null, { a: 1 }, '鸣潮'] } });
+    expect(out.block.keywords).toEqual(['原神', '鸣潮']);
+  });
+  it('丢弃默认配置里不存在的键（陌生文件不能往配置里塞新字段）', () => {
+    const out = sanitizeConfigInput({ hideAd: true, evilPayload: 'x', __proto__: { polluted: 1 } });
+    expect(out.hideAd).toBe(true);
+    expect(out.evilPayload).toBeUndefined();
+    expect(({} as any).polluted).toBeUndefined();
+  });
+  it('类型不符的标量被丢弃而不是强转', () => {
+    const out = sanitizeConfigInput({ hideAd: 'yes', comment: { minLevel: '3' } });
+    expect(out.hideAd).toBeUndefined();
+    expect(out.comment).toBeUndefined();
+  });
+  it('subscriptions 这类无形状引用的字段整体丢弃（防塞入自动联网 URL）', () => {
+    const out = sanitizeConfigInput({ subscriptions: [{ url: 'https://evil.example/x.json', enabled: true }] });
+    expect(out.subscriptions).toEqual([]); // 元素非字符串 → 清空；面板侧还会再按 NON_PORTABLE 删掉整键
+  });
+});
+
+describe('migrateConfig：存档结构版本', () => {
+  it('缺 schemaVersion 的老存档被补齐到当前版本', () => {
+    const c = migrateConfig({ block: { keywords: ['原神'] } });
+    expect(c.schemaVersion).toBe(SCHEMA_VERSION);
+    expect(c.block.keywords).toEqual(['原神']); // 无登记迁移时不动数据
+  });
+  it('非对象输入原样返回，不抛错', () => {
+    expect(migrateConfig(null)).toBeNull();
+    expect(migrateConfig('x')).toBe('x');
   });
 });

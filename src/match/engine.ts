@@ -2,7 +2,7 @@
 // M（编译后的匹配器）与 ruleVersion 是共享可变状态，经 rebuildRules 重建；以 ESM 实时绑定导出，
 // 其它模块 import 后读到的是最新值（切勿解构后缓存）。
 import { CONFIG } from '../config';
-import { compileScopedKeywords, compileLines, kwHit, textHit, lc, configureFuzzy } from './normalize';
+import { compileScopedKeywords, compileLines, kwHit, textHit, lc, ruleLines, configureFuzzy } from './normalize';
 import type { Matcher, ScopedKw } from './normalize';
 import type { CardInfo } from '../cardinfo';
 import { collectSubRules } from '../subscriptions/store';
@@ -33,12 +33,13 @@ export interface Matchers {
 
 export function buildMatchers(): Matchers {
   // 精确匹配维度预编译成 Set，避免每张卡每次都 map/includes/some 重建数组（大黑名单下显著更快）
-  const lcSet = (arr: readonly string[] | null | undefined) => new Set((arr || []).map((x) => lc(x)).filter(Boolean));
-  const strSet = (arr: readonly string[] | null | undefined) => new Set((arr || []).map(String));
+  // 一律先过 ruleLines：存档/导入/订阅里的规则字段可能不是数组（甚至是字符串），
+  // 直接 map 会拿到按字符拆开的伪规则或抛错。消费点收口，写入点漏了也不致命。
+  const lcSet = (arr: unknown) => new Set(ruleLines(arr).map((x) => lc(x)).filter(Boolean));
+  const strSet = (arr: unknown) => new Set(ruleLines(arr));
   // 黑名单 = 用户规则 ∪ 已启用订阅规则（订阅只并入黑名单维度，不碰白名单/开关）
   const sub: any = collectSubRules();
-  const u = (dim: keyof typeof CONFIG.block) =>
-    ((CONFIG.block[dim] as string[]) || []).concat((sub[dim] as string[]) || []);
+  const u = (dim: keyof typeof CONFIG.block) => ruleLines(CONFIG.block[dim]).concat(ruleLines(sub[dim]));
   const blockUidSet = strSet(u('uids'));
   const allowUidSet = strSet(CONFIG.allow.uids);
   const blockTag = compileLines(u('tags'));

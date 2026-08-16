@@ -51,13 +51,22 @@ function looksCatastrophic(src: string): boolean {
   return /\((?:[^()]*[*+]|[^()]*\{\d+,\}?)[^()]*\)\s*(?:[*+]|\{\d+,\}?)/.test(src);
 }
 
+// 消费侧兜底：规则数组的**唯一**入口。
+// 存档/导入/订阅都可能把某个规则字段写成字符串或对象；`for..of "原神"` 会按**字符**遍历，
+// 编译出「原」「神」两条单字规则，足以屏蔽掉整个首页。在消费点收口比在每个写入点堵更可靠，
+// 也能救回已经写坏的老存档。非数组→空；非字符串元素→丢弃。
+export function ruleLines(lines: unknown): string[] {
+  if (!Array.isArray(lines)) return [];
+  return lines.filter((x): x is string => typeof x === 'string');
+}
+
 // 把一组规则行编译成匹配器：普通词 → 归一/转义后合并成单条正则（性能更好）；
 // /.../ 行 → 各自独立编译（保留其原有 flags，如 m/s/g 语义不被合并破坏）。
 export function compileLines(lines: readonly string[] | null | undefined): Matcher {
   const plainParts: string[] = [];
   const regexes: RegExp[] = [];
-  for (const raw of lines || []) {
-    const line = (raw || '').trim();
+  for (const raw of ruleLines(lines)) {
+    const line = raw.trim();
     if (!line) continue;
     const m = line.match(/^\/(.*)\/([a-z]*)$/);
     if (m) {
@@ -110,8 +119,8 @@ export interface ScopedKw {
 
 export function compileScopedKeywords(lines: readonly string[] | null | undefined): ScopedKw {
   const buckets: Record<'all' | KwScope, string[]> = { all: [], title: [], up: [], part: [] };
-  for (const raw of lines || []) {
-    const line = (raw || '').trim();
+  for (const raw of ruleLines(lines)) {
+    const line = raw.trim();
     if (!line) continue;
     const m = !line.startsWith('/') && line.match(/^(title|up|part)\s*:\s*(.+)$/i);
     if (m) buckets[m[1].toLowerCase() as KwScope].push(m[2].trim());

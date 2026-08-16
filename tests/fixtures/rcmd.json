@@ -1,0 +1,43 @@
+{
+  "code": 0,
+  "message": "0",
+  "ttl": 1,
+  "data": {
+    "item": [
+      {
+        "id": 1001,
+        "bvid": "BV1aa411a1a1",
+        "cid": 90001,
+        "goto": "av",
+        "uri": "https://www.bilibili.com/video/BV1aa411a1a1/",
+        "title": "【原神】新版本前瞻全解析",
+        "duration": 615,
+        "owner": { "mid": 100001, "name": "样本UP甲", "face": "" },
+        "stat": { "view": 523000, "like": 21000, "danmaku": 800 },
+        "rcmd_reason": { "content": "" }
+      },
+      {
+        "id": 1002,
+        "bvid": "BV1bb411b1b1",
+        "cid": 90002,
+        "goto": "av",
+        "uri": "https://www.bilibili.com/video/BV1bb411b1b1/",
+        "title": "十分钟看懂编译原理",
+        "duration": 640,
+        "owner": { "mid": 100002, "name": "样本UP乙", "face": "" },
+        "stat": { "view": 88000, "like": 9000, "danmaku": 120 }
+      },
+      {
+        "id": 1003,
+        "bvid": "BV1cc411c1c1",
+        "cid": 90003,
+        "goto": "av",
+        "uri": "https://www.bilibili.com/video/BV1cc411c1c1/",
+        "title": "震惊！这个操作99%的人都不知道",
+        "duration": 61,
+        "owner": { "mid": 100003, "name": "样本营销号", "face": "" },
+        "stat": { "view": 1200000, "like": 300, "danmaku": 10 }
+      }
+    ]
+  }
+}

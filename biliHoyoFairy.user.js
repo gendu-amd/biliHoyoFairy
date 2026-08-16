@@ -3,7 +3,7 @@
 // @name:zh-CN   B站(bilibili)推荐流净化·屏蔽拉黑去广告 — biliHoyoFairy 抗击黑潮
 // @name:en      biliHoyoFairy — bilibili Feed Cleaner, Blocker & Account Blacklist
 // @namespace    https://github.com/gendu-amd/biliHoyoFairy
-// @version      0.0.7
+// @version      0.0.8
 // @description  B站(bilibili/哔哩哔哩)推荐流净化与屏蔽脚本：屏蔽黑流量、引战视频、商业广告与不想看的 UP 主。支持按 标签/UP主/UID/关键词(可正则)/分区/时长/播放量/BV 精准过滤；覆盖首页/热门/排行榜/搜索/播放页/动态/评论区；白名单优先防误伤；右键一键屏蔽/拉黑(同步账号黑名单)；内置预置关键词库与规则订阅。
 // @description:en  Clean up & block the bilibili recommendation feed: hide clickbait, flame-bait, ads and unwanted UP owners. Filter by tag/UP/UID/keyword(regex)/category/duration/views/BV across home, popular, ranking, search, video, dynamic pages and comments; whitelist priority; one-click block synced to the account blacklist; preset keyword library and rule subscriptions.
 // @author       gendu-amd
@@ -31,6 +31,7 @@
   // src/constants.ts
   var VERSION = typeof GM_info !== "undefined" && GM_info.script && GM_info.script.version || "0.0.1";
   var STORE_KEY = "bfb_config_v2";
+  var SCHEMA_VERSION = 1;
   var SUB_STORE_KEY = "bfb_subs_v1";
   var BLACKLIST_MANAGE_URL = "https://account.bilibili.com/account/blacklist";
   var ATTR_API = "data-bfb-api";
@@ -71,6 +72,7 @@
 
   // src/config.ts
   var DEFAULT_CONFIG = {
+    schemaVersion: SCHEMA_VERSION,
     enabled: true,
     reviewMode: false,
     // 审查模式：被拦视频不删/不隐，而是标记+就地放行，便于核对防误伤
@@ -167,12 +169,29 @@
     }
     return base;
   }
+  var MIGRATIONS = {};
+  function migrateConfig(parsed) {
+    if (!parsed || typeof parsed !== "object") return parsed;
+    let v = typeof parsed.schemaVersion === "number" ? parsed.schemaVersion : 0;
+    while (v < SCHEMA_VERSION) {
+      const step = MIGRATIONS[v];
+      if (!step) break;
+      try {
+        step(parsed);
+      } catch (e) {
+        break;
+      }
+      v++;
+    }
+    parsed.schemaVersion = SCHEMA_VERSION;
+    return parsed;
+  }
   function loadConfig() {
     const raw = GM_getValue(STORE_KEY, null);
     if (!raw) return structuredClone(DEFAULT_CONFIG);
     try {
       const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-      return deepMerge(structuredClone(DEFAULT_CONFIG), parsed);
+      return deepMerge(structuredClone(DEFAULT_CONFIG), migrateConfig(parsed));
     } catch (e) {
       return structuredClone(DEFAULT_CONFIG);
     }
@@ -201,6 +220,25 @@
     return JSON.stringify({ app: "biliHoyoFairy", version: VERSION, config: c }, null, 2);
   }
   var IMPORT_ARRAY_CAP = 5e4;
+  function sanitizeConfigInput(input, ref = DEFAULT_CONFIG) {
+    const out = {};
+    if (!input || typeof input !== "object" || Array.isArray(input)) return out;
+    for (const k of Object.keys(ref)) {
+      if (UNSAFE_KEYS.has(k)) continue;
+      if (!Object.prototype.hasOwnProperty.call(input, k)) continue;
+      const v = input[k];
+      const r = ref[k];
+      if (Array.isArray(r)) {
+        if (Array.isArray(v)) out[k] = v.filter((x) => typeof x === "string");
+      } else if (r && typeof r === "object") {
+        const sub = sanitizeConfigInput(v, r);
+        if (Object.keys(sub).length) out[k] = sub;
+      } else if (typeof v === typeof r) {
+        out[k] = v;
+      }
+    }
+    return out;
+  }
   function mergeImport(base, inc) {
     for (const k of Object.keys(inc || {})) {
       if (UNSAFE_KEYS.has(k)) continue;
@@ -227,7 +265,9 @@
   // src/logging.ts
   var BADGE = "color:#fff;background:#fb7299;padding:0 4px;border-radius:3px";
   function log(...args) {
-    if (CONFIG.debug) console.log("%c[biliHoyoFairy]%c", BADGE, "color:inherit", ...args);
+    if (!CONFIG.debug) return;
+    const out = args.length === 1 && typeof args[0] === "function" ? [args[0]()] : args;
+    console.log("%c[biliHoyoFairy]%c", BADGE, "color:inherit", ...out);
   }
   function logErr(where, e) {
     try {
@@ -244,6 +284,160 @@
         return void 0;
       }
     };
+  }
+
+  // src/selectors.ts
+  var VIDEO_CARD_SELECTORS = [
+    "div.bili-video-card",
+    // 首页 / 分区 / 搜索
+    "div.video-page-card-small",
+    // 播放页右侧推荐
+    "li.bili-rank-list-video__item",
+    // 分区右侧热门
+    "div.video-card",
+    // 综合热门 / 每周必看 / 入站必刷
+    "li.rank-item",
+    // 排行榜
+    "div.video-card-reco",
+    "div.video-card-common",
+    "div.bili-dyn-list__item",
+    // 动态信息流（t.bilibili.com）
+    "div.floor-card.single-card"
+    // 首页信息流里的「直播推荐」单卡（链向 live.bilibili.com）
+  ];
+  var CELL_CONTAINERS = [
+    "div.feed-card",
+    // 首页信息流网格项（.container 的直接子元素，必须优先）
+    "div.floor-single-card",
+    // 首页「直播推荐」单卡的带宽高占位外层，只隐内层会留黑框
+    "div.bili-feed-card"
+    // 兜底：无外层 .feed-card 的场景（旧版式/其它信息流）
+  ];
+  var UNSAFE_HIDE_CONTAINERS = ".container, .feed2, .bili-feed4, #i_cecream, #app, .bili-header";
+  var SWIPE_BANNER = ".recommended-swipe";
+  var CARD_TITLE_SELECTORS = [
+    ".bili-video-card__info--tit",
+    ".video-name",
+    "h3[title]",
+    ".title",
+    ".bili-dyn-card-video__title",
+    // 动态内视频标题
+    ".dyn-card-opus__title",
+    // 动态专栏/图文标题
+    ".bili-dyn-content__orig__desc"
+    // 动态正文（文字动态，便于关键词命中）
+  ];
+  var CARD_UP_SELECTORS = [
+    ".bili-video-card__info--author",
+    ".up-name__text",
+    ".up-name",
+    ".bili-video-card__info--owner span",
+    ".upname .name",
+    ".bili-dyn-title__text"
+    // 动态发布者
+  ];
+  var CARD_PARTITION_SELECTORS = [".bili-video-card__info--tag", ".rcmd-tag"];
+  var CARD_DURATION_SELECTORS = [".bili-video-card__stats__duration", ".duration", ".bili-dyn-card-video__duration"];
+  var CARD_VIEWS_SELECTORS = [".bili-video-card__stats--item", ".play-text"];
+  var CARD_MID_ATTR_SELECTOR = "[data-mid],[data-up-mid],[data-user-id]";
+  var CARD_MID_ATTRS = ["data-mid", "data-up-mid", "data-user-id"];
+  var LIVE_CARD_SELECTOR = '.bili-live-card, [class*="live-card"]';
+  var AD_CARD_SELECTORS = [
+    ".bili-video-card__info--ad",
+    'a[href*="cm.bilibili.com"]',
+    'a[href*="//mall.bilibili.com"]',
+    'a[href*="specialRecommendByOp"]'
+  ];
+  var AD_CARD_SELECTOR = AD_CARD_SELECTORS.join(",");
+  var HOTSEARCH_SELECTORS = [
+    ".trending",
+    ".search-panel .trending-list",
+    ".search-panel-popover .trending",
+    '.bili-header [class*="trending"]',
+    '.center-search-container [class*="trending"]',
+    '.search-panel [class*="trending"]',
+    '.history-panel [class*="trending"]'
+  ];
+  var COMMENT_TAGS = {
+    "BILI-COMMENT-THREAD-RENDERER": false,
+    "BILI-COMMENT-REPLY-RENDERER": true
+  };
+
+  // src/page.ts
+  var IS_SEARCH = location.host === "search.bilibili.com";
+  var IS_DYNAMIC = location.host === "t.bilibili.com";
+  function pageType() {
+    const h = location.href;
+    if (IS_DYNAMIC) return "动态";
+    if (h.includes("/v/popular/rank") || h.includes("/ranking")) return "排行榜";
+    if (h.includes("/v/popular")) return "热门";
+    if (IS_SEARCH) return "搜索页";
+    if (/^https:\/\/www\.bilibili\.com\/?($|\?|#)/.test(h)) return "首页";
+    if (h.includes("/video/")) return "播放页";
+    return "其他";
+  }
+  var VIDEO_CARD_SELECTOR = VIDEO_CARD_SELECTORS.join(",");
+  function cellOf(el) {
+    for (const sel of CELL_CONTAINERS) {
+      const fc = el.closest(sel);
+      if (fc) return fc;
+    }
+    if (IS_SEARCH && el.parentElement && el.parentElement !== document.body) return el.parentElement;
+    return el;
+  }
+  function isUnsafeHideTarget(el) {
+    if (!el || el === document.body || el === document.documentElement) return true;
+    if (el.matches && el.matches(UNSAFE_HIDE_CONTAINERS)) return true;
+    try {
+      if (el.querySelectorAll(VIDEO_CARD_SELECTOR).length > 1) return true;
+    } catch (e) {
+    }
+    return false;
+  }
+
+  // src/health.ts
+  var API_RE = /api\.bilibili\.com\/x\/|\/x\/web-interface\//;
+  var FEED_LIKE_RE = /\/(feed\/rcmd|ranking\/v\d|popular|archive\/related|search\/type|search\/all)/;
+  var health = {
+    apiSeen: 0,
+    // 见到的 B 站数据接口请求数（含未被 hook 的）
+    feedLike: 0,
+    // 其中「形似推荐流」的请求数（判断该不该报警的前提）
+    feedMatched: 0,
+    // 命中 FEED_HOOKS 的响应数
+    feedParsed: 0,
+    // 命中后又成功取出可过滤列表的响应数
+    feedItems: 0,
+    // 累计经过拦截层判定的列表项数
+    cardsSeen: 0,
+    // DOM 兜底层识别到的视频卡数
+    noteRequest(url) {
+      if (!url || !API_RE.test(url)) return;
+      this.apiSeen++;
+      if (FEED_LIKE_RE.test(url)) this.feedLike++;
+    }
+  };
+  function healthReport() {
+    const w = [];
+    if (health.feedLike > 0 && health.feedMatched === 0) {
+      w.push(`本页发出了 ${health.feedLike} 个形似推荐流的接口请求，却没有一个命中拦截规则表：接口路径可能已变更，拦截层当前未生效。请更新脚本或提 Issue。`);
+    } else if (health.feedMatched > 0 && health.feedParsed === 0) {
+      w.push("已捕获到推荐接口响应，但取不出其中的视频列表：接口返回结构可能已变更，拦截层当前未生效。请更新脚本或提 Issue。");
+    }
+    if (pageType() !== "其他" && health.cardsSeen === 0) {
+      w.push("未识别到任何视频卡：卡片选择器可能已失效，DOM 兜底层当前未生效。请更新脚本或提 Issue。");
+    }
+    return w;
+  }
+  function healthNotes() {
+    const n = [];
+    if (health.feedMatched === 0 && health.feedLike === 0) {
+      n.push("本页尚未发生推荐流接口请求，拦截层暂无用武之地——B 站首屏是服务端直出的，滚动或点「换一换」加载更多后再看这里。当前屏蔽由 DOM 兜底层完成。");
+    }
+    return n;
+  }
+  function healthSummary() {
+    return `页面 ${pageType()} · 接口请求 ${health.apiSeen}（形似推荐流 ${health.feedLike}）· 命中推荐接口 ${health.feedMatched} · 解析出列表 ${health.feedParsed}（${health.feedItems} 项）· 识别卡片 ${health.cardsSeen}`;
   }
 
   // src/util.ts
@@ -299,56 +493,50 @@
   }
   function extractCardInfo(card, deepUid = true) {
     const info = { title: "", up: "", uid: "", partition: "", bvid: "", duration: null, views: null, likes: null, isLive: false, isAd: false };
-    info.title = pickText(card, [
-      ".bili-video-card__info--tit",
-      ".video-name",
-      "h3[title]",
-      ".title",
-      ".bili-dyn-card-video__title",
-      // 动态内视频标题
-      ".dyn-card-opus__title",
-      // 动态专栏/图文标题
-      ".bili-dyn-content__orig__desc"
-      // 动态正文（文字动态，便于关键词命中）
-    ]);
-    info.up = pickText(card, [
-      ".bili-video-card__info--author",
-      ".up-name__text",
-      ".up-name",
-      ".bili-video-card__info--owner span",
-      ".upname .name",
-      ".bili-dyn-title__text"
-      // 动态发布者
-    ]);
+    info.title = pickText(card, CARD_TITLE_SELECTORS);
+    info.up = pickText(card, CARD_UP_SELECTORS);
     const upA = card.querySelector('a[href*="space.bilibili.com"]');
     if (upA) info.uid = ((upA.getAttribute("href") || "").match(/space\.bilibili\.com\/(\d+)/) || [])[1] || "";
     if (!info.uid) {
-      const midEl = card.querySelector("[data-mid],[data-up-mid],[data-user-id]");
-      if (midEl) info.uid = midEl.getAttribute("data-mid") || midEl.getAttribute("data-up-mid") || midEl.getAttribute("data-user-id") || "";
+      const midEl = card.querySelector(CARD_MID_ATTR_SELECTOR);
+      if (midEl) {
+        for (const a of CARD_MID_ATTRS) {
+          const v = midEl.getAttribute(a);
+          if (v) {
+            info.uid = v;
+            break;
+          }
+        }
+      }
     }
     if (!info.uid && deepUid) {
       info.uid = (card.innerHTML.match(/space\.bilibili\.com\/(\d+)/) || [])[1] || "";
       if (!info.uid) info.uid = (card.innerHTML.match(/"(?:mid|owner_?id|up_?mid)"\s*:\s*"?(\d{2,})"?/) || [])[1] || "";
     }
-    info.partition = pickText(card, [".bili-video-card__info--tag", ".rcmd-tag"]);
+    info.partition = pickText(card, CARD_PARTITION_SELECTORS);
     const aVideo = card.querySelector('a[href*="/video/"]');
     if (aVideo) {
       const m = (aVideo.getAttribute("href") || "").match(/(BV[0-9A-Za-z]+)/);
       if (m) info.bvid = m[1];
     }
-    info.duration = parseDuration(pickText(card, [".bili-video-card__stats__duration", ".duration", ".bili-dyn-card-video__duration"]));
-    const statEl = card.querySelector(".bili-video-card__stats--item") || card.querySelector(".play-text");
-    if (statEl) info.views = parseCount(statEl.textContent);
+    info.duration = parseDuration(pickText(card, CARD_DURATION_SELECTORS));
+    for (const sel of CARD_VIEWS_SELECTORS) {
+      const statEl = card.querySelector(sel);
+      if (statEl) {
+        info.views = parseCount(statEl.textContent);
+        break;
+      }
+    }
     const { detectAd, detectLive } = getDetect();
     if (detectAd || detectLive) {
-      info.isLive = !!(card.querySelector('a[href*="live.bilibili.com"]') || card.querySelector('.bili-live-card, [class*="live-card"]') || /直播中|正在直播/.test(card.textContent || ""));
+      info.isLive = !!(card.querySelector('a[href*="live.bilibili.com"]') || card.querySelector(LIVE_CARD_SELECTOR) || /直播中|正在直播/.test(card.textContent || ""));
     }
-    if (detectAd) {
-      const adBadge = Array.from(card.querySelectorAll("span,div")).some((el) => {
+    if (detectAd && !info.isLive) {
+      const adBadge = () => Array.from(card.querySelectorAll("span,div")).some((el) => {
         const tx = (el.textContent || "").trim();
         return tx === "广告" || tx === "赞助" || tx === "推广";
       });
-      info.isAd = !info.isLive && !!(card.querySelector(".bili-video-card__info--ad") || card.querySelector('a[href*="cm.bilibili.com"]') || card.querySelector('a[href*="//mall.bilibili.com"]') || card.querySelector('a[href*="specialRecommendByOp"]') || adBadge);
+      info.isAd = !!card.querySelector(AD_CARD_SELECTOR) || adBadge();
     }
     return info;
   }
@@ -377,53 +565,6 @@
     };
   }
 
-  // src/page.ts
-  var IS_SEARCH = location.host === "search.bilibili.com";
-  var IS_DYNAMIC = location.host === "t.bilibili.com";
-  function pageType() {
-    const h = location.href;
-    if (IS_DYNAMIC) return "动态";
-    if (h.includes("/v/popular/rank") || h.includes("/ranking")) return "排行榜";
-    if (h.includes("/v/popular")) return "热门";
-    if (IS_SEARCH) return "搜索页";
-    if (/^https:\/\/www\.bilibili\.com\/?($|\?|#)/.test(h)) return "首页";
-    if (h.includes("/video/")) return "播放页";
-    return "其他";
-  }
-  var VIDEO_CARD_SELECTOR = [
-    "div.bili-video-card",
-    // 首页 / 分区 / 搜索
-    "div.video-page-card-small",
-    // 播放页右侧推荐
-    "li.bili-rank-list-video__item",
-    // 分区右侧热门
-    "div.video-card",
-    // 综合热门 / 每周必看 / 入站必刷
-    "li.rank-item",
-    // 排行榜
-    "div.video-card-reco",
-    "div.video-card-common",
-    "div.bili-dyn-list__item",
-    // 动态信息流（t.bilibili.com）
-    "div.floor-card.single-card"
-    // 首页信息流里的「直播推荐」单卡（链向 live.bilibili.com）
-  ].join(",");
-  function cellOf(el) {
-    const fc = el.closest("div.feed-card, div.bili-feed-card, div.floor-single-card");
-    if (fc) return fc;
-    if (IS_SEARCH && el.parentElement && el.parentElement !== document.body) return el.parentElement;
-    return el;
-  }
-  function isUnsafeHideTarget(el) {
-    if (!el || el === document.body || el === document.documentElement) return true;
-    if (el.matches && el.matches(".container, .feed2, .bili-feed4, #i_cecream, #app, .bili-header")) return true;
-    try {
-      if (el.querySelectorAll(VIDEO_CARD_SELECTOR).length > 1) return true;
-    } catch (e) {
-    }
-    return false;
-  }
-
   // src/match/normalize.ts
   var lc = (s) => (s || "").toString().trim().toLowerCase();
   function toHalfWidth(s) {
@@ -446,11 +587,15 @@
   function looksCatastrophic(src) {
     return /\((?:[^()]*[*+]|[^()]*\{\d+,\}?)[^()]*\)\s*(?:[*+]|\{\d+,\}?)/.test(src);
   }
+  function ruleLines(lines) {
+    if (!Array.isArray(lines)) return [];
+    return lines.filter((x) => typeof x === "string");
+  }
   function compileLines(lines) {
     const plainParts = [];
     const regexes = [];
-    for (const raw of lines || []) {
-      const line = (raw || "").trim();
+    for (const raw of ruleLines(lines)) {
+      const line = raw.trim();
       if (!line) continue;
       const m = line.match(/^\/(.*)\/([a-z]*)$/);
       if (m) {
@@ -485,8 +630,8 @@
   }
   function compileScopedKeywords(lines) {
     const buckets = { all: [], title: [], up: [], part: [] };
-    for (const raw of lines || []) {
-      const line = (raw || "").trim();
+    for (const raw of ruleLines(lines)) {
+      const line = raw.trim();
       if (!line) continue;
       const m = !line.startsWith("/") && line.match(/^(title|up|part)\s*:\s*(.+)$/i);
       if (m) buckets[m[1].toLowerCase()].push(m[2].trim());
@@ -611,10 +756,10 @@
   // src/match/engine.ts
   configureFuzzy(() => CONFIG.fuzzyMatch);
   function buildMatchers() {
-    const lcSet = (arr) => new Set((arr || []).map((x) => lc(x)).filter(Boolean));
-    const strSet = (arr) => new Set((arr || []).map(String));
+    const lcSet = (arr) => new Set(ruleLines(arr).map((x) => lc(x)).filter(Boolean));
+    const strSet = (arr) => new Set(ruleLines(arr));
     const sub = collectSubRules();
-    const u = (dim) => (CONFIG.block[dim] || []).concat(sub[dim] || []);
+    const u = (dim) => ruleLines(CONFIG.block[dim]).concat(ruleLines(sub[dim]));
     const blockUidSet = strSet(u("uids"));
     const allowUidSet = strSet(CONFIG.allow.uids);
     const blockTag = compileLines(u("tags"));
@@ -805,13 +950,25 @@
   function setStatsListener(fn) {
     onRecorded = fn;
   }
+  var notifyQueued = false;
+  function notifyBatched() {
+    if (notifyQueued) return;
+    notifyQueued = true;
+    Promise.resolve().then(() => {
+      notifyQueued = false;
+      try {
+        onRecorded();
+      } catch (e) {
+      }
+      scheduleSave();
+    });
+  }
   function recordBlock(reason, info, src) {
     logBlocked(reason, info, src);
     sessionBlocked++;
     CONFIG.blockedCount++;
-    onRecorded();
-    scheduleSave();
-    log(`拦截🚫 ${reason} ${info && info.up ? info.up + " · " : ""}${info && info.title || "(无标题)"}`);
+    notifyBatched();
+    log(() => `拦截🚫 ${reason} ${info && info.up ? info.up + " · " : ""}${info && info.title || "(无标题)"}`);
   }
 
   // src/net.ts
@@ -834,13 +991,32 @@
       }
     }
   ];
-  var isFeedUrl = (url) => !!url && FEED_HOOKS.some((h) => h.re.test(url));
+  var memoUrl = null;
+  var memoHook = null;
+  function findFeedHook(url) {
+    if (!url) return null;
+    if (url === memoUrl) return memoHook;
+    let hit = null;
+    for (const h of FEED_HOOKS) {
+      if (h.re.test(url)) {
+        hit = h;
+        break;
+      }
+    }
+    memoUrl = url;
+    memoHook = hit;
+    return hit;
+  }
+  var isFeedUrl = (url) => !!findFeedHook(url);
   function filterFeedJson(url, json) {
-    if (!CONFIG.enabled || CONFIG.reviewMode || !json || json.code !== 0 || !json.data) return 0;
-    const hook = FEED_HOOKS.find((h) => h.re.test(url));
+    if (!json || json.code !== 0 || !json.data) return 0;
+    const hook = findFeedHook(url);
     if (!hook) return 0;
     const arr = hook.get(json.data);
     if (!arr || !arr.length) return 0;
+    health.feedParsed++;
+    health.feedItems += arr.length;
+    if (!CONFIG.enabled || CONFIG.reviewMode) return 0;
     let removed = 0;
     for (let i = arr.length - 1; i >= 0; i--) {
       try {
@@ -853,6 +1029,7 @@
           removed++;
         }
       } catch (e) {
+        log("拦截层 单项判定异常（已跳过）", e);
       }
     }
     if (removed) log(`拦截层 删除 ${removed} 项 @ ${url.split("?")[0]}`);
@@ -872,6 +1049,7 @@
             const r = fn(u);
             if (typeof r === "string" && r) u = r;
           } catch (e) {
+            logErr("NET.pre", e);
           }
         }
         return u;
@@ -882,16 +1060,18 @@
           try {
             removed += fn(url, json) || 0;
           } catch (e) {
+            logErr("NET.post", e);
           }
         }
         return removed;
       }
     };
   })();
+  var RCMD_RE = /\/x\/web-interface\/(wbi\/)?index\/top\/feed\/rcmd/;
   NET.addPost(filterFeedJson);
   NET.addPre((url) => {
     if (!CONFIG.boostFeedLoad) return;
-    if (/\/x\/web-interface\/(wbi\/)?index\/top\/feed\/rcmd/.test(url) && /[?&]ps=\d+/.test(url)) {
+    if (RCMD_RE.test(url) && /[?&]ps=\d+/.test(url)) {
       return url.replace(/([?&]ps=)\d+/, "$130");
     }
   });
@@ -913,7 +1093,9 @@
         if (NET.hasPre() && typeof input === "string") input2 = NET.rewriteUrl(input);
         const url = typeof input2 === "string" ? input2 : input2 && input2.url || "";
         const p = origFetch.call(this, input2, init);
+        health.noteRequest(url);
         if (!isFeedUrl(url)) return p;
+        health.feedMatched++;
         return p.then(
           (resp) => resp.clone().json().then((json) => {
             if (!NET.runJson(url, json)) return resp;
@@ -928,6 +1110,7 @@
       try {
         W.fetch = wrapped;
       } catch (e) {
+        logErr("installNetworkHooks.fetch", e);
       }
     }
     const XHR = W.XMLHttpRequest;
@@ -937,8 +1120,17 @@
       const dResp = Object.getOwnPropertyDescriptor(XHR.prototype, "response");
       XHR.prototype.open = function(method, url) {
         const self = this;
+        if (self.__bfbHooked) {
+          delete self.responseText;
+          delete self.response;
+          self.__bfbHooked = false;
+        }
+        self.__bfbText = void 0;
+        self.__bfbResp = void 0;
         const url2 = NET.hasPre() && typeof url === "string" ? NET.rewriteUrl(url) : url;
+        health.noteRequest(url2);
         if (isFeedUrl(url2)) {
+          health.feedMatched++;
           const filteredText = (getRaw) => {
             if (self.__bfbText === void 0) self.__bfbText = computeFilteredText(url2, getRaw());
             return self.__bfbText;
@@ -951,6 +1143,7 @@
                 return filteredText(() => dText.get.call(self));
               }
             });
+            self.__bfbHooked = true;
           }
           if (dResp && dResp.get) {
             Object.defineProperty(self, "response", {
@@ -977,6 +1170,7 @@
                 return dResp.get.call(self);
               }
             });
+            self.__bfbHooked = true;
           }
         }
         return origOpen.call(this, method, url2, arguments.length > 2 ? arguments[2] : true, arguments[3], arguments[4]);
@@ -1171,7 +1365,7 @@
   }
 
   // src/comments.ts
-  var CMT_TAGS = { "BILI-COMMENT-THREAD-RENDERER": false, "BILI-COMMENT-REPLY-RENDERER": true };
+  var CMT_TAGS = COMMENT_TAGS;
   function cmtCleanMsg(msg, isSub) {
     let s = (msg || "").toString();
     if (isSub) s = s.replace(/^回复\s?@[^@\s:：]+\s?[:：]/, "");
@@ -1342,15 +1536,6 @@
   }
 
   // src/hotsearch.ts
-  var HOTSEARCH_SELECTORS = [
-    ".trending",
-    ".search-panel .trending-list",
-    ".search-panel-popover .trending",
-    '.bili-header [class*="trending"]',
-    '.center-search-container [class*="trending"]',
-    '.search-panel [class*="trending"]',
-    '.history-panel [class*="trending"]'
-  ];
   function applyHotSearchStyle() {
     let st = document.getElementById("bfb-hotsearch-style");
     if (CONFIG.hideHotSearch) {
@@ -1588,7 +1773,7 @@
     card.setAttribute(PROCESSED, "1");
     card._bfbInfo = info;
     const hit = matchRule(info);
-    if (!hit) log(`放行✅ | 标题:${info.title || "(无)"} | UP:${info.up || "(无)"} | 标签:${info.partition || "(无)"}`);
+    if (!hit) log(() => `放行✅ | 标题:${info.title || "(无)"} | UP:${info.up || "(无)"} | 标签:${info.partition || "(无)"}`);
     if (hit) {
       blockVideo(card, hit, info);
       return;
@@ -1643,32 +1828,38 @@
     pending--;
     finish();
   }
-  function queryCards() {
-    const out = Array.from(document.querySelectorAll(VIDEO_CARD_SELECTOR));
+  function queryAllRoots(selector) {
+    const out = Array.from(document.querySelectorAll(selector));
     for (const r of shadowRoots) {
       if (!r.host || !r.host.isConnected) {
         shadowRoots.delete(r);
         continue;
       }
       try {
-        const found = r.querySelectorAll(VIDEO_CARD_SELECTOR);
+        const found = r.querySelectorAll(selector);
         if (found.length) out.push(...found);
       } catch (e) {
+        logErr("queryAllRoots", e);
       }
     }
     return out;
   }
+  function queryCards() {
+    return queryAllRoots(VIDEO_CARD_SELECTOR);
+  }
   function scanAll() {
     if (!CONFIG.enabled) return;
-    queryCards().forEach((card) => {
+    const cards = queryCards();
+    if (cards.length > health.cardsSeen) health.cardsSeen = cards.length;
+    cards.forEach((card) => {
       if (card.getAttribute(PROCESSED)) return;
-      if (card.closest && card.closest(".recommended-swipe")) return;
+      if (card.closest && card.closest(SWIPE_BANNER)) return;
       processCard(card);
     });
   }
   function rescanAfterRuleChange() {
     rebuildRules();
-    document.querySelectorAll("[" + PROCESSED + "]").forEach((el) => {
+    queryAllRoots("[" + PROCESSED + "]").forEach((el) => {
       el.removeAttribute(PROCESSED);
       el.removeAttribute(ATTR_API);
       clearVisual(el);
@@ -2261,43 +2452,178 @@
     }
   }
 
-  // src/presets.ts
-  var PRESET_LIBRARY = [
-    { cat: "游戏黑水", name: "库洛系(鸣潮/库洛)", desc: "鸣潮 / 库洛 / 战双 等相关词", rules: { keywords: ["库洛", "库洛游戏", "呜哇", "鸣潮", "战双", "战双帕弥什", "漂泊者", "漂泊神游", "寄生神游", "寄生社区"] } },
-    { cat: "引战", name: "引战话术", desc: "挑动对立的话术片段（已收敛正则、防误伤）", rules: { keywords: ["/接触wuwa后|大脑发生的异变/"] } },
-    { cat: "引战", name: "引战标签", desc: "抹黑 / 拉踩类标签（需开「精确过滤」才匹配标签）", rules: { tags: ["/米哈一儿|一哭|二抄|三自爆/"] } },
-    { cat: "标题党 / 营销", name: "标题党", desc: "震惊体 + 一口气看完", rules: { keywords: ["/(一口气|一次性|一天|分钟|分半|小时)(看完|带你看完|直接看完)/", "/震惊|竟然|万万没想到/"] } },
-    { cat: "标题党 / 营销", name: "营销号UP名", desc: "常见营销号账号名", rules: { keywords: ["今日话题", "话题酱", "今日知乎", "大型纪录片"] } },
-    { cat: "标题党 / 营销", name: "软传销", desc: "日入月入 / 为自己打工", rules: { keywords: ["/(日入|日赚|月入|月赚)\\d+/", "/(小时|内耗).+为自己打工/"] } },
-    { cat: "其它", name: "MBTI", rules: { keywords: ["/MBTI|[IE][SN][TF][JP]|I人|E人/"] } },
-    { cat: "其它", name: "梗视频", rules: { keywords: ["科目三", "猫meme", "/是什么梗|梗百科|大型[纪记]录片/"] } },
-    { cat: "其它", name: "含日语标题", rules: { keywords: ["/[ぁ-ヶ]/"] } }
-  ];
-
-  // src/batch.ts
-  function parseNameList(raw) {
-    const uids = [];
-    const names = [];
-    const seen = /* @__PURE__ */ new Set();
-    const addUid = (u) => {
-      if (!seen.has(u)) {
-        seen.add(u);
-        uids.push(u);
-      }
-    };
-    String(raw || "").split(/[\s,，;；、]+/).forEach((tok) => {
-      const t = (tok || "").trim();
-      if (!t || t[0] === "!" || t[0] === "#") return;
-      let m;
-      if (m = t.match(/^uid:\s*(\d+)$/i)) addUid(m[1]);
-      else if (m = t.match(/^up:\s*(.+)$/i)) {
-        const nm = m[1].trim();
-        if (nm) names.push(nm);
-      } else if (/^\d{3,}$/.test(t)) addUid(t);
-      else names.push(t);
-    });
-    return { uids, names };
+  // src/ui/panel/ctx.ts
+  var statsRefresh = null;
+  function setStatsRefresh(fn) {
+    statsRefresh = fn;
   }
+  function runStatsRefresh() {
+    if (statsRefresh) statsRefresh();
+  }
+  function hasStatsRefresh() {
+    return !!statsRefresh;
+  }
+
+  // src/ui/panel.styles.ts
+  GM_addStyle(`
+    .bfb-review{outline:2px solid #fb7299 !important;outline-offset:-2px;border-radius:8px;position:relative !important}
+    .bfb-tag{position:absolute;top:6px;left:6px;z-index:9;display:flex;align-items:center;gap:6px;background:rgba(251,114,153,.95);color:#fff;border-radius:8px;padding:3px 6px;font-size:11px;font-family:system-ui,Arial;box-shadow:0 2px 6px rgba(0,0,0,.25)}
+    .bfb-tag .rs{white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis}
+    .bfb-tag button{border:none;border-radius:6px;background:#fff;color:#1b7a3d;font-size:11px;padding:2px 6px;cursor:pointer;white-space:nowrap}
+    #bfb-badge{position:fixed;right:18px;bottom:18px;z-index:99999;background:#fb7299;color:#fff;border-radius:24px;padding:8px 14px;font-size:13px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.2);font-family:system-ui,Arial;user-select:none}
+    #bfb-badge.off{background:#999}
+    #bfb-ctxmenu{position:fixed;z-index:100002;background:#fff;border:1px solid #ffd5e2;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.22);overflow:hidden;min-width:210px;font-family:system-ui,Arial}
+    .bfb-ctx-item{padding:10px 14px;font-size:13px;color:#333;cursor:pointer;white-space:nowrap}
+    .bfb-ctx-item:hover{background:#fff0f5;color:#fb7299}
+    #bfb-toasts{position:fixed;right:18px;bottom:70px;z-index:100001;display:flex;flex-direction:column}
+    .bfb-toast{background:#fff;color:#222;border-radius:12px;padding:12px 14px;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.18);max-width:320px;font-family:system-ui,Arial;border:1px solid #ffd5e2;margin-top:8px;display:flex;align-items:center;gap:10px}
+    .bfb-toast .bfb-toast-msg{flex:1;min-width:0}
+    .bfb-toast-act{flex:0 0 auto;border:none;border-radius:7px;background:#fb7299;color:#fff;font-size:12px;font-weight:600;padding:5px 12px;cursor:pointer}
+    .bfb-toast-act:hover{background:#e85d88}
+    .bfb-toast.success{border-left:4px solid #1b7a3d}
+    .bfb-toast.warn{border-left:4px solid #e67e22}
+    .bfb-toast.error{border-left:4px solid #e74c3c}
+    .bfb-modal-back{position:fixed;inset:0;z-index:100003;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-family:system-ui,Arial;padding:16px}
+    .bfb-modal{background:#fff;border-radius:14px;max-width:400px;width:88vw;box-shadow:0 12px 44px rgba(0,0,0,.32);overflow:hidden;animation:bfb-modal-in .14s ease-out}
+    @keyframes bfb-modal-in{from{transform:scale(.95);opacity:.4}to{transform:scale(1);opacity:1}}
+    .bfb-modal-title{padding:13px 16px;font-size:15px;font-weight:600;color:#fff;background:#fb7299}
+    .bfb-modal.danger .bfb-modal-title{background:#e74c3c}
+    .bfb-modal-msg{padding:14px 16px;font-size:13px;line-height:1.65;color:#333;white-space:pre-line;max-height:54vh;overflow:auto}
+    .bfb-modal-btns{display:flex;gap:8px;justify-content:flex-end;padding:0 16px 14px}
+    .bfb-modal-btn{border:none;border-radius:8px;padding:8px 18px;font-size:13px;cursor:pointer;background:#fb7299;color:#fff}
+    .bfb-modal-btn.ghost{background:#f0f0f0;color:#444}
+    .bfb-modal-btn.danger{background:#e74c3c}
+    .bfb-modal-btn:focus-visible{outline:2px solid #222;outline-offset:2px}
+    .bfb-modal-input{display:block;width:calc(100% - 32px);margin:0 16px 12px;padding:8px 10px;border:1px solid #ddd;border-radius:8px;font-size:13px;box-sizing:border-box;background:#fff;color:#222}
+    .bfb-modal-input:focus{outline:none;border-color:#fb7299;box-shadow:0 0 0 2px rgba(251,114,153,.18)}
+    #bfb-panel .bfb-sub-row{border:1px solid #eee;border-radius:8px;padding:8px;margin-top:6px;background:#fafafa}
+    #bfb-panel .bfb-sub-url{font-size:11px;color:#6e6e6e;word-break:break-all;margin-top:4px}
+    #bfb-panel .bfb-sub-status{font-size:11px;color:#6e6e6e;margin-top:4px}
+    #bfb-panel .bfb-listta{width:100%;box-sizing:border-box;resize:vertical;font-family:monospace;font-size:12px;padding:6px;border:1px solid #ddd;border-radius:6px;background:#fff;color:#222}
+    #bfb-panel{position:fixed;top:0;right:0;width:400px;max-width:94vw;height:100vh;z-index:100000;background:#fff;box-shadow:-4px 0 24px rgba(0,0,0,.2);overflow:auto;overscroll-behavior:contain;font-family:system-ui,Arial;transform:translateX(100%);transition:transform .25s}
+    #bfb-panel.open{transform:translateX(0)}
+    #bfb-panel h2{margin:0;padding:14px 16px;background:#fb7299;color:#fff;font-size:16px;position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;z-index:2}
+    #bfb-panel h2 .x{cursor:pointer}
+    #bfb-panel .sec{padding:13px 16px;border-bottom:1px solid #f0f0f0}
+    #bfb-panel .sec.allow{background:#f3fbf4}
+    #bfb-panel label{font-size:13px;color:#444;display:block;margin-bottom:6px;font-weight:600}
+    #bfb-panel .addrow{display:flex;gap:6px}
+    #bfb-panel .addrow input{flex:1;min-width:0;padding:6px 8px;border:1px solid #ddd;border-radius:8px;font-size:13px}
+    #bfb-panel .addrow button{background:#fb7299;color:#fff;border:none;border-radius:8px;padding:0 14px;cursor:pointer;font-size:13px;white-space:nowrap}
+    #bfb-panel .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+    #bfb-panel .chip{display:inline-flex;align-items:center;gap:6px;background:#fff0f5;color:#c2185b;border:1px solid #ffd5e2;border-radius:14px;padding:3px 10px;font-size:12px}
+    #bfb-panel .sec.allow .chip{background:#eafaef;color:#1b7a3d;border-color:#c6ecd0}
+    #bfb-panel .chip b{cursor:pointer;font-weight:700;opacity:.6}
+    #bfb-panel .chip b:hover{opacity:1}
+    #bfb-panel .empty{font-size:11px;color:#767676;margin-top:6px}
+    #bfb-panel input[type=number]{width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:6px}
+    #bfb-panel .hint{font-size:11px;color:#6e6e6e;margin-top:7px;line-height:1.7}
+    #bfb-panel .toolbar{display:flex;gap:8px;flex-wrap:wrap}
+    #bfb-panel button.act{background:#fb7299;color:#fff;border:none;border-radius:8px;padding:8px 12px;cursor:pointer;font-size:13px}
+    #bfb-panel button.ghost{background:#f3f3f3;color:#333}
+    #bfb-panel .switch{display:flex;align-items:center;gap:8px;font-size:13px;color:#333;font-weight:600;margin-top:9px;line-height:1.5}
+    #bfb-panel .stat{font-size:12px;color:#6e6e6e}
+    #bfb-panel a.manage{color:#fb7299;font-size:12px}
+    #bfb-panel .sec.api{background:#f5f3ff}
+    /* —— 交互美化 —— */
+    #bfb-panel h2{background:linear-gradient(135deg,#fb7299,#ff9bb6)}
+    #bfb-panel .switch input[type=checkbox]{appearance:none;-webkit-appearance:none;width:38px;height:22px;border-radius:22px;background:#d4d4d8;position:relative;cursor:pointer;transition:.2s;flex:0 0 auto;margin:0}
+    #bfb-panel .switch input[type=checkbox]:checked{background:#fb7299}
+    #bfb-panel .switch input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+    #bfb-panel .switch input[type=checkbox]:checked::after{transform:translateX(16px)}
+    #bfb-panel .sec{transition:background .15s}
+    #bfb-panel .addrow input:focus,#bfb-panel input[type=number]:focus{outline:none;border-color:#fb7299;box-shadow:0 0 0 2px rgba(251,114,153,.18)}
+    /* —— 键盘焦点环（仅键盘导航时出现，鼠标点击不显示）—— */
+    #bfb-panel button:focus-visible,#bfb-panel .tab:focus-visible,#bfb-panel .chip b:focus-visible,#bfb-panel .x:focus-visible,#bfb-panel a:focus-visible,#bfb-panel .switch input:focus-visible,.bfb-toast-act:focus-visible{outline:2px solid #fb7299;outline-offset:2px;border-radius:6px}
+    #bfb-panel:focus{outline:none}
+    #bfb-panel button.act:active,#bfb-panel .addrow button:active{transform:translateY(1px)}
+    #bfb-panel::-webkit-scrollbar{width:10px}
+    #bfb-panel::-webkit-scrollbar-thumb{background:#f0c2d2;border-radius:8px;border:2px solid #fff}
+    #bfb-panel::-webkit-scrollbar-thumb:hover{background:#fb7299}
+    #bfb-panel .chip{transition:transform .1s}
+    #bfb-panel .chip:hover{transform:translateY(-1px)}
+    #bfb-panel .field-head{cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;margin-bottom:0;padding:4px 6px;margin-left:-6px;margin-right:-6px;border-radius:8px;transition:background .12s}
+    #bfb-panel .field-head:hover{background:#fff0f5}
+    #bfb-panel .field-head .caret{color:#fb7299;font-size:14px;width:14px;flex:0 0 auto;transition:transform .12s}
+    #bfb-panel .chip-bar{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+    #bfb-panel .chip-act{border:1px solid #ffd5e2;background:#fff;color:#fb7299;border-radius:8px;padding:3px 10px;font-size:12px;cursor:pointer}
+    #bfb-panel .chip-act:hover{background:#fff0f5}
+    #bfb-panel .chip-act.primary{background:#fb7299;color:#fff;border-color:#fb7299}
+    #bfb-panel .chip.sel{outline:2px solid #fb7299;outline-offset:1px;background:#ffd9e6}
+    #bfb-panel .sec.allow .chip.sel{outline-color:#1b7a3d;background:#cdeed6}
+    #bfb-panel .log-row{display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(128,128,128,.12)}
+    #bfb-panel .log-tx{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    #bfb-panel .log-rs{color:#fb7299;margin-right:2px}
+    #bfb-panel .log-link{color:inherit;text-decoration:none}
+    #bfb-panel .log-link:hover{color:#fb7299;text-decoration:underline}
+    #bfb-panel .log-src{flex:0 0 auto;font-size:10px;border-radius:5px;padding:0 4px;margin-right:4px;color:#fff}
+    #bfb-panel .log-src.net{background:#27ae60}
+    #bfb-panel .log-src.dom{background:#e67e22}
+    #bfb-panel .log-blk{flex:0 0 auto;border:1px solid #ffd5e2;background:#fff;color:#fb7299;border-radius:7px;padding:2px 8px;font-size:11px;cursor:pointer}
+    #bfb-panel .log-blk:hover{background:#fb7299;color:#fff}
+    #bfb-panel .log-blk[disabled]{opacity:.6;cursor:default}
+    #bfb-panel .log-undo{flex:0 0 auto;border:1px solid #c6ecd0;background:#fff;color:#1b7a3d;border-radius:7px;padding:2px 8px;font-size:11px;cursor:pointer}
+    #bfb-panel .log-undo:hover{background:#1b7a3d;color:#fff}
+    #bfb-panel .log-undo[disabled]{opacity:.6;cursor:default}
+    #bfb-panel .log-pass{flex:0 0 auto;border:1px solid #c6ecd0;background:#fff;color:#1b7a3d;border-radius:7px;padding:2px 8px;font-size:11px;cursor:pointer;margin-right:6px}
+    #bfb-panel .log-pass:hover{background:#1b7a3d;color:#fff}
+    #bfb-panel .field-head .lt{flex:1}
+    #bfb-panel .field-head .cnt{background:#fb7299;color:#fff;border-radius:10px;font-size:11px;padding:0 7px;min-width:18px;text-align:center;font-weight:700}
+    #bfb-panel .field-head .cnt:empty{display:none}
+    #bfb-panel .field-body{margin-top:8px}
+    #bfb-panel .field .chips{max-height:132px;overflow-y:auto;overscroll-behavior:contain;background:#fafafa;border:1px solid #eee;border-radius:10px;padding:8px;margin-top:8px}
+    #bfb-panel .field .chips:empty{display:none}
+    #bfb-panel .field .chips::-webkit-scrollbar{width:8px}
+    #bfb-panel .field .chips::-webkit-scrollbar-thumb{background:#f0c2d2;border-radius:8px}
+    #bfb-panel .field .chips::-webkit-scrollbar-thumb:hover{background:#fb7299}
+    #bfb-panel .chip.uidchip::before{content:"账号";font-size:9px;background:#6b4dff;color:#fff;border-radius:5px;padding:0 4px;margin-right:2px}
+    #bfb-panel .chip.group{background:#ede9fe;color:#5b21b6;border-color:#ddd6fe}
+    /* —— 分组 Tab —— */
+    #bfb-panel .tabs{position:sticky;top:48px;z-index:2;display:flex;flex-wrap:wrap;justify-content:center;gap:6px;padding:10px 12px;background:#fff;border-bottom:1px solid #f0f0f0;overscroll-behavior:contain}
+    #bfb-panel .tab{flex:0 0 auto;padding:6px 13px;border-radius:16px;background:#f3f3f3;color:#666;font-size:13px;cursor:pointer;border:none;white-space:nowrap;font-weight:600;transition:.15s}
+    #bfb-panel .tab:hover{background:#ffe3ec;color:#fb7299}
+    #bfb-panel .tab.active{background:linear-gradient(135deg,#fb7299,#ff9bb6);color:#fff;box-shadow:0 2px 8px rgba(251,114,153,.35)}
+    #bfb-panel .bfb-group{display:none}
+    #bfb-panel .bfb-group.active{display:block;animation:bfb-fade .18s ease}
+    @keyframes bfb-fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+    #bfb-panel .grp-tip{padding:8px 16px;font-size:11px;color:#6e6e6e;background:#fafafa;border-bottom:1px solid #f0f0f0}
+    /* —— 暗色模式（跟随系统 prefers-color-scheme）：仅覆盖自有 UI 表面，品牌粉与语义色保留 —— */
+    @media (prefers-color-scheme: dark){
+      #bfb-panel,.bfb-toast,.bfb-modal,#bfb-ctxmenu{background:#1c1c20;color:#e6e6e9}
+      #bfb-panel .sec{border-bottom-color:#2c2c32}
+      #bfb-panel .sec.allow{background:rgba(39,174,96,.08)}
+      #bfb-panel .sec.api{background:rgba(124,92,255,.1)}
+      #bfb-panel label{color:#cfcfd6}
+      #bfb-panel .switch,#bfb-panel button.ghost{color:#d0d0d6}
+      #bfb-panel .hint,#bfb-panel .stat,#bfb-panel .grp-tip{color:#8a8a92}
+      #bfb-panel .grp-tip{background:#232328;border-bottom-color:#2c2c32}
+      #bfb-panel .bfb-sub-row{background:#232328;border-color:#34343a}
+      #bfb-panel .bfb-sub-url,#bfb-panel .bfb-sub-status{color:#9a9aa2}
+      #bfb-panel .bfb-listta{background:#26262b;color:#e6e6e9;border-color:#44444c}
+      .bfb-modal-input{background:#26262b;color:#e6e6e9;border-color:#44444c}
+      #bfb-panel .empty{color:#9a9aa2}
+      #bfb-panel .addrow input,#bfb-panel input[type=number]{background:#26262b;border-color:#44444c;color:#e6e6e9}
+      #bfb-panel button.ghost{background:#2e2e34}
+      #bfb-panel .switch input[type=checkbox]{background:#45454d}
+      #bfb-panel .chip{background:rgba(251,114,153,.16);color:#ff9ebc;border-color:rgba(251,114,153,.35)}
+      #bfb-panel .sec.allow .chip{background:rgba(39,174,96,.16);color:#6ee7a0;border-color:rgba(39,174,96,.35)}
+      #bfb-panel .chip.group{background:rgba(124,92,255,.18);color:#c4b5fd;border-color:rgba(124,92,255,.4)}
+      #bfb-panel .chip.sel{background:rgba(251,114,153,.3)}
+      #bfb-panel .sec.allow .chip.sel{background:rgba(39,174,96,.3)}
+      #bfb-panel .field .chips{background:#232328;border-color:#34343a}
+      #bfb-panel .chip-act,#bfb-panel .log-blk,#bfb-panel .log-pass,#bfb-panel .log-undo{background:#1c1c20}
+      #bfb-panel .field-head:hover,#bfb-panel .chip-act:hover{background:rgba(251,114,153,.14)}
+      #bfb-panel .tabs{background:#1c1c20;border-bottom-color:#2c2c32}
+      #bfb-panel .tab{background:#2e2e34;color:#a8a8b0}
+      #bfb-panel .tab:hover{background:rgba(251,114,153,.18)}
+      #bfb-panel::-webkit-scrollbar-thumb{border-color:#1c1c20}
+      .bfb-toast{border-color:#38383f}
+      .bfb-modal-msg{color:#d8d8de}
+      .bfb-modal-btn.ghost{background:#2e2e34;color:#d0d0d6}
+      .bfb-ctx-item{color:#d8d8de}
+      .bfb-ctx-item:hover{background:rgba(251,114,153,.16)}
+    }
+  `);
 
   // src/ui/field.ts
   var collapseState = {};
@@ -2563,202 +2889,50 @@
     });
   }
 
-  // src/ui/panel.styles.ts
-  GM_addStyle(`
-    .bfb-review{outline:2px solid #fb7299 !important;outline-offset:-2px;border-radius:8px;position:relative !important}
-    .bfb-tag{position:absolute;top:6px;left:6px;z-index:9;display:flex;align-items:center;gap:6px;background:rgba(251,114,153,.95);color:#fff;border-radius:8px;padding:3px 6px;font-size:11px;font-family:system-ui,Arial;box-shadow:0 2px 6px rgba(0,0,0,.25)}
-    .bfb-tag .rs{white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis}
-    .bfb-tag button{border:none;border-radius:6px;background:#fff;color:#1b7a3d;font-size:11px;padding:2px 6px;cursor:pointer;white-space:nowrap}
-    #bfb-badge{position:fixed;right:18px;bottom:18px;z-index:99999;background:#fb7299;color:#fff;border-radius:24px;padding:8px 14px;font-size:13px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.2);font-family:system-ui,Arial;user-select:none}
-    #bfb-badge.off{background:#999}
-    #bfb-ctxmenu{position:fixed;z-index:100002;background:#fff;border:1px solid #ffd5e2;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.22);overflow:hidden;min-width:210px;font-family:system-ui,Arial}
-    .bfb-ctx-item{padding:10px 14px;font-size:13px;color:#333;cursor:pointer;white-space:nowrap}
-    .bfb-ctx-item:hover{background:#fff0f5;color:#fb7299}
-    #bfb-toasts{position:fixed;right:18px;bottom:70px;z-index:100001;display:flex;flex-direction:column}
-    .bfb-toast{background:#fff;color:#222;border-radius:12px;padding:12px 14px;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.18);max-width:320px;font-family:system-ui,Arial;border:1px solid #ffd5e2;margin-top:8px;display:flex;align-items:center;gap:10px}
-    .bfb-toast .bfb-toast-msg{flex:1;min-width:0}
-    .bfb-toast-act{flex:0 0 auto;border:none;border-radius:7px;background:#fb7299;color:#fff;font-size:12px;font-weight:600;padding:5px 12px;cursor:pointer}
-    .bfb-toast-act:hover{background:#e85d88}
-    .bfb-toast.success{border-left:4px solid #1b7a3d}
-    .bfb-toast.warn{border-left:4px solid #e67e22}
-    .bfb-toast.error{border-left:4px solid #e74c3c}
-    .bfb-modal-back{position:fixed;inset:0;z-index:100003;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-family:system-ui,Arial;padding:16px}
-    .bfb-modal{background:#fff;border-radius:14px;max-width:400px;width:88vw;box-shadow:0 12px 44px rgba(0,0,0,.32);overflow:hidden;animation:bfb-modal-in .14s ease-out}
-    @keyframes bfb-modal-in{from{transform:scale(.95);opacity:.4}to{transform:scale(1);opacity:1}}
-    .bfb-modal-title{padding:13px 16px;font-size:15px;font-weight:600;color:#fff;background:#fb7299}
-    .bfb-modal.danger .bfb-modal-title{background:#e74c3c}
-    .bfb-modal-msg{padding:14px 16px;font-size:13px;line-height:1.65;color:#333;white-space:pre-line;max-height:54vh;overflow:auto}
-    .bfb-modal-btns{display:flex;gap:8px;justify-content:flex-end;padding:0 16px 14px}
-    .bfb-modal-btn{border:none;border-radius:8px;padding:8px 18px;font-size:13px;cursor:pointer;background:#fb7299;color:#fff}
-    .bfb-modal-btn.ghost{background:#f0f0f0;color:#444}
-    .bfb-modal-btn.danger{background:#e74c3c}
-    .bfb-modal-btn:focus-visible{outline:2px solid #222;outline-offset:2px}
-    .bfb-modal-input{display:block;width:calc(100% - 32px);margin:0 16px 12px;padding:8px 10px;border:1px solid #ddd;border-radius:8px;font-size:13px;box-sizing:border-box;background:#fff;color:#222}
-    .bfb-modal-input:focus{outline:none;border-color:#fb7299;box-shadow:0 0 0 2px rgba(251,114,153,.18)}
-    #bfb-panel .bfb-sub-row{border:1px solid #eee;border-radius:8px;padding:8px;margin-top:6px;background:#fafafa}
-    #bfb-panel .bfb-sub-url{font-size:11px;color:#6e6e6e;word-break:break-all;margin-top:4px}
-    #bfb-panel .bfb-sub-status{font-size:11px;color:#6e6e6e;margin-top:4px}
-    #bfb-panel .bfb-listta{width:100%;box-sizing:border-box;resize:vertical;font-family:monospace;font-size:12px;padding:6px;border:1px solid #ddd;border-radius:6px;background:#fff;color:#222}
-    #bfb-panel{position:fixed;top:0;right:0;width:400px;max-width:94vw;height:100vh;z-index:100000;background:#fff;box-shadow:-4px 0 24px rgba(0,0,0,.2);overflow:auto;overscroll-behavior:contain;font-family:system-ui,Arial;transform:translateX(100%);transition:transform .25s}
-    #bfb-panel.open{transform:translateX(0)}
-    #bfb-panel h2{margin:0;padding:14px 16px;background:#fb7299;color:#fff;font-size:16px;position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;z-index:2}
-    #bfb-panel h2 .x{cursor:pointer}
-    #bfb-panel .sec{padding:13px 16px;border-bottom:1px solid #f0f0f0}
-    #bfb-panel .sec.allow{background:#f3fbf4}
-    #bfb-panel label{font-size:13px;color:#444;display:block;margin-bottom:6px;font-weight:600}
-    #bfb-panel .addrow{display:flex;gap:6px}
-    #bfb-panel .addrow input{flex:1;min-width:0;padding:6px 8px;border:1px solid #ddd;border-radius:8px;font-size:13px}
-    #bfb-panel .addrow button{background:#fb7299;color:#fff;border:none;border-radius:8px;padding:0 14px;cursor:pointer;font-size:13px;white-space:nowrap}
-    #bfb-panel .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
-    #bfb-panel .chip{display:inline-flex;align-items:center;gap:6px;background:#fff0f5;color:#c2185b;border:1px solid #ffd5e2;border-radius:14px;padding:3px 10px;font-size:12px}
-    #bfb-panel .sec.allow .chip{background:#eafaef;color:#1b7a3d;border-color:#c6ecd0}
-    #bfb-panel .chip b{cursor:pointer;font-weight:700;opacity:.6}
-    #bfb-panel .chip b:hover{opacity:1}
-    #bfb-panel .empty{font-size:11px;color:#767676;margin-top:6px}
-    #bfb-panel input[type=number]{width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:6px}
-    #bfb-panel .hint{font-size:11px;color:#6e6e6e;margin-top:7px;line-height:1.7}
-    #bfb-panel .toolbar{display:flex;gap:8px;flex-wrap:wrap}
-    #bfb-panel button.act{background:#fb7299;color:#fff;border:none;border-radius:8px;padding:8px 12px;cursor:pointer;font-size:13px}
-    #bfb-panel button.ghost{background:#f3f3f3;color:#333}
-    #bfb-panel .switch{display:flex;align-items:center;gap:8px;font-size:13px;color:#333;font-weight:600;margin-top:9px;line-height:1.5}
-    #bfb-panel .stat{font-size:12px;color:#6e6e6e}
-    #bfb-panel a.manage{color:#fb7299;font-size:12px}
-    #bfb-panel .sec.api{background:#f5f3ff}
-    /* —— 交互美化 —— */
-    #bfb-panel h2{background:linear-gradient(135deg,#fb7299,#ff9bb6)}
-    #bfb-panel .switch input[type=checkbox]{appearance:none;-webkit-appearance:none;width:38px;height:22px;border-radius:22px;background:#d4d4d8;position:relative;cursor:pointer;transition:.2s;flex:0 0 auto;margin:0}
-    #bfb-panel .switch input[type=checkbox]:checked{background:#fb7299}
-    #bfb-panel .switch input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
-    #bfb-panel .switch input[type=checkbox]:checked::after{transform:translateX(16px)}
-    #bfb-panel .sec{transition:background .15s}
-    #bfb-panel .addrow input:focus,#bfb-panel input[type=number]:focus{outline:none;border-color:#fb7299;box-shadow:0 0 0 2px rgba(251,114,153,.18)}
-    /* —— 键盘焦点环（仅键盘导航时出现，鼠标点击不显示）—— */
-    #bfb-panel button:focus-visible,#bfb-panel .tab:focus-visible,#bfb-panel .chip b:focus-visible,#bfb-panel .x:focus-visible,#bfb-panel a:focus-visible,#bfb-panel .switch input:focus-visible,.bfb-toast-act:focus-visible{outline:2px solid #fb7299;outline-offset:2px;border-radius:6px}
-    #bfb-panel:focus{outline:none}
-    #bfb-panel button.act:active,#bfb-panel .addrow button:active{transform:translateY(1px)}
-    #bfb-panel::-webkit-scrollbar{width:10px}
-    #bfb-panel::-webkit-scrollbar-thumb{background:#f0c2d2;border-radius:8px;border:2px solid #fff}
-    #bfb-panel::-webkit-scrollbar-thumb:hover{background:#fb7299}
-    #bfb-panel .chip{transition:transform .1s}
-    #bfb-panel .chip:hover{transform:translateY(-1px)}
-    #bfb-panel .field-head{cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;margin-bottom:0;padding:4px 6px;margin-left:-6px;margin-right:-6px;border-radius:8px;transition:background .12s}
-    #bfb-panel .field-head:hover{background:#fff0f5}
-    #bfb-panel .field-head .caret{color:#fb7299;font-size:14px;width:14px;flex:0 0 auto;transition:transform .12s}
-    #bfb-panel .chip-bar{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
-    #bfb-panel .chip-act{border:1px solid #ffd5e2;background:#fff;color:#fb7299;border-radius:8px;padding:3px 10px;font-size:12px;cursor:pointer}
-    #bfb-panel .chip-act:hover{background:#fff0f5}
-    #bfb-panel .chip-act.primary{background:#fb7299;color:#fff;border-color:#fb7299}
-    #bfb-panel .chip.sel{outline:2px solid #fb7299;outline-offset:1px;background:#ffd9e6}
-    #bfb-panel .sec.allow .chip.sel{outline-color:#1b7a3d;background:#cdeed6}
-    #bfb-panel .log-row{display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(128,128,128,.12)}
-    #bfb-panel .log-tx{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    #bfb-panel .log-rs{color:#fb7299;margin-right:2px}
-    #bfb-panel .log-link{color:inherit;text-decoration:none}
-    #bfb-panel .log-link:hover{color:#fb7299;text-decoration:underline}
-    #bfb-panel .log-src{flex:0 0 auto;font-size:10px;border-radius:5px;padding:0 4px;margin-right:4px;color:#fff}
-    #bfb-panel .log-src.net{background:#27ae60}
-    #bfb-panel .log-src.dom{background:#e67e22}
-    #bfb-panel .log-blk{flex:0 0 auto;border:1px solid #ffd5e2;background:#fff;color:#fb7299;border-radius:7px;padding:2px 8px;font-size:11px;cursor:pointer}
-    #bfb-panel .log-blk:hover{background:#fb7299;color:#fff}
-    #bfb-panel .log-blk[disabled]{opacity:.6;cursor:default}
-    #bfb-panel .log-undo{flex:0 0 auto;border:1px solid #c6ecd0;background:#fff;color:#1b7a3d;border-radius:7px;padding:2px 8px;font-size:11px;cursor:pointer}
-    #bfb-panel .log-undo:hover{background:#1b7a3d;color:#fff}
-    #bfb-panel .log-undo[disabled]{opacity:.6;cursor:default}
-    #bfb-panel .log-pass{flex:0 0 auto;border:1px solid #c6ecd0;background:#fff;color:#1b7a3d;border-radius:7px;padding:2px 8px;font-size:11px;cursor:pointer;margin-right:6px}
-    #bfb-panel .log-pass:hover{background:#1b7a3d;color:#fff}
-    #bfb-panel .field-head .lt{flex:1}
-    #bfb-panel .field-head .cnt{background:#fb7299;color:#fff;border-radius:10px;font-size:11px;padding:0 7px;min-width:18px;text-align:center;font-weight:700}
-    #bfb-panel .field-head .cnt:empty{display:none}
-    #bfb-panel .field-body{margin-top:8px}
-    #bfb-panel .field .chips{max-height:132px;overflow-y:auto;overscroll-behavior:contain;background:#fafafa;border:1px solid #eee;border-radius:10px;padding:8px;margin-top:8px}
-    #bfb-panel .field .chips:empty{display:none}
-    #bfb-panel .field .chips::-webkit-scrollbar{width:8px}
-    #bfb-panel .field .chips::-webkit-scrollbar-thumb{background:#f0c2d2;border-radius:8px}
-    #bfb-panel .field .chips::-webkit-scrollbar-thumb:hover{background:#fb7299}
-    #bfb-panel .chip.uidchip::before{content:"账号";font-size:9px;background:#6b4dff;color:#fff;border-radius:5px;padding:0 4px;margin-right:2px}
-    #bfb-panel .chip.group{background:#ede9fe;color:#5b21b6;border-color:#ddd6fe}
-    /* —— 分组 Tab —— */
-    #bfb-panel .tabs{position:sticky;top:48px;z-index:2;display:flex;flex-wrap:wrap;justify-content:center;gap:6px;padding:10px 12px;background:#fff;border-bottom:1px solid #f0f0f0;overscroll-behavior:contain}
-    #bfb-panel .tab{flex:0 0 auto;padding:6px 13px;border-radius:16px;background:#f3f3f3;color:#666;font-size:13px;cursor:pointer;border:none;white-space:nowrap;font-weight:600;transition:.15s}
-    #bfb-panel .tab:hover{background:#ffe3ec;color:#fb7299}
-    #bfb-panel .tab.active{background:linear-gradient(135deg,#fb7299,#ff9bb6);color:#fff;box-shadow:0 2px 8px rgba(251,114,153,.35)}
-    #bfb-panel .bfb-group{display:none}
-    #bfb-panel .bfb-group.active{display:block;animation:bfb-fade .18s ease}
-    @keyframes bfb-fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
-    #bfb-panel .grp-tip{padding:8px 16px;font-size:11px;color:#6e6e6e;background:#fafafa;border-bottom:1px solid #f0f0f0}
-    /* —— 暗色模式（跟随系统 prefers-color-scheme）：仅覆盖自有 UI 表面，品牌粉与语义色保留 —— */
-    @media (prefers-color-scheme: dark){
-      #bfb-panel,.bfb-toast,.bfb-modal,#bfb-ctxmenu{background:#1c1c20;color:#e6e6e9}
-      #bfb-panel .sec{border-bottom-color:#2c2c32}
-      #bfb-panel .sec.allow{background:rgba(39,174,96,.08)}
-      #bfb-panel .sec.api{background:rgba(124,92,255,.1)}
-      #bfb-panel label{color:#cfcfd6}
-      #bfb-panel .switch,#bfb-panel button.ghost{color:#d0d0d6}
-      #bfb-panel .hint,#bfb-panel .stat,#bfb-panel .grp-tip{color:#8a8a92}
-      #bfb-panel .grp-tip{background:#232328;border-bottom-color:#2c2c32}
-      #bfb-panel .bfb-sub-row{background:#232328;border-color:#34343a}
-      #bfb-panel .bfb-sub-url,#bfb-panel .bfb-sub-status{color:#9a9aa2}
-      #bfb-panel .bfb-listta{background:#26262b;color:#e6e6e9;border-color:#44444c}
-      .bfb-modal-input{background:#26262b;color:#e6e6e9;border-color:#44444c}
-      #bfb-panel .empty{color:#9a9aa2}
-      #bfb-panel .addrow input,#bfb-panel input[type=number]{background:#26262b;border-color:#44444c;color:#e6e6e9}
-      #bfb-panel button.ghost{background:#2e2e34}
-      #bfb-panel .switch input[type=checkbox]{background:#45454d}
-      #bfb-panel .chip{background:rgba(251,114,153,.16);color:#ff9ebc;border-color:rgba(251,114,153,.35)}
-      #bfb-panel .sec.allow .chip{background:rgba(39,174,96,.16);color:#6ee7a0;border-color:rgba(39,174,96,.35)}
-      #bfb-panel .chip.group{background:rgba(124,92,255,.18);color:#c4b5fd;border-color:rgba(124,92,255,.4)}
-      #bfb-panel .chip.sel{background:rgba(251,114,153,.3)}
-      #bfb-panel .sec.allow .chip.sel{background:rgba(39,174,96,.3)}
-      #bfb-panel .field .chips{background:#232328;border-color:#34343a}
-      #bfb-panel .chip-act,#bfb-panel .log-blk,#bfb-panel .log-pass,#bfb-panel .log-undo{background:#1c1c20}
-      #bfb-panel .field-head:hover,#bfb-panel .chip-act:hover{background:rgba(251,114,153,.14)}
-      #bfb-panel .tabs{background:#1c1c20;border-bottom-color:#2c2c32}
-      #bfb-panel .tab{background:#2e2e34;color:#a8a8b0}
-      #bfb-panel .tab:hover{background:rgba(251,114,153,.18)}
-      #bfb-panel::-webkit-scrollbar-thumb{border-color:#1c1c20}
-      .bfb-toast{border-color:#38383f}
-      .bfb-modal-msg{color:#d8d8de}
-      .bfb-modal-btn.ghost{background:#2e2e34;color:#d0d0d6}
-      .bfb-ctx-item{color:#d8d8de}
-      .bfb-ctx-item:hover{background:rgba(251,114,153,.16)}
-    }
-  `);
-
-  // src/ui/panel.ts
-  var panelStatsRefresh = null;
-  var activeTab = "base";
-  function buildPanel() {
-    if (panelEl()) return;
-    const p = document.createElement("div");
-    p.id = "bfb-panel";
-    p.tabIndex = -1;
-    p.setAttribute("role", "dialog");
-    p.setAttribute("aria-label", "biliHoyoFairy 设置");
-    ["keydown", "keypress", "keyup", "input"].forEach((ev) => {
-      p.addEventListener(ev, (e) => {
-        if (e.target && e.target.matches && e.target.matches("input, textarea, select")) e.stopPropagation();
+  // src/ui/panel/sections/base.ts
+  var baseSection = {
+    tab: "base",
+    render(host) {
+      const sw = document.createElement("div");
+      sw.className = "sec";
+      sw.innerHTML = `
+      <div class="switch"><input type="checkbox" id="bfb-enabled"> 启用拦截</div>
+      <div class="switch"><input type="checkbox" id="bfb-review"> 🔍 审查模式（不隐藏，仅标记被拦视频并提供就地放行，便于核对）</div>
+      <div class="switch"><input type="checkbox" id="bfb-rclick"> 右键卡片弹出菜单（屏蔽、拉黑、加入白名单）</div>
+      <div class="switch"><input type="checkbox" id="bfb-hoverbtn"> 悬停卡片显示快捷「拉黑 / 不看这个」按钮</div>
+      <div class="switch"><input type="checkbox" id="bfb-collab"> 联合投稿一并拉黑合作者</div>
+      <div class="switch"><input type="checkbox" id="bfb-fuzzy"> 反绕过模糊匹配（「原 神」「原.神」同样拦截；隐形字符始终拦截）</div>
+      <div class="switch"><input type="checkbox" id="bfb-debug"> 调试模式（控制台逐卡打印拦截 / 放行原因）</div>
+      <div class="hint">所有开关与规则均<b>即时生效</b>，无需保存。切换<b>审查模式</b>后建议<b>刷新页面</b>以核对完整结果。如需让视频真正从推荐流中消失，请使用<b>拉黑</b>。</div>`;
+      host.appendChild(sw);
+      bindControl(sw, "bfb-enabled", CONFIG, "enabled", {
+        after: () => {
+          updateBadge();
+          rescanAfterRuleChange();
+        }
       });
-    });
-    document.addEventListener(
-      "keydown",
-      (e) => {
-        if (e.key !== "Escape" || !p.classList.contains("open")) return;
-        if (document.querySelector(".bfb-modal-back")) return;
-        closePanel();
-      },
-      true
-    );
-    document.body.appendChild(p);
-    renderPanel(p);
-  }
-  var PANEL_TABS = [
-    ["base", "⚙ 基础", "常规开关与卡片类型过滤"],
-    ["black", "🚫 黑名单", "按标题、UP 主、分区屏蔽，即时生效；以 /.../ 包裹表示正则（如 /震惊.*竟然/），否则为关键词包含匹配（不区分大小写）"],
-    ["api", "🛰 进阶", "按播放量、时长，以及标签、数据等维度精细过滤（标签类维度需开启下方「精确过滤」）"],
-    ["comment", "💬 评论", "过滤视频与动态评论区的引战、水军、营销及 AI 评论（基于评论数据隐藏，仅在含评论的页面生效，与视频规则相互独立）"],
-    ["allow", "⭐ 白名单", "命中白名单的内容永不隐藏，优先级最高"],
-    ["tools", "🧰 工具", "预置库、重置、屏蔽记录"]
-  ];
+      bindControl(sw, "bfb-review", CONFIG, "reviewMode", { after: rescanAfterRuleChange });
+      bindControl(sw, "bfb-rclick", CONFIG, "rightClickBlock");
+      bindControl(sw, "bfb-hoverbtn", CONFIG, "cardHoverBtn", { after: hideHoverBtn });
+      bindControl(sw, "bfb-collab", CONFIG, "blacklistCollab");
+      bindControl(sw, "bfb-fuzzy", CONFIG, "fuzzyMatch", { after: rescanAfterRuleChange });
+      bindControl(sw, "bfb-debug", CONFIG, "debug", { after: rescanAfterRuleChange });
+      const ct = document.createElement("div");
+      ct.className = "sec";
+      ct.innerHTML = `
+      <label>卡片类型过滤</label>
+      <div class="switch"><input type="checkbox" id="bfb-ad"> 屏蔽广告 / 推广卡片</div>
+      <div class="switch"><input type="checkbox" id="bfb-live"> 屏蔽信息流中的直播推荐卡</div>
+      <div class="switch"><input type="checkbox" id="bfb-hotsearch"> 屏蔽搜索框热搜词</div>
+      <div class="hint">广告由脚本自动识别，偶有误差，可在下方「屏蔽记录」核对实际拦截的内容。直播卡指首页与动态中指向直播间的推荐卡。</div>`;
+      host.appendChild(ct);
+      bindControl(ct, "bfb-ad", CONFIG, "hideAd", { after: rescanAfterRuleChange });
+      bindControl(ct, "bfb-live", CONFIG, "hideLiveCard", { after: rescanAfterRuleChange });
+      bindControl(ct, "bfb-hotsearch", CONFIG, "hideHotSearch", { after: applyHotSearchStyle });
+    }
+  };
+
+  // src/ui/panel/sections/lists.ts
   var BLACK_FIELDS = [
     { key: "keywords", label: "🎯 关键词", placeholder: "如：原神 或 /震惊.*竟然/", hint: "匹配标题、UP 主名、分区任一即拦截（纯本地）。普通词为包含匹配，/.../ 为正则。可加前缀限定字段：title: / up: / part:。按视频标签拦截请用下方「视频标签」。" },
     { kind: "up", label: "UP 主", hint: "输入 UP 名 或 UID（纯数字自动识别为 UID）；可一次粘贴多条，用逗号或换行分隔。" },
@@ -2775,131 +2949,76 @@
     { scope: "allow", key: "upNames", label: "UP 主名", placeholder: "喜欢的 UP 主名", hint: "该 UP 的视频永不隐藏（按名称精确匹配）。" },
     { scope: "allow", key: "uids", label: "UID", placeholder: "喜欢的 UP 的 UID（纯数字）", hint: "该 UP 的视频永不隐藏（按 UID 精确匹配，最可靠）。" }
   ];
-  function renderPanel(p) {
-    p.innerHTML = "";
-    panelStatsRefresh = null;
-    const h2 = document.createElement("h2");
-    h2.innerHTML = `🛡 biliHoyoFairy · 抗击黑潮 <small style="font-weight:normal;opacity:.6;font-size:12px">v${VERSION} · ${pageType()}</small> <span class="x" role="button" tabindex="0" aria-label="关闭设置面板">✕</span>`;
-    p.appendChild(h2);
-    const xBtn = h2.querySelector(".x");
-    xBtn.onclick = closePanel;
-    xBtn.onkeydown = (e) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        closePanel();
-      }
-    };
-    const tabBar = document.createElement("div");
-    tabBar.className = "tabs";
-    p.appendChild(tabBar);
-    if (!PANEL_TABS.some(([id]) => id === activeTab)) activeTab = "base";
-    const G = {};
-    PANEL_TABS.forEach(([id, label, tip]) => {
-      const tb = document.createElement("button");
-      tb.className = "tab" + (id === activeTab ? " active" : "");
-      tb.textContent = label;
-      tabBar.appendChild(tb);
-      const g = document.createElement("div");
-      g.className = "bfb-group" + (id === activeTab ? " active" : "");
-      const tipEl = document.createElement("div");
-      tipEl.className = "grp-tip";
-      tipEl.textContent = tip;
-      g.appendChild(tipEl);
-      p.appendChild(g);
-      G[id] = g;
-      tb.onclick = () => {
-        activeTab = id;
-        tabBar.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
-        tb.classList.add("active");
-        Object.values(G).forEach((x) => x.classList.remove("active"));
-        g.classList.add("active");
-        p.scrollTop = 0;
-      };
-    });
-    const sw = document.createElement("div");
-    sw.className = "sec";
-    sw.innerHTML = `
-      <div class="switch"><input type="checkbox" id="bfb-enabled"> 启用拦截</div>
-      <div class="switch"><input type="checkbox" id="bfb-review"> 🔍 审查模式（不隐藏，仅标记被拦视频并提供就地放行，便于核对）</div>
-      <div class="switch"><input type="checkbox" id="bfb-rclick"> 右键卡片弹出菜单（屏蔽、拉黑、加入白名单）</div>
-      <div class="switch"><input type="checkbox" id="bfb-hoverbtn"> 悬停卡片显示快捷「拉黑 / 不看这个」按钮</div>
-      <div class="switch"><input type="checkbox" id="bfb-collab"> 联合投稿一并拉黑合作者</div>
-      <div class="switch"><input type="checkbox" id="bfb-fuzzy"> 反绕过模糊匹配（「原 神」「原.神」同样拦截；隐形字符始终拦截）</div>
-      <div class="switch"><input type="checkbox" id="bfb-debug"> 调试模式（控制台逐卡打印拦截 / 放行原因）</div>
-      <div class="hint">所有开关与规则均<b>即时生效</b>，无需保存。切换<b>审查模式</b>后建议<b>刷新页面</b>以核对完整结果。如需让视频真正从推荐流中消失，请使用<b>拉黑</b>。</div>`;
-    G.base.appendChild(sw);
-    bindControl(sw, "bfb-enabled", CONFIG, "enabled", {
-      after: () => {
-        updateBadge();
-        rescanAfterRuleChange();
-      }
-    });
-    bindControl(sw, "bfb-review", CONFIG, "reviewMode", { after: rescanAfterRuleChange });
-    bindControl(sw, "bfb-rclick", CONFIG, "rightClickBlock");
-    bindControl(sw, "bfb-hoverbtn", CONFIG, "cardHoverBtn", { after: hideHoverBtn });
-    bindControl(sw, "bfb-collab", CONFIG, "blacklistCollab");
-    bindControl(sw, "bfb-fuzzy", CONFIG, "fuzzyMatch", { after: rescanAfterRuleChange });
-    bindControl(sw, "bfb-debug", CONFIG, "debug", { after: rescanAfterRuleChange });
-    const ct = document.createElement("div");
-    ct.className = "sec";
-    ct.innerHTML = `
-      <label>卡片类型过滤</label>
-      <div class="switch"><input type="checkbox" id="bfb-ad"> 屏蔽广告 / 推广卡片</div>
-      <div class="switch"><input type="checkbox" id="bfb-live"> 屏蔽信息流中的直播推荐卡</div>
-      <div class="switch"><input type="checkbox" id="bfb-hotsearch"> 屏蔽搜索框热搜词</div>
-      <div class="hint">广告由脚本自动识别，偶有误差，可在下方「屏蔽记录」核对实际拦截的内容。直播卡指首页与动态中指向直播间的推荐卡。</div>`;
-    G.base.appendChild(ct);
-    bindControl(ct, "bfb-ad", CONFIG, "hideAd", { after: rescanAfterRuleChange });
-    bindControl(ct, "bfb-live", CONFIG, "hideLiveCard", { after: rescanAfterRuleChange });
-    bindControl(ct, "bfb-hotsearch", CONFIG, "hideHotSearch", { after: applyHotSearchStyle });
-    renderFields(G.black, BLACK_FIELDS);
-    const num = document.createElement("div");
-    num.className = "sec";
-    num.innerHTML = `<label>播放量 / 时长</label>
+  var blackListsSection = {
+    tab: "black",
+    render: (host) => renderFields(host, BLACK_FIELDS)
+  };
+  var apiListsSection = {
+    tab: "api",
+    render: (host) => renderFields(host, API_CHIP_FIELDS)
+  };
+  var allowListsSection = {
+    tab: "allow",
+    render: (host) => renderFields(host, ALLOW_FIELDS)
+  };
+
+  // src/ui/panel/sections/advanced.ts
+  var advancedSection = {
+    tab: "api",
+    render(host) {
+      const num = document.createElement("div");
+      num.className = "sec";
+      num.innerHTML = `<label>播放量 / 时长</label>
       <div class="switch" style="margin-top:4px;font-weight:400">播放量低于 <input type="number" id="bfb-minviews" min="0" step="0.1" style="width:64px"> 万则屏蔽（0 为不启用）</div>
       <div class="switch" style="margin-top:8px;font-weight:400">时长　最短 <input type="number" id="bfb-dmin" min="0" style="width:64px"> 秒　最长 <input type="number" id="bfb-dmax" min="0" style="width:64px"> 秒</div>
       <div class="switch" style="margin-top:8px;font-weight:400">营销号：点赞率低于 <input type="number" id="bfb-spamratio" min="0" max="100" step="0.1" style="width:56px"> % 且播放量≥ <input type="number" id="bfb-spamviews" min="0" step="1" style="width:56px"> 万则屏蔽</div>
       <div class="hint">填 0 表示该项不启用。营销号、搬运号常表现为「高播放、极低赞」。⚠ 点赞率<b>仅在接口返回点赞数时生效（主要为首页推荐流）</b>，其余卡片会自动跳过此项。</div>`;
-    G.api.appendChild(num);
-    bindControl(num, "bfb-minviews", CONFIG.block, "minViews", { number: true, after: rescanAfterRuleChange });
-    bindControl(num, "bfb-dmin", CONFIG.block, "minDuration", { number: true, int: true, after: rescanAfterRuleChange });
-    bindControl(num, "bfb-dmax", CONFIG.block, "maxDuration", { number: true, int: true, after: rescanAfterRuleChange });
-    bindControl(num, "bfb-spamratio", CONFIG.block, "spamLikeRatio", { number: true, after: rescanAfterRuleChange });
-    bindControl(num, "bfb-spamviews", CONFIG.block, "spamMinViews", { number: true, int: true, after: rescanAfterRuleChange });
-    const feed = document.createElement("div");
-    feed.className = "sec";
-    feed.innerHTML = `<label>信息流加载</label>
+      host.appendChild(num);
+      bindControl(num, "bfb-minviews", CONFIG.block, "minViews", { number: true, after: rescanAfterRuleChange });
+      bindControl(num, "bfb-dmin", CONFIG.block, "minDuration", { number: true, int: true, after: rescanAfterRuleChange });
+      bindControl(num, "bfb-dmax", CONFIG.block, "maxDuration", { number: true, int: true, after: rescanAfterRuleChange });
+      bindControl(num, "bfb-spamratio", CONFIG.block, "spamLikeRatio", { number: true, after: rescanAfterRuleChange });
+      bindControl(num, "bfb-spamviews", CONFIG.block, "spamMinViews", { number: true, int: true, after: rescanAfterRuleChange });
+      const feed = document.createElement("div");
+      feed.className = "sec";
+      feed.innerHTML = `<label>信息流加载</label>
       <div class="switch"><input type="checkbox" id="bfb-boost"> 增大首页推荐每批加载数量</div>
       <div class="hint">拦截层会删除命中项，开启后每批多取一些视频，删除后信息流更饱满。下次加载或刷新生效；个别情况下可能影响载入，如有异常请关闭。</div>`;
-    G.api.appendChild(feed);
-    bindControl(feed, "bfb-boost", CONFIG, "boostFeedLoad");
-    const api = document.createElement("div");
-    api.className = "sec api";
-    api.innerHTML = `
+      host.appendChild(feed);
+      bindControl(feed, "bfb-boost", CONFIG, "boostFeedLoad");
+      const api = document.createElement("div");
+      api.className = "sec api";
+      api.innerHTML = `
       <label>🛰 精确过滤</label>
       <div class="switch"><input type="checkbox" id="bfb-api"> <b>启用精确过滤</b></div>
       <div class="hint">开启后会按需读取视频标签、UP 简介等数据来判断，命中时卡片会略有延迟才被隐藏；不开启则完全不联网。</div>
       <div id="bfb-api-body" style="margin-top:6px">
         <div class="switch"><input type="checkbox" id="bfb-charging"> 屏蔽充电专属视频</div>
       </div>`;
-    G.api.appendChild(api);
-    const apiBody = api.querySelector("#bfb-api-body");
-    const syncApiBody = () => {
-      apiBody.style.opacity = CONFIG.apiFilters ? "1" : ".4";
-      apiBody.style.pointerEvents = CONFIG.apiFilters ? "auto" : "none";
-    };
-    bindControl(api, "bfb-api", CONFIG, "apiFilters", {
-      after: () => {
-        syncApiBody();
-        rescanAfterRuleChange();
-      }
-    });
-    bindControl(api, "bfb-charging", CONFIG, "hideCharging", { after: rescanAfterRuleChange });
-    syncApiBody();
-    renderFields(G.api, API_CHIP_FIELDS);
-    const cmt = document.createElement("div");
-    cmt.className = "sec";
-    cmt.innerHTML = `
+      host.appendChild(api);
+      const apiBody = api.querySelector("#bfb-api-body");
+      const syncApiBody = () => {
+        apiBody.style.opacity = CONFIG.apiFilters ? "1" : ".4";
+        apiBody.style.pointerEvents = CONFIG.apiFilters ? "auto" : "none";
+      };
+      bindControl(api, "bfb-api", CONFIG, "apiFilters", {
+        after: () => {
+          syncApiBody();
+          rescanAfterRuleChange();
+        }
+      });
+      bindControl(api, "bfb-charging", CONFIG, "hideCharging", { after: rescanAfterRuleChange });
+      syncApiBody();
+    }
+  };
+
+  // src/ui/panel/sections/comment.ts
+  var commentSection = {
+    tab: "comment",
+    render(host) {
+      const cmt = document.createElement("div");
+      cmt.className = "sec";
+      cmt.innerHTML = `
       <label>💬 评论区过滤</label>
       <div class="switch"><input type="checkbox" id="bfb-cmt"> <b>启用评论区过滤</b></div>
       <div class="hint">读取评论数据后隐藏命中的评论，仅在含评论的页面（播放页、动态、空间等）生效。以下规则与视频黑名单相互独立。</div>
@@ -2917,361 +3036,257 @@
         <div class="switch"><input type="checkbox" id="bfb-cmt-pin"> 置顶评论</div>
         <div class="switch"><input type="checkbox" id="bfb-cmt-me"> 我自己 / @我 的评论</div>
       </div>`;
-    G.comment.appendChild(cmt);
-    const cmtBody = cmt.querySelector("#bfb-cmt-body");
-    const syncCmtBody = () => {
-      cmtBody.style.opacity = CONFIG.comment.enabled ? "1" : ".4";
-      cmtBody.style.pointerEvents = CONFIG.comment.enabled ? "auto" : "none";
-    };
-    bindControl(cmt, "bfb-cmt", CONFIG.comment, "enabled", {
-      after: () => {
-        syncCmtBody();
-        rescanAfterRuleChange();
-      }
-    });
-    bindControl(cmt, "bfb-cmt-level", CONFIG.comment, "minLevel", { number: true, int: true, after: rescanAfterRuleChange });
-    bindControl(cmt, "bfb-cmt-noface", CONFIG.comment, "hideNoFace", { after: rescanAfterRuleChange });
-    bindControl(cmt, "bfb-cmt-bot", CONFIG.comment, "hideBot", { after: rescanAfterRuleChange });
-    bindControl(cmt, "bfb-cmt-callbot", CONFIG.comment, "hideCallBot", { after: rescanAfterRuleChange });
-    bindControl(cmt, "bfb-cmt-ad", CONFIG.comment, "hideAd", { after: rescanAfterRuleChange });
-    bindControl(cmt, "bfb-cmt-callonly", CONFIG.comment, "hideCallOnly", { after: rescanAfterRuleChange });
-    bindControl(cmt, "bfb-cmt-emoji", CONFIG.comment, "hideEmojiOnly", { after: rescanAfterRuleChange });
-    bindControl(cmt, "bfb-cmt-collapse", CONFIG.comment, "collapse", { after: rescanAfterRuleChange });
-    bindControl(cmt, "bfb-cmt-up", CONFIG.comment, "allowUp", { after: rescanAfterRuleChange });
-    bindControl(cmt, "bfb-cmt-pin", CONFIG.comment, "allowPin", { after: rescanAfterRuleChange });
-    bindControl(cmt, "bfb-cmt-me", CONFIG.comment, "allowMe", { after: rescanAfterRuleChange });
-    syncCmtBody();
-    renderListField(G.comment, {
-      label: "🚫 评论关键词",
-      placeholder: "如：引战词 或 /.../",
-      hint: "评论正文命中即隐藏。普通词为包含匹配，/.../ 为正则。与视频关键词相互独立。",
-      model: chipModel(CONFIG.comment.keywords)
-    });
-    renderListField(G.comment, {
-      label: "🚫 评论用户名（精确）",
-      placeholder: "精确用户名",
-      hint: "按评论者用户名精确隐藏其评论。可在评论区右键用户名快捷加入。",
-      model: chipModel(CONFIG.comment.userNames)
-    });
-    renderListField(G.comment, {
-      label: "🚫 用户名关键词",
-      placeholder: "如：营销 或 /.../",
-      hint: "按评论者昵称关键词隐藏。普通词为包含匹配，/.../ 为正则。",
-      model: chipModel(CONFIG.comment.userNameKeywords)
-    });
-    renderFields(G.allow, ALLOW_FIELDS);
-    const preset = document.createElement("div");
-    preset.className = "sec";
-    preset.innerHTML = '<label>预置规则库（点击加入对应黑名单，可叠加）</label><div class="hint">一键把整组规则加入「黑名单」（之后可在黑名单页增删）。需要持续更新的大名单请用「规则订阅」。</div><div id="bfb-presets"></div>';
-    G.tools.appendChild(preset);
-    const presetBox = preset.querySelector("#bfb-presets");
-    const applyPreset = (p2) => {
-      let n = 0;
-      for (const dim of Object.keys(p2.rules || {})) {
-        const arr = CONFIG.block[dim];
-        if (!Array.isArray(arr)) continue;
-        n += pushUnique(arr, p2.rules[dim].map((v) => String(v).trim()).filter(Boolean));
-      }
-      if (n) {
-        saveConfig();
-        rescanAfterRuleChange();
-      }
-      toast(n ? `已加入「${p2.name}」${n} 条` : `「${p2.name}」已全部存在`);
-      const API_DIM_KEYS = ["tags", "dualTags", "upBio"];
-      const needsApi = Object.keys(p2.rules || {}).some((d) => API_DIM_KEYS.includes(d));
-      const finishPreset = () => {
-        renderPanel(p);
-        p.classList.add("open");
+      host.appendChild(cmt);
+      const cmtBody = cmt.querySelector("#bfb-cmt-body");
+      const syncCmtBody = () => {
+        cmtBody.style.opacity = CONFIG.comment.enabled ? "1" : ".4";
+        cmtBody.style.pointerEvents = CONFIG.comment.enabled ? "auto" : "none";
       };
-      if (needsApi && !CONFIG.apiFilters) {
-        confirmModal(`「${p2.name}」含需联网读取（标签、简介）的规则，需开启「精确过滤」才会生效。是否现在开启？`, {
-          title: "开启精确过滤",
-          okText: "开启"
-        }).then((ok) => {
-          if (ok) {
-            CONFIG.apiFilters = true;
-            saveConfig();
-            rescanAfterRuleChange();
-          }
-          finishPreset();
-        });
-      } else {
-        finishPreset();
-      }
-    };
-    const byCat = {};
-    PRESET_LIBRARY.forEach((pp) => (byCat[pp.cat] = byCat[pp.cat] || []).push(pp));
-    Object.keys(byCat).forEach((cat) => {
-      const cl = document.createElement("div");
-      cl.style.cssText = "font-size:12px;color:#6e6e6e;margin:8px 0 4px";
-      cl.textContent = cat;
-      presetBox.appendChild(cl);
-      const bar = document.createElement("div");
-      bar.className = "toolbar";
-      byCat[cat].forEach((pp) => {
-        const btn = document.createElement("button");
-        btn.className = "act ghost";
-        btn.textContent = "+ " + pp.name;
-        if (pp.desc) btn.title = pp.desc;
-        btn.onclick = () => applyPreset(pp);
-        bar.appendChild(btn);
+      bindControl(cmt, "bfb-cmt", CONFIG.comment, "enabled", {
+        after: () => {
+          syncCmtBody();
+          rescanAfterRuleChange();
+        }
       });
-      presetBox.appendChild(bar);
-    });
-    const retest = document.createElement("div");
-    retest.className = "sec";
-    retest.innerHTML = `<label>🧪 正则测试器（仅调试用，不影响规则）</label>
+      bindControl(cmt, "bfb-cmt-level", CONFIG.comment, "minLevel", { number: true, int: true, after: rescanAfterRuleChange });
+      bindControl(cmt, "bfb-cmt-noface", CONFIG.comment, "hideNoFace", { after: rescanAfterRuleChange });
+      bindControl(cmt, "bfb-cmt-bot", CONFIG.comment, "hideBot", { after: rescanAfterRuleChange });
+      bindControl(cmt, "bfb-cmt-callbot", CONFIG.comment, "hideCallBot", { after: rescanAfterRuleChange });
+      bindControl(cmt, "bfb-cmt-ad", CONFIG.comment, "hideAd", { after: rescanAfterRuleChange });
+      bindControl(cmt, "bfb-cmt-callonly", CONFIG.comment, "hideCallOnly", { after: rescanAfterRuleChange });
+      bindControl(cmt, "bfb-cmt-emoji", CONFIG.comment, "hideEmojiOnly", { after: rescanAfterRuleChange });
+      bindControl(cmt, "bfb-cmt-collapse", CONFIG.comment, "collapse", { after: rescanAfterRuleChange });
+      bindControl(cmt, "bfb-cmt-up", CONFIG.comment, "allowUp", { after: rescanAfterRuleChange });
+      bindControl(cmt, "bfb-cmt-pin", CONFIG.comment, "allowPin", { after: rescanAfterRuleChange });
+      bindControl(cmt, "bfb-cmt-me", CONFIG.comment, "allowMe", { after: rescanAfterRuleChange });
+      syncCmtBody();
+      renderListField(host, {
+        label: "🚫 评论关键词",
+        placeholder: "如：引战词 或 /.../",
+        hint: "评论正文命中即隐藏。普通词为包含匹配，/.../ 为正则。与视频关键词相互独立。",
+        model: chipModel(CONFIG.comment.keywords)
+      });
+      renderListField(host, {
+        label: "🚫 评论用户名（精确）",
+        placeholder: "精确用户名",
+        hint: "按评论者用户名精确隐藏其评论。可在评论区右键用户名快捷加入。",
+        model: chipModel(CONFIG.comment.userNames)
+      });
+      renderListField(host, {
+        label: "🚫 用户名关键词",
+        placeholder: "如：营销 或 /.../",
+        hint: "按评论者昵称关键词隐藏。普通词为包含匹配，/.../ 为正则。",
+        model: chipModel(CONFIG.comment.userNameKeywords)
+      });
+    }
+  };
+
+  // src/presets.ts
+  var PRESET_LIBRARY = [
+    { cat: "游戏黑水", name: "库洛系(鸣潮/库洛)", desc: "鸣潮 / 库洛 / 战双 等相关词", rules: { keywords: ["库洛", "库洛游戏", "呜哇", "鸣潮", "战双", "战双帕弥什", "漂泊者", "漂泊神游", "寄生神游", "寄生社区"] } },
+    { cat: "引战", name: "引战话术", desc: "挑动对立的话术片段（已收敛正则、防误伤）", rules: { keywords: ["/接触wuwa后|大脑发生的异变/"] } },
+    { cat: "引战", name: "引战标签", desc: "抹黑 / 拉踩类标签（需开「精确过滤」才匹配标签）", rules: { tags: ["/米哈一儿|一哭|二抄|三自爆/"] } },
+    { cat: "标题党 / 营销", name: "标题党", desc: "震惊体 + 一口气看完", rules: { keywords: ["/(一口气|一次性|一天|分钟|分半|小时)(看完|带你看完|直接看完)/", "/震惊|竟然|万万没想到/"] } },
+    { cat: "标题党 / 营销", name: "营销号UP名", desc: "常见营销号账号名", rules: { keywords: ["今日话题", "话题酱", "今日知乎", "大型纪录片"] } },
+    { cat: "标题党 / 营销", name: "软传销", desc: "日入月入 / 为自己打工", rules: { keywords: ["/(日入|日赚|月入|月赚)\\d+/", "/(小时|内耗).+为自己打工/"] } },
+    { cat: "其它", name: "MBTI", rules: { keywords: ["/MBTI|[IE][SN][TF][JP]|I人|E人/"] } },
+    { cat: "其它", name: "梗视频", rules: { keywords: ["科目三", "猫meme", "/是什么梗|梗百科|大型[纪记]录片/"] } },
+    { cat: "其它", name: "含日语标题", rules: { keywords: ["/[ぁ-ヶ]/"] } }
+  ];
+
+  // src/ui/panel/sections/presets.ts
+  var API_DIM_KEYS = ["tags", "dualTags", "upBio"];
+  var presetsSection = {
+    tab: "tools",
+    render(host, ctx) {
+      const preset = document.createElement("div");
+      preset.className = "sec";
+      preset.innerHTML = '<label>预置规则库（点击加入对应黑名单，可叠加）</label><div class="hint">一键把整组规则加入「黑名单」（之后可在黑名单页增删）。需要持续更新的大名单请用「规则订阅」。</div><div id="bfb-presets"></div>';
+      host.appendChild(preset);
+      const presetBox = preset.querySelector("#bfb-presets");
+      const applyPreset = (p2) => {
+        let n = 0;
+        for (const dim of Object.keys(p2.rules || {})) {
+          const arr = CONFIG.block[dim];
+          if (!Array.isArray(arr)) continue;
+          n += pushUnique(arr, p2.rules[dim].map((v) => String(v).trim()).filter(Boolean));
+        }
+        if (n) {
+          saveConfig();
+          rescanAfterRuleChange();
+        }
+        toast(n ? `已加入「${p2.name}」${n} 条` : `「${p2.name}」已全部存在`);
+        const needsApi = Object.keys(p2.rules || {}).some((d) => API_DIM_KEYS.includes(d));
+        if (needsApi && !CONFIG.apiFilters) {
+          confirmModal(`「${p2.name}」含需联网读取（标签、简介）的规则，需开启「精确过滤」才会生效。是否现在开启？`, {
+            title: "开启精确过滤",
+            okText: "开启"
+          }).then((ok) => {
+            if (ok) {
+              CONFIG.apiFilters = true;
+              saveConfig();
+              rescanAfterRuleChange();
+            }
+            ctx.rerender();
+          });
+        } else {
+          ctx.rerender();
+        }
+      };
+      const byCat = {};
+      PRESET_LIBRARY.forEach((pp) => (byCat[pp.cat] = byCat[pp.cat] || []).push(pp));
+      Object.keys(byCat).forEach((cat) => {
+        const cl = document.createElement("div");
+        cl.style.cssText = "font-size:12px;color:#6e6e6e;margin:8px 0 4px";
+        cl.textContent = cat;
+        presetBox.appendChild(cl);
+        const bar = document.createElement("div");
+        bar.className = "toolbar";
+        byCat[cat].forEach((pp) => {
+          const btn = document.createElement("button");
+          btn.className = "act ghost";
+          btn.textContent = "+ " + pp.name;
+          if (pp.desc) btn.title = pp.desc;
+          btn.onclick = () => applyPreset(pp);
+          bar.appendChild(btn);
+        });
+        presetBox.appendChild(bar);
+      });
+    }
+  };
+
+  // src/ui/panel/sections/regex-tester.ts
+  var regexTesterSection = {
+    tab: "tools",
+    render(host) {
+      const retest = document.createElement("div");
+      retest.className = "sec";
+      retest.innerHTML = `<label>🧪 正则测试器（仅调试用，不影响规则）</label>
       <div class="addrow"><input type="text" id="bfb-re-pat" placeholder="正则或普通词，如 /一口气.*看完/i"></div>
       <div class="addrow" style="margin-top:6px"><input type="text" id="bfb-re-txt" placeholder="样例文本（粘贴一个标题试试）"></div>
       <div class="hint" id="bfb-re-out" style="margin-top:6px">输入正则与样例文本，实时显示是否命中。/.../ 按正则，否则按普通词（包含即命中）。</div>`;
-    G.tools.appendChild(retest);
-    const rePat = retest.querySelector("#bfb-re-pat");
-    const reTxt = retest.querySelector("#bfb-re-txt");
-    const reOut = retest.querySelector("#bfb-re-out");
-    const runReTest = () => {
-      const pat = (rePat.value || "").trim();
-      const txt = reTxt.value || "";
-      if (!pat) {
-        reOut.textContent = "输入正则与样例文本，实时显示是否命中。";
-        reOut.style.color = "";
-        return;
-      }
-      let re;
-      const m = pat.match(/^\/(.*)\/([a-z]*)$/);
-      try {
-        re = m ? new RegExp(m[1], m[2].includes("i") ? m[2] : m[2] + "i") : new RegExp(escapeRe(pat), "i");
-      } catch (e) {
-        reOut.textContent = "⚠ 正则语法错误：" + e.message;
-        reOut.style.color = "#e74c3c";
-        return;
-      }
-      if (!txt) {
-        reOut.textContent = `已就绪（${m ? "正则" : "普通词"}），输入样例文本看是否命中。`;
-        reOut.style.color = "";
-        return;
-      }
-      const hit = re.test(txt);
-      reOut.textContent = hit ? "✅ 命中" : "✗ 未命中";
-      reOut.style.color = hit ? "#1b7a3d" : "#6e6e6e";
-    };
-    rePat.oninput = runReTest;
-    reTxt.oninput = runReTest;
-    const io = document.createElement("div");
-    io.className = "sec";
-    io.innerHTML = `<label>规则配置导入 / 导出（备份、分享给他人）</label>
-      <div class="toolbar"><button class="act" id="bfb-export">⬇ 导出为文件</button><button class="act ghost" id="bfb-import">⬆ 从文件导入</button></div>
-      <div class="hint">导出你的全部过滤规则与开关（不含统计、缓存、个人偏好）。导入时规则列表取<b>并集</b>（不会丢失现有规则），开关以导入值为准。</div>`;
-    G.tools.appendChild(io);
-    io.querySelector("#bfb-export").onclick = () => {
-      const blob = new Blob([exportConfig()], { type: "application/json" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = `biliHoyoFairy-rules-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.json`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 2e3);
-      toast("已导出规则配置文件");
-    };
-    io.querySelector("#bfb-import").onclick = () => {
-      const inp = document.createElement("input");
-      inp.type = "file";
-      inp.accept = "application/json,.json";
-      inp.onchange = () => {
-        const f = inp.files && inp.files[0];
-        if (!f) return;
-        const r = new FileReader();
-        r.onload = () => {
-          try {
-            const parsed = JSON.parse(r.result);
-            const incoming = parsed && parsed.config ? parsed.config : parsed;
-            if (!incoming || typeof incoming !== "object") throw new Error("bad");
-            NON_PORTABLE.forEach((k) => delete incoming[k]);
-            const draft = structuredClone(CONFIG);
-            mergeImport(draft, incoming);
-            const okObj = (o) => o && typeof o === "object" && !Array.isArray(o);
-            if (!okObj(draft.block) || !okObj(draft.allow)) throw new Error("bad");
-            Object.assign(CONFIG, draft);
-            saveConfig();
-            rescanAfterRuleChange();
-            renderPanel(p);
-            p.classList.add("open");
-            toast("已导入并合并规则配置");
-          } catch (e) {
-            toast("导入失败：文件不是有效的配置 JSON");
-          }
-        };
-        r.readAsText(f);
-      };
-      inp.click();
-    };
-    const subSec = document.createElement("div");
-    subSec.className = "sec";
-    subSec.innerHTML = `<label>规则订阅（从 URL 自动拉取并合并黑名单）</label>
-      <div class="addrow"><input type="text" id="bfb-sub-url" placeholder="订阅 URL（JSON 或文本，如 GitHub raw）"></div>
-      <div class="addrow" style="margin-top:6px"><input type="text" id="bfb-sub-name" placeholder="备注名（可选）"><button id="bfb-sub-add">添加</button></div>
-      <div class="hint">订阅只并入<b>黑名单</b>（UID、UP 主名、关键词、分区、标签、简介、BV 号），不影响你的白名单与开关；启用后按声明周期自动刷新。自建 / 共享名单见仓库 examples/ 模板。</div>
-      <div class="toolbar" style="margin-top:8px"><button class="act ghost" id="bfb-sub-refresh">🔄 全部刷新</button></div>
-      <div id="bfb-sub-list" style="margin-top:8px"></div>`;
-    G.tools.appendChild(subSec);
-    const subListEl = subSec.querySelector("#bfb-sub-list");
-    const fmtSubTime = (t) => t ? new Date(t).toLocaleString() : "从未";
-    const renderSubList = () => {
-      subListEl.innerHTML = "";
-      const store = loadSubStore();
-      const subs = CONFIG.subscriptions || [];
-      if (!subs.length) {
-        const e = document.createElement("div");
-        e.className = "empty";
-        e.textContent = "（暂无订阅，添加 URL 后会显示在这里）";
-        subListEl.appendChild(e);
-        return;
-      }
-      subs.forEach((sub, idx) => {
-        const e = store[sub.url] || {};
-        const status = e.ok ? `✅ ${e.count || 0} 条 · ${fmtSubTime(e.lastSync)}` : e.error ? `⚠ ${e.error}` : "未同步";
-        const row = document.createElement("div");
-        row.className = "bfb-sub-row";
-        row.innerHTML = `
-          <label class="switch" style="margin:0"><input type="checkbox" class="sub-en" ${sub.enabled ? "checked" : ""}> <b>${escapeHtml(sub.name || metaGet(e.meta, "title") || "订阅")}</b></label>
-          <div class="bfb-sub-url">${escapeHtml(sub.url)}</div>
-          <div class="bfb-sub-status">${escapeHtml(status)}</div>
-          <div class="chip-bar"><button class="chip-act sub-refresh">刷新</button><button class="chip-act sub-del">删除</button></div>`;
-        row.querySelector(".sub-en").onchange = (ev) => {
-          sub.enabled = ev.target.checked;
-          saveConfig();
-          rescanAfterRuleChange();
-        };
-        row.querySelector(".sub-refresh").onclick = () => {
-          toast("刷新中…");
-          syncSubscription(sub.url, (ok) => {
-            rescanAfterRuleChange();
-            renderSubList();
-            toast(ok ? "已刷新" : "刷新失败");
-          });
-        };
-        row.querySelector(".sub-del").onclick = () => {
-          confirmModal("删除该订阅？其规则将立即移除。", { title: "删除订阅", okText: "删除", danger: true }).then((ok) => {
-            if (!ok) return;
-            CONFIG.subscriptions.splice(idx, 1);
-            const st = loadSubStore();
-            delete st[sub.url];
-            saveSubStore(st);
-            saveConfig();
-            rescanAfterRuleChange();
-            renderSubList();
-          });
-        };
-        subListEl.appendChild(row);
-      });
-    };
-    renderSubList();
-    subSec.querySelector("#bfb-sub-add").onclick = () => {
-      const urlEl = subSec.querySelector("#bfb-sub-url");
-      const nameEl = subSec.querySelector("#bfb-sub-name");
-      const url = (urlEl.value || "").trim();
-      const name = (nameEl.value || "").trim();
-      if (!/^https?:\/\//i.test(url)) return toast("请输入有效的 http(s) URL");
-      if ((CONFIG.subscriptions || []).some((s) => s.url === url)) return toast("该订阅已存在");
-      CONFIG.subscriptions = CONFIG.subscriptions || [];
-      CONFIG.subscriptions.push({ url, name, enabled: true });
-      saveConfig();
-      urlEl.value = "";
-      nameEl.value = "";
-      renderSubList();
-      toast("已添加，正在拉取…");
-      syncSubscription(url, (ok) => {
-        rescanAfterRuleChange();
-        renderSubList();
-        toast(ok ? "订阅已同步" : "拉取失败，请检查 URL");
-      });
-    };
-    subSec.querySelector("#bfb-sub-refresh").onclick = () => {
-      toast("刷新全部订阅…");
-      refreshSubscriptions(true, (n) => {
-        renderSubList();
-        toast(`已刷新（${n} 条有更新）`);
-      });
-    };
-    const batch = document.createElement("div");
-    batch.className = "sec";
-    batch.innerHTML = `<label>批量拉黑</label>
-      <button class="act" id="bfb-batch-block" style="width:100%">⛔ 拉黑当前页所有已屏蔽的 UP</button>
-      <div class="hint">扫描本页所有被屏蔽的卡片并拉黑其 UP；无法获取 UID 的将通过 BV 号联网解析。此操作写入账号黑名单、不可一键撤销，执行前会二次确认。</div>`;
-    G.tools.appendChild(batch);
-    batch.querySelector("#bfb-batch-block").onclick = () => {
-      const blocked = document.querySelectorAll("[" + ATTR_BLOCKED + "]");
-      if (!blocked.length) {
-        toast("当前页还没有被屏蔽的卡片，先用规则屏蔽再批量拉黑");
-        return;
-      }
-      const direct = [];
-      const toResolve = [];
-      let noInfo = 0;
-      blocked.forEach((card) => {
-        const i = extractCardInfo(card);
-        const cu = !i.uid && i.bvid ? cachedUid(i.bvid) : "";
-        if (i.uid) direct.push({ uid: String(i.uid), name: i.up || "" });
-        else if (cu) direct.push({ uid: cu, name: i.up || "" });
-        else if (i.bvid) toResolve.push({ bvid: i.bvid, name: i.up || "" });
-        else noInfo++;
-      });
-      const est = direct.length + toResolve.length;
-      if (!est) {
-        toast(`本页 ${blocked.length} 张已屏蔽，但都拿不到 UID/BV，无法拉黑`);
-        return;
-      }
-      const slowTip = toResolve.length ? `
-其中 ${toResolve.length} 位需联网解析 UID（稍慢）` : "";
-      const skipTip = noInfo ? `
-（${noInfo} 张信息不足已跳过）` : "";
-      const proceed = () => {
-        const runBlacklist = (all) => {
-          const btn = batch.querySelector("#bfb-batch-block");
-          const origLabel = btn.textContent;
-          btn.disabled = true;
-          toast(`开始拉黑 ${all.length} 位…`);
-          doBlacklistMany(
-            all,
-            (r) => {
-              btn.disabled = false;
-              btn.textContent = origLabel;
-              toast(`批量拉黑完成：新拉黑 ${r.added}，已在黑名单 ${r.already}${r.failed.length ? `，失败 ${r.failed.length}（多为未登录/风控/已满）` : ""}`);
-              refreshPanelIfOpen2();
-            },
-            (pg) => {
-              btn.textContent = pg.paused ? `⚠ 风控暂停 ${pg.wait}s · ${pg.done}/${pg.total}` : `拉黑中 ${pg.done}/${pg.total}…`;
-            }
-          );
-        };
-        if (!toResolve.length) {
-          runBlacklist(direct);
+      host.appendChild(retest);
+      const rePat = retest.querySelector("#bfb-re-pat");
+      const reTxt = retest.querySelector("#bfb-re-txt");
+      const reOut = retest.querySelector("#bfb-re-out");
+      const runReTest = () => {
+        const pat = (rePat.value || "").trim();
+        const txt = reTxt.value || "";
+        if (!pat) {
+          reOut.textContent = "输入正则与样例文本，实时显示是否命中。";
+          reOut.style.color = "";
           return;
         }
-        toast(`正在解析 ${toResolve.length} 个 UID…`);
-        const resolved = [];
-        let pending = toResolve.length;
-        toResolve.forEach((t) => {
-          fetchView(t.bvid, (d) => {
-            if (d && d.owner) resolved.push({ uid: String(d.owner.mid), name: d.owner.name || t.name });
-            if (CONFIG.blacklistCollab && d && Array.isArray(d.staff)) {
-              d.staff.forEach((s) => resolved.push({ uid: String(s.mid), name: s.name || "" }));
-            }
-            if (--pending === 0) runBlacklist(direct.concat(resolved));
-          });
-        });
+        let re;
+        const m = pat.match(/^\/(.*)\/([a-z]*)$/);
+        try {
+          re = m ? new RegExp(m[1], m[2].includes("i") ? m[2] : m[2] + "i") : new RegExp(escapeRe(pat), "i");
+        } catch (e) {
+          reOut.textContent = "⚠ 正则语法错误：" + e.message;
+          reOut.style.color = "#e74c3c";
+          return;
+        }
+        if (!txt) {
+          reOut.textContent = `已就绪（${m ? "正则" : "普通词"}），输入样例文本看是否命中。`;
+          reOut.style.color = "";
+          return;
+        }
+        const hit = re.test(txt);
+        reOut.textContent = hit ? "✅ 命中" : "✗ 未命中";
+        reOut.style.color = hit ? "#1b7a3d" : "#6e6e6e";
       };
-      confirmModal(`将拉黑当前页约 ${est} 位 UP。${slowTip}${skipTip}
+      rePat.oninput = runReTest;
+      reTxt.oninput = runReTest;
+    }
+  };
 
-会写入账号黑名单且不可一键撤销。`, {
-        title: "批量拉黑确认",
-        okText: `拉黑约 ${est} 位`,
-        danger: true
-      }).then((ok) => {
-        if (ok) proceed();
-      });
+  // src/ui/panel/sections/io.ts
+  var ioSection = {
+    tab: "tools",
+    render(host, ctx) {
+      const io = document.createElement("div");
+      io.className = "sec";
+      io.innerHTML = `<label>规则配置导入 / 导出（备份、分享给他人）</label>
+      <div class="toolbar"><button class="act" id="bfb-export">⬇ 导出为文件</button><button class="act ghost" id="bfb-import">⬆ 从文件导入</button></div>
+      <div class="hint">导出你的全部过滤规则与开关（不含统计、缓存、个人偏好）。导入时规则列表取<b>并集</b>（不会丢失现有规则），开关以导入值为准。</div>`;
+      host.appendChild(io);
+      io.querySelector("#bfb-export").onclick = () => {
+        const blob = new Blob([exportConfig()], { type: "application/json" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `biliHoyoFairy-rules-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.json`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 2e3);
+        toast("已导出规则配置文件");
+      };
+      io.querySelector("#bfb-import").onclick = () => {
+        const inp = document.createElement("input");
+        inp.type = "file";
+        inp.accept = "application/json,.json";
+        inp.onchange = () => {
+          const f = inp.files && inp.files[0];
+          if (!f) return;
+          const r = new FileReader();
+          r.onload = () => {
+            try {
+              const parsed = JSON.parse(r.result);
+              const raw = parsed && parsed.config ? parsed.config : parsed;
+              if (!raw || typeof raw !== "object") throw new Error("bad");
+              const incoming = sanitizeConfigInput(migrateConfig(raw));
+              NON_PORTABLE.forEach((k) => delete incoming[k]);
+              delete incoming.schemaVersion;
+              const draft = structuredClone(CONFIG);
+              mergeImport(draft, incoming);
+              const okObj = (o) => o && typeof o === "object" && !Array.isArray(o);
+              if (!okObj(draft.block) || !okObj(draft.allow)) throw new Error("bad");
+              Object.assign(CONFIG, draft);
+              saveConfig();
+              rescanAfterRuleChange();
+              ctx.rerender();
+              toast("已导入并合并规则配置");
+            } catch (e) {
+              toast("导入失败：文件不是有效的配置 JSON");
+            }
+          };
+          r.readAsText(f);
+        };
+        inp.click();
+      };
+    }
+  };
+
+  // src/batch.ts
+  function parseNameList(raw) {
+    const uids = [];
+    const names = [];
+    const seen = /* @__PURE__ */ new Set();
+    const addUid = (u) => {
+      if (!seen.has(u)) {
+        seen.add(u);
+        uids.push(u);
+      }
     };
-    const listSec = document.createElement("div");
-    listSec.className = "sec";
-    listSec.innerHTML = `<label>名单批量处理（粘贴 / 文件 / URL）</label>
+    String(raw || "").split(/[\s,，;；、]+/).forEach((tok) => {
+      const t = (tok || "").trim();
+      if (!t || t[0] === "!" || t[0] === "#") return;
+      let m;
+      if (m = t.match(/^uid:\s*(\d+)$/i)) addUid(m[1]);
+      else if (m = t.match(/^up:\s*(.+)$/i)) {
+        const nm = m[1].trim();
+        if (nm) names.push(nm);
+      } else if (/^\d{3,}$/.test(t)) addUid(t);
+      else names.push(t);
+    });
+    return { uids, names };
+  }
+
+  // src/ui/panel/sections/name-list.ts
+  var nameListSection = {
+    tab: "tools",
+    render(host, ctx) {
+      const listSec = document.createElement("div");
+      listSec.className = "sec";
+      listSec.innerHTML = `<label>名单批量处理（粘贴 / 文件 / URL）</label>
       <textarea id="bfb-list-input" class="bfb-listta" rows="4" placeholder="粘贴一批 UID 或 UP 名，空格、逗号、换行、分号均可分隔。&#10;纯数字识别为 UID，其余识别为 UP 名；也支持 uid:123、up:名字 前缀。"></textarea>
       <div class="toolbar" style="margin-top:6px">
         <button class="act ghost" id="bfb-list-file">📁 从文件载入</button>
@@ -3284,177 +3299,394 @@
       </div>
       <div class="hint">「仅屏蔽」只在本地隐藏；「拉黑」会写入账号黑名单（限速执行、触发风控自动续传、<b>不可一键撤销</b>、执行前确认）。仅有名称、无 UID 的条目将降级为本地屏蔽。</div>
       <div id="bfb-list-status" class="stat" style="margin-top:6px;min-height:1.2em"></div>`;
-    G.tools.insertBefore(listSec, subSec);
-    const listTa = listSec.querySelector("#bfb-list-input");
-    const listStatus = listSec.querySelector("#bfb-list-status");
-    const parseList = () => parseNameList(listTa.value);
-    const addLocalMany = (uids, names) => {
-      const n = pushUnique(CONFIG.block.uids, uids) + pushUnique(CONFIG.block.upNames, names);
-      if (n) {
-        saveConfig();
-        rescanAfterRuleChange();
-      }
-      return n;
-    };
-    listSec.querySelector("#bfb-list-file").onclick = () => {
-      const inp = document.createElement("input");
-      inp.type = "file";
-      inp.accept = ".txt,.csv,.json,text/plain,application/json";
-      inp.onchange = () => {
-        const f = inp.files && inp.files[0];
-        if (!f) return;
-        const r = new FileReader();
-        r.onload = () => {
-          listTa.value = (listTa.value ? listTa.value + "\n" : "") + String(r.result || "");
-          toast("已载入文件内容到输入框，确认后点 仅屏蔽 / 拉黑");
-        };
-        r.readAsText(f);
-      };
-      inp.click();
-    };
-    listSec.querySelector("#bfb-list-url").onclick = () => {
-      promptModal("输入名单 URL（纯文本：每行一个 UID 或 UP 名）：", { title: "从 URL 载入", placeholder: "https://…", okText: "载入" }).then((input) => {
-        const url = (input || "").trim();
-        if (!url) return;
-        if (!/^https?:\/\//i.test(url)) return toast("请输入有效的 http(s) URL", "warn");
-        if (typeof GM_xmlhttpRequest !== "function") return toast("当前环境不支持联网载入", "warn");
-        toast("载入中…");
-        GM_xmlhttpRequest({
-          method: "GET",
-          url,
-          timeout: 15e3,
-          onload: (r) => {
-            if (r.status >= 200 && r.status < 300 && r.responseText) {
-              listTa.value = (listTa.value ? listTa.value + "\n" : "") + r.responseText;
-              toast("已载入 URL 内容到输入框，确认后点 仅屏蔽 / 拉黑", "success");
-            } else toast("载入失败：HTTP " + r.status, "error");
-          },
-          onerror: () => toast("网络错误，载入失败", "error"),
-          ontimeout: () => toast("载入超时", "error")
-        });
-      });
-    };
-    listSec.querySelector("#bfb-list-hide").onclick = () => {
-      const { uids, names } = parseList();
-      if (!uids.length && !names.length) return toast("没解析到有效的 UID / 名称");
-      const n = addLocalMany(uids, names);
-      toast(`已本地屏蔽：新增 ${n} 条（解析到 UID ${uids.length} / 名称 ${names.length}）`);
-      renderPanel(p);
-      p.classList.add("open");
-    };
-    listSec.querySelector("#bfb-list-block").onclick = () => {
-      const { uids, names } = parseList();
-      if (!uids.length && !names.length) return toast("没解析到有效的 UID / 名称");
-      const est = Math.ceil(uids.length * 1.3);
-      const nameTip = names.length ? `
-另有 ${names.length} 个只有名称（无 UID）→ 仅本地屏蔽，不写账号` : "";
-      const limitTip = uids.length > 200 ? "\n数量较多：账号黑名单有总量上限，且单日大批量操作更易触发风控，建议分批进行。" : "";
-      const run = () => {
-        const nLocal = addLocalMany([], names);
-        if (!uids.length) {
-          toast(`无 UID 可账号拉黑；已本地屏蔽 ${nLocal} 个名称`);
-          renderPanel(p);
-          p.classList.add("open");
-          return;
+      host.appendChild(listSec);
+      const listTa = listSec.querySelector("#bfb-list-input");
+      const listStatus = listSec.querySelector("#bfb-list-status");
+      const parseList = () => parseNameList(listTa.value);
+      const addLocalMany = (uids, names) => {
+        const n = pushUnique(CONFIG.block.uids, uids) + pushUnique(CONFIG.block.upNames, names);
+        if (n) {
+          saveConfig();
+          rescanAfterRuleChange();
         }
-        toast(`开始拉黑 ${uids.length} 个…执行期间请勿关闭面板`);
-        listStatus.textContent = `准备拉黑 ${uids.length} 个…`;
-        const stopBtn = listSec.querySelector("#bfb-list-stop");
-        const blockBtn = listSec.querySelector("#bfb-list-block");
-        const resetButtons = () => {
-          stopBtn.style.display = "none";
-          stopBtn.disabled = false;
-          stopBtn.textContent = "⏹ 停止";
-          blockBtn.disabled = false;
-        };
-        const ctl = doBlacklistMany(
-          uids.map((u) => ({ uid: u, name: "" })),
-          (r) => {
-            resetButtons();
-            const failUids = r.failed.map((f) => f.uid);
-            const byCode = {};
-            r.failed.forEach((f) => byCode[f.code] = (byCode[f.code] || 0) + 1);
-            const failBreak = Object.entries(byCode).map(([c, n]) => `${REL_ERR[c] || "code " + c}×${n}`).join("、");
-            const head = r.cancelled ? `⏹ 已停止（已处理 ${r.done}/${r.total}）：` : `✅ 完成（共 ${r.total}）：`;
-            listStatus.innerHTML = `${head}<b>新拉黑 ${r.added}</b>` + (r.already ? ` · 此前已在黑名单 ${r.already}` : "") + (failUids.length ? ` · <b style="color:#e74c3c">失败 ${failUids.length}</b>（${escapeHtml(failBreak)}；已回填可重试）` : "") + (nLocal ? ` · 另本地屏蔽 ${nLocal} 名称` : "") + `<br><span style="color:#888">官方黑名单本次新增 = 新拉黑 ${r.added} 个（“已在黑名单”的不会再叠加；如仍对不上，多为风控/已满，开调试模式看控制台 code 明细）</span>`;
-            const remain = r.cancelled ? uids.slice(r.done) : [];
-            const refill = failUids.concat(remain);
-            listTa.value = refill.length ? refill.join("\n") : "";
-            toast(`${r.cancelled ? "已停止" : "完成"}：新拉黑 ${r.added}，已在黑名单 ${r.already}，失败 ${failUids.length}`);
-            if (panelStatsRefresh) panelStatsRefresh();
-          },
-          (pg) => {
-            listStatus.textContent = pg.paused ? `⚠ 触发风控，已暂停约 ${pg.wait}s 后自动继续 · 进度 ${pg.done}/${pg.total}（新拉黑 ${pg.added}，已在 ${pg.already}，失败 ${pg.fail}）` : `拉黑中 ${pg.done}/${pg.total} · 新拉黑 ${pg.added}${pg.already ? `，已在 ${pg.already}` : ""}${pg.fail ? `，失败 ${pg.fail}` : ""}…`;
-            if (panelStatsRefresh) panelStatsRefresh();
-          }
-        );
-        blockBtn.disabled = true;
-        stopBtn.style.display = "";
-        stopBtn.onclick = () => {
-          stopBtn.disabled = true;
-          stopBtn.textContent = "停止中…";
-          listStatus.textContent = "停止中：等当前这一个完成后收尾…";
-          ctl.cancel();
-        };
+        return n;
       };
-      if (uids.length) {
-        confirmModal(
-          `将把 ${uids.length} 个 UID 写入你的账号黑名单（限速约 ${est} 秒起，触发风控会自动暂停续传、耗时更久），不可一键撤销。${nameTip}${limitTip}
+      listSec.querySelector("#bfb-list-file").onclick = () => {
+        const inp = document.createElement("input");
+        inp.type = "file";
+        inp.accept = ".txt,.csv,.json,text/plain,application/json";
+        inp.onchange = () => {
+          const f = inp.files && inp.files[0];
+          if (!f) return;
+          const r = new FileReader();
+          r.onload = () => {
+            listTa.value = (listTa.value ? listTa.value + "\n" : "") + String(r.result || "");
+            toast("已载入文件内容到输入框，确认后点 仅屏蔽 / 拉黑");
+          };
+          r.readAsText(f);
+        };
+        inp.click();
+      };
+      listSec.querySelector("#bfb-list-url").onclick = () => {
+        promptModal("输入名单 URL（纯文本：每行一个 UID 或 UP 名）：", { title: "从 URL 载入", placeholder: "https://…", okText: "载入" }).then((input) => {
+          const url = (input || "").trim();
+          if (!url) return;
+          if (!/^https?:\/\//i.test(url)) return toast("请输入有效的 http(s) URL", "warn");
+          if (typeof GM_xmlhttpRequest !== "function") return toast("当前环境不支持联网载入", "warn");
+          toast("载入中…");
+          GM_xmlhttpRequest({
+            method: "GET",
+            url,
+            timeout: 15e3,
+            onload: (r) => {
+              if (r.status >= 200 && r.status < 300 && r.responseText) {
+                listTa.value = (listTa.value ? listTa.value + "\n" : "") + r.responseText;
+                toast("已载入 URL 内容到输入框，确认后点 仅屏蔽 / 拉黑", "success");
+              } else toast("载入失败：HTTP " + r.status, "error");
+            },
+            onerror: () => toast("网络错误，载入失败", "error"),
+            ontimeout: () => toast("载入超时", "error")
+          });
+        });
+      };
+      listSec.querySelector("#bfb-list-hide").onclick = () => {
+        const { uids, names } = parseList();
+        if (!uids.length && !names.length) return toast("没解析到有效的 UID / 名称");
+        const n = addLocalMany(uids, names);
+        toast(`已本地屏蔽：新增 ${n} 条（解析到 UID ${uids.length} / 名称 ${names.length}）`);
+        ctx.rerender();
+      };
+      listSec.querySelector("#bfb-list-block").onclick = () => {
+        const { uids, names } = parseList();
+        if (!uids.length && !names.length) return toast("没解析到有效的 UID / 名称");
+        const est = Math.ceil(uids.length * 1.3);
+        const nameTip = names.length ? `
+另有 ${names.length} 个只有名称（无 UID）→ 仅本地屏蔽，不写账号` : "";
+        const limitTip = uids.length > 200 ? "\n数量较多：账号黑名单有总量上限，且单日大批量操作更易触发风控，建议分批进行。" : "";
+        const run = () => {
+          const nLocal = addLocalMany([], names);
+          if (!uids.length) {
+            toast(`无 UID 可账号拉黑；已本地屏蔽 ${nLocal} 个名称`);
+            ctx.rerender();
+            return;
+          }
+          toast(`开始拉黑 ${uids.length} 个…执行期间请勿关闭面板`);
+          listStatus.textContent = `准备拉黑 ${uids.length} 个…`;
+          const stopBtn = listSec.querySelector("#bfb-list-stop");
+          const blockBtn = listSec.querySelector("#bfb-list-block");
+          const resetButtons = () => {
+            stopBtn.style.display = "none";
+            stopBtn.disabled = false;
+            stopBtn.textContent = "⏹ 停止";
+            blockBtn.disabled = false;
+          };
+          const ctl = doBlacklistMany(
+            uids.map((u) => ({ uid: u, name: "" })),
+            (r) => {
+              resetButtons();
+              const failUids = r.failed.map((f) => f.uid);
+              const byCode = {};
+              r.failed.forEach((f) => byCode[f.code] = (byCode[f.code] || 0) + 1);
+              const failBreak = Object.entries(byCode).map(([c, n]) => `${REL_ERR[c] || "code " + c}×${n}`).join("、");
+              const head = r.cancelled ? `⏹ 已停止（已处理 ${r.done}/${r.total}）：` : `✅ 完成（共 ${r.total}）：`;
+              listStatus.innerHTML = `${head}<b>新拉黑 ${r.added}</b>` + (r.already ? ` · 此前已在黑名单 ${r.already}` : "") + (failUids.length ? ` · <b style="color:#e74c3c">失败 ${failUids.length}</b>（${escapeHtml(failBreak)}；已回填可重试）` : "") + (nLocal ? ` · 另本地屏蔽 ${nLocal} 名称` : "") + `<br><span style="color:#888">官方黑名单本次新增 = 新拉黑 ${r.added} 个（“已在黑名单”的不会再叠加；如仍对不上，多为风控/已满，开调试模式看控制台 code 明细）</span>`;
+              const remain = r.cancelled ? uids.slice(r.done) : [];
+              const refill = failUids.concat(remain);
+              listTa.value = refill.length ? refill.join("\n") : "";
+              toast(`${r.cancelled ? "已停止" : "完成"}：新拉黑 ${r.added}，已在黑名单 ${r.already}，失败 ${failUids.length}`);
+              ctx.refreshStats();
+            },
+            (pg) => {
+              listStatus.textContent = pg.paused ? `⚠ 触发风控，已暂停约 ${pg.wait}s 后自动继续 · 进度 ${pg.done}/${pg.total}（新拉黑 ${pg.added}，已在 ${pg.already}，失败 ${pg.fail}）` : `拉黑中 ${pg.done}/${pg.total} · 新拉黑 ${pg.added}${pg.already ? `，已在 ${pg.already}` : ""}${pg.fail ? `，失败 ${pg.fail}` : ""}…`;
+              ctx.refreshStats();
+            }
+          );
+          blockBtn.disabled = true;
+          stopBtn.style.display = "";
+          stopBtn.onclick = () => {
+            stopBtn.disabled = true;
+            stopBtn.textContent = "停止中…";
+            listStatus.textContent = "停止中：等当前这一个完成后收尾…";
+            ctl.cancel();
+          };
+        };
+        if (uids.length) {
+          confirmModal(
+            `将把 ${uids.length} 个 UID 写入你的账号黑名单（限速约 ${est} 秒起，触发风控会自动暂停续传、耗时更久），不可一键撤销。${nameTip}${limitTip}
 
 执行期间请保持此页面打开，可随时点「停止」中断。`,
-          { title: "批量拉黑确认", okText: `拉黑 ${uids.length} 个`, danger: true }
-        ).then((ok) => {
-          if (ok) run();
+            { title: "批量拉黑确认", okText: `拉黑 ${uids.length} 个`, danger: true }
+          ).then((ok) => {
+            if (ok) run();
+          });
+        } else {
+          run();
+        }
+      };
+    }
+  };
+
+  // src/ui/panel/sections/subscriptions.ts
+  var subscriptionsSection = {
+    tab: "tools",
+    render(host) {
+      const subSec = document.createElement("div");
+      subSec.className = "sec";
+      subSec.innerHTML = `<label>规则订阅（从 URL 自动拉取并合并黑名单）</label>
+      <div class="addrow"><input type="text" id="bfb-sub-url" placeholder="订阅 URL（JSON 或文本，如 GitHub raw）"></div>
+      <div class="addrow" style="margin-top:6px"><input type="text" id="bfb-sub-name" placeholder="备注名（可选）"><button id="bfb-sub-add">添加</button></div>
+      <div class="hint">订阅只并入<b>黑名单</b>（UID、UP 主名、关键词、分区、标签、简介、BV 号），不影响你的白名单与开关；启用后按声明周期自动刷新。自建 / 共享名单见仓库 examples/ 模板。</div>
+      <div class="toolbar" style="margin-top:8px"><button class="act ghost" id="bfb-sub-refresh">🔄 全部刷新</button></div>
+      <div id="bfb-sub-list" style="margin-top:8px"></div>`;
+      host.appendChild(subSec);
+      const subListEl = subSec.querySelector("#bfb-sub-list");
+      const fmtSubTime = (t) => t ? new Date(t).toLocaleString() : "从未";
+      const renderSubList = () => {
+        subListEl.innerHTML = "";
+        const store = loadSubStore();
+        const subs = CONFIG.subscriptions || [];
+        if (!subs.length) {
+          const e = document.createElement("div");
+          e.className = "empty";
+          e.textContent = "（暂无订阅，添加 URL 后会显示在这里）";
+          subListEl.appendChild(e);
+          return;
+        }
+        subs.forEach((sub, idx) => {
+          const e = store[sub.url] || {};
+          const status = e.ok ? `✅ ${e.count || 0} 条 · ${fmtSubTime(e.lastSync)}` : e.error ? `⚠ ${e.error}` : "未同步";
+          const row = document.createElement("div");
+          row.className = "bfb-sub-row";
+          row.innerHTML = `
+          <label class="switch" style="margin:0"><input type="checkbox" class="sub-en" ${sub.enabled ? "checked" : ""}> <b>${escapeHtml(sub.name || metaGet(e.meta, "title") || "订阅")}</b></label>
+          <div class="bfb-sub-url">${escapeHtml(sub.url)}</div>
+          <div class="bfb-sub-status">${escapeHtml(status)}</div>
+          <div class="chip-bar"><button class="chip-act sub-refresh">刷新</button><button class="chip-act sub-del">删除</button></div>`;
+          row.querySelector(".sub-en").onchange = (ev) => {
+            sub.enabled = ev.target.checked;
+            saveConfig();
+            rescanAfterRuleChange();
+          };
+          row.querySelector(".sub-refresh").onclick = () => {
+            toast("刷新中…");
+            syncSubscription(sub.url, (ok) => {
+              rescanAfterRuleChange();
+              renderSubList();
+              toast(ok ? "已刷新" : "刷新失败");
+            });
+          };
+          row.querySelector(".sub-del").onclick = () => {
+            confirmModal("删除该订阅？其规则将立即移除。", { title: "删除订阅", okText: "删除", danger: true }).then((ok) => {
+              if (!ok) return;
+              CONFIG.subscriptions.splice(idx, 1);
+              const st = loadSubStore();
+              delete st[sub.url];
+              saveSubStore(st);
+              saveConfig();
+              rescanAfterRuleChange();
+              renderSubList();
+            });
+          };
+          subListEl.appendChild(row);
         });
-      } else {
-        run();
-      }
-    };
-    const tool = document.createElement("div");
-    tool.className = "sec toolbar";
-    tool.innerHTML = `<button class="act ghost" id="bfb-clearcount">清空计数 / 记录</button><button class="act ghost" id="bfb-reset">恢复默认</button>`;
-    G.tools.appendChild(tool);
-    tool.querySelector("#bfb-clearcount").onclick = () => {
-      CONFIG.blockedCount = 0;
-      setSessionBlocked(0);
-      blockedLog.length = 0;
-      saveConfig();
-      updateBadge();
-      renderPanel(p);
-      p.classList.add("open");
-      toast("已清空计数与本次记录");
-    };
-    tool.querySelector("#bfb-reset").onclick = () => {
-      confirmModal("确定恢复默认配置？现有规则将全部清空，不可撤销。", { title: "恢复默认", okText: "恢复默认", danger: true }).then((ok) => {
-        if (!ok) return;
-        Object.assign(CONFIG, structuredClone(DEFAULT_CONFIG));
+      };
+      renderSubList();
+      subSec.querySelector("#bfb-sub-add").onclick = () => {
+        const urlEl = subSec.querySelector("#bfb-sub-url");
+        const nameEl = subSec.querySelector("#bfb-sub-name");
+        const url = (urlEl.value || "").trim();
+        const name = (nameEl.value || "").trim();
+        if (!/^https?:\/\//i.test(url)) return toast("请输入有效的 http(s) URL");
+        if ((CONFIG.subscriptions || []).some((s) => s.url === url)) return toast("该订阅已存在");
+        CONFIG.subscriptions = CONFIG.subscriptions || [];
+        CONFIG.subscriptions.push({ url, name, enabled: true });
         saveConfig();
-        rescanAfterRuleChange();
-        renderPanel(p);
-        p.classList.add("open");
-      });
-    };
-    const logSec = document.createElement("div");
-    logSec.className = "sec";
-    logSec.innerHTML = `<label>🔎 屏蔽记录（本次会话共 <span id="bfb-log-count">0</span> 条） <button class="act ghost" id="bfb-log-toggle" style="float:right">展开 / 收起</button></label><div class="stat" id="bfb-log-tally">分类：暂无</div><div id="bfb-log-list" style="display:none;max-height:240px;overflow:auto;overscroll-behavior:contain;margin-top:6px;font-size:12px"></div>`;
-    G.tools.appendChild(logSec);
-    const logList = logSec.querySelector("#bfb-log-list");
-    const logCount = logSec.querySelector("#bfb-log-count");
-    const logTally = logSec.querySelector("#bfb-log-tally");
-    const foot = document.createElement("div");
-    foot.className = "sec";
-    foot.innerHTML = `<a class="manage" href="${BLACKLIST_MANAGE_URL}" target="_blank">→ 打开 B 站官方黑名单管理页（取消拉黑 / 查看人数）</a>
+        urlEl.value = "";
+        nameEl.value = "";
+        renderSubList();
+        toast("已添加，正在拉取…");
+        syncSubscription(url, (ok) => {
+          rescanAfterRuleChange();
+          renderSubList();
+          toast(ok ? "订阅已同步" : "拉取失败，请检查 URL");
+        });
+      };
+      subSec.querySelector("#bfb-sub-refresh").onclick = () => {
+        toast("刷新全部订阅…");
+        refreshSubscriptions(true, (n) => {
+          renderSubList();
+          toast(`已刷新（${n} 条有更新）`);
+        });
+      };
+    }
+  };
+
+  // src/ui/panel/sections/batch-block.ts
+  var batchBlockSection = {
+    tab: "tools",
+    render(host) {
+      const batch = document.createElement("div");
+      batch.className = "sec";
+      batch.innerHTML = `<label>批量拉黑</label>
+      <button class="act" id="bfb-batch-block" style="width:100%">⛔ 拉黑当前页所有已屏蔽的 UP</button>
+      <div class="hint">扫描本页所有被屏蔽的卡片并拉黑其 UP；无法获取 UID 的将通过 BV 号联网解析。此操作写入账号黑名单、不可一键撤销，执行前会二次确认。</div>`;
+      host.appendChild(batch);
+      batch.querySelector("#bfb-batch-block").onclick = () => {
+        const blocked = document.querySelectorAll("[" + ATTR_BLOCKED + "]");
+        if (!blocked.length) {
+          toast("当前页还没有被屏蔽的卡片，先用规则屏蔽再批量拉黑");
+          return;
+        }
+        const direct = [];
+        const toResolve = [];
+        let noInfo = 0;
+        blocked.forEach((card) => {
+          const i = extractCardInfo(card);
+          const cu = !i.uid && i.bvid ? cachedUid(i.bvid) : "";
+          if (i.uid) direct.push({ uid: String(i.uid), name: i.up || "" });
+          else if (cu) direct.push({ uid: cu, name: i.up || "" });
+          else if (i.bvid) toResolve.push({ bvid: i.bvid, name: i.up || "" });
+          else noInfo++;
+        });
+        const est = direct.length + toResolve.length;
+        if (!est) {
+          toast(`本页 ${blocked.length} 张已屏蔽，但都拿不到 UID/BV，无法拉黑`);
+          return;
+        }
+        const slowTip = toResolve.length ? `
+其中 ${toResolve.length} 位需联网解析 UID（稍慢）` : "";
+        const skipTip = noInfo ? `
+（${noInfo} 张信息不足已跳过）` : "";
+        const runBlacklist = (all) => {
+          const btn = batch.querySelector("#bfb-batch-block");
+          const origLabel = btn.textContent;
+          btn.disabled = true;
+          toast(`开始拉黑 ${all.length} 位…`);
+          doBlacklistMany(
+            all,
+            (r) => {
+              btn.disabled = false;
+              btn.textContent = origLabel;
+              toast(`批量拉黑完成：新拉黑 ${r.added}，已在黑名单 ${r.already}${r.failed.length ? `，失败 ${r.failed.length}（多为未登录/风控/已满）` : ""}`);
+              refreshPanelIfOpen();
+            },
+            (pg) => {
+              btn.textContent = pg.paused ? `⚠ 风控暂停 ${pg.wait}s · ${pg.done}/${pg.total}` : `拉黑中 ${pg.done}/${pg.total}…`;
+            }
+          );
+        };
+        const proceed = () => {
+          if (!toResolve.length) {
+            runBlacklist(direct);
+            return;
+          }
+          toast(`正在解析 ${toResolve.length} 个 UID…`);
+          const resolved = [];
+          let pending = toResolve.length;
+          toResolve.forEach((t) => {
+            fetchView(t.bvid, (d) => {
+              if (d && d.owner) resolved.push({ uid: String(d.owner.mid), name: d.owner.name || t.name });
+              if (CONFIG.blacklistCollab && d && Array.isArray(d.staff)) {
+                d.staff.forEach((s) => resolved.push({ uid: String(s.mid), name: s.name || "" }));
+              }
+              if (--pending === 0) runBlacklist(direct.concat(resolved));
+            });
+          });
+        };
+        confirmModal(`将拉黑当前页约 ${est} 位 UP。${slowTip}${skipTip}
+
+会写入账号黑名单且不可一键撤销。`, {
+          title: "批量拉黑确认",
+          okText: `拉黑约 ${est} 位`,
+          danger: true
+        }).then((ok) => {
+          if (ok) proceed();
+        });
+      };
+    }
+  };
+
+  // src/ui/panel/sections/reset.ts
+  var resetSection = {
+    tab: "tools",
+    render(host, ctx) {
+      const tool = document.createElement("div");
+      tool.className = "sec toolbar";
+      tool.innerHTML = `<button class="act ghost" id="bfb-clearcount">清空计数 / 记录</button><button class="act ghost" id="bfb-reset">恢复默认</button>`;
+      host.appendChild(tool);
+      tool.querySelector("#bfb-clearcount").onclick = () => {
+        CONFIG.blockedCount = 0;
+        setSessionBlocked(0);
+        blockedLog.length = 0;
+        saveConfig();
+        updateBadge();
+        ctx.rerender();
+        toast("已清空计数与本次记录");
+      };
+      tool.querySelector("#bfb-reset").onclick = () => {
+        confirmModal("确定恢复默认配置？现有规则将全部清空，不可撤销。", { title: "恢复默认", okText: "恢复默认", danger: true }).then((ok) => {
+          if (!ok) return;
+          Object.assign(CONFIG, structuredClone(DEFAULT_CONFIG));
+          saveConfig();
+          rescanAfterRuleChange();
+          ctx.rerender();
+        });
+      };
+    }
+  };
+
+  // src/ui/panel/sections/health.ts
+  var healthSection = {
+    tab: "tools",
+    render(host) {
+      const sec = document.createElement("div");
+      sec.className = "sec";
+      sec.innerHTML = `<label>🩺 运行自检 <button class="act ghost" id="bfb-health-refresh" style="float:right">刷新</button></label>
+      <div class="stat" id="bfb-health-sum"></div>
+      <div id="bfb-health-warn" style="margin-top:6px"></div>`;
+      host.appendChild(sec);
+      const sumEl = sec.querySelector("#bfb-health-sum");
+      const warnEl = sec.querySelector("#bfb-health-warn");
+      const refresh = () => {
+        sumEl.textContent = healthSummary();
+        const w = healthReport();
+        if (w.length) {
+          warnEl.innerHTML = w.map((x) => `<div class="hint" style="color:#e74c3c">⚠ ${escapeHtml(x)}</div>`).join("");
+          return;
+        }
+        const notes = healthNotes();
+        warnEl.innerHTML = notes.length ? notes.map((x) => `<div class="hint">ℹ ${escapeHtml(x)}</div>`).join("") : '<div class="hint" style="color:#1b7a3d">✅ 拦截层与 DOM 层均工作正常</div>';
+      };
+      sec.querySelector("#bfb-health-refresh").onclick = refresh;
+      refresh();
+    }
+  };
+
+  // src/ui/panel/sections/log.ts
+  var logSection = {
+    tab: "tools",
+    render(host, ctx) {
+      const logSec = document.createElement("div");
+      logSec.className = "sec";
+      logSec.innerHTML = `<label>🔎 屏蔽记录（本次会话共 <span id="bfb-log-count">0</span> 条） <button class="act ghost" id="bfb-log-toggle" style="float:right">展开 / 收起</button></label><div class="stat" id="bfb-log-tally">分类：暂无</div><div id="bfb-log-list" style="display:none;max-height:240px;overflow:auto;overscroll-behavior:contain;margin-top:6px;font-size:12px"></div>`;
+      host.appendChild(logSec);
+      const logList = logSec.querySelector("#bfb-log-list");
+      const logCount = logSec.querySelector("#bfb-log-count");
+      const logTally = logSec.querySelector("#bfb-log-tally");
+      const foot = document.createElement("div");
+      foot.className = "sec";
+      foot.innerHTML = `<a class="manage" href="${BLACKLIST_MANAGE_URL}" target="_blank">→ 打开 B 站官方黑名单管理页（取消拉黑 / 查看人数）</a>
       <div class="stat" style="margin-top:6px">累计拦截 <span id="bfb-foot-total">0</span> 次 · 本次会话 <span id="bfb-foot-session">0</span> 次</div>`;
-    G.tools.appendChild(foot);
-    const footTotal = foot.querySelector("#bfb-foot-total");
-    const footSession = foot.querySelector("#bfb-foot-session");
-    const refreshLog = () => {
-      logCount.textContent = blockedLog.length;
-      const tally = tallyLog();
-      logTally.textContent = "分类：" + (Object.keys(tally).length ? Object.entries(tally).map(([k, v]) => `${k}×${v}`).join("  ") : "暂无");
-      footTotal.textContent = CONFIG.blockedCount;
-      footSession.textContent = sessionBlocked;
-      if (logList.style.display !== "none") {
+      host.appendChild(foot);
+      const footTotal = foot.querySelector("#bfb-foot-total");
+      const footSession = foot.querySelector("#bfb-foot-session");
+      const refreshLog = () => {
+        logCount.textContent = blockedLog.length;
+        const tally = tallyLog();
+        logTally.textContent = "分类：" + (Object.keys(tally).length ? Object.entries(tally).map(([k, v]) => `${k}×${v}`).join("  ") : "暂无");
+        footTotal.textContent = CONFIG.blockedCount;
+        footSession.textContent = sessionBlocked;
+        if (logList.style.display === "none") return;
         logList.innerHTML = "";
         if (!blockedLog.length) {
           logList.innerHTML = '<div class="stat">暂无记录</div>';
@@ -3485,7 +3717,7 @@
               if (b.uid) addToList(CONFIG.allow.uids, b.uid);
               else addToList(CONFIG.allow.upNames, b.up);
               toast(`已放行并加入白名单：${b.up || "UID " + b.uid}`);
-              refreshPanelIfOpen2();
+              refreshPanelIfOpen();
             };
             row.appendChild(pass);
           }
@@ -3526,15 +3758,44 @@
           }
           logList.appendChild(row);
         });
-      }
-    };
-    logSec.querySelector("#bfb-log-toggle").onclick = () => {
-      logList.style.display = logList.style.display === "none" ? "block" : "none";
+      };
+      logSec.querySelector("#bfb-log-toggle").onclick = () => {
+        logList.style.display = logList.style.display === "none" ? "block" : "none";
+        refreshLog();
+      };
+      ctx.setStatsRefresh(refreshLog);
       refreshLog();
-    };
-    panelStatsRefresh = refreshLog;
-    refreshLog();
-  }
+    }
+  };
+
+  // src/ui/panel/index.ts
+  var PANEL_TABS = [
+    ["base", "⚙ 基础", "常规开关与卡片类型过滤"],
+    ["black", "🚫 黑名单", "按标题、UP 主、分区屏蔽，即时生效；以 /.../ 包裹表示正则（如 /震惊.*竟然/），否则为关键词包含匹配（不区分大小写）"],
+    ["api", "🛰 进阶", "按播放量、时长，以及标签、数据等维度精细过滤（标签类维度需开启下方「精确过滤」）"],
+    ["comment", "💬 评论", "过滤视频与动态评论区的引战、水军、营销及 AI 评论（基于评论数据隐藏，仅在含评论的页面生效，与视频规则相互独立）"],
+    ["allow", "⭐ 白名单", "命中白名单的内容永不隐藏，优先级最高"],
+    ["tools", "🧰 工具", "预置库、重置、屏蔽记录"]
+  ];
+  var SECTIONS = [
+    baseSection,
+    blackListsSection,
+    advancedSection,
+    apiListsSection,
+    commentSection,
+    allowListsSection,
+    presetsSection,
+    regexTesterSection,
+    ioSection,
+    nameListSection,
+    subscriptionsSection,
+    batchBlockSection,
+    resetSection,
+    healthSection,
+    logSection
+  ];
+  var activeTab = "base";
+  var lastFocus = null;
   function panelEl() {
     return document.getElementById("bfb-panel");
   }
@@ -3542,7 +3803,88 @@
     const p = panelEl();
     return !!(p && p.classList.contains("open"));
   }
-  var lastFocus = null;
+  function buildPanel() {
+    if (panelEl()) return;
+    const p = document.createElement("div");
+    p.id = "bfb-panel";
+    p.tabIndex = -1;
+    p.setAttribute("role", "dialog");
+    p.setAttribute("aria-label", "biliHoyoFairy 设置");
+    ["keydown", "keypress", "keyup", "input"].forEach((ev) => {
+      p.addEventListener(ev, (e) => {
+        if (e.target && e.target.matches && e.target.matches("input, textarea, select")) e.stopPropagation();
+      });
+    });
+    document.addEventListener(
+      "keydown",
+      (e) => {
+        if (e.key !== "Escape" || !p.classList.contains("open")) return;
+        if (document.querySelector(".bfb-modal-back")) return;
+        closePanel();
+      },
+      true
+    );
+    document.body.appendChild(p);
+    renderPanel(p);
+  }
+  function renderPanel(p) {
+    p.innerHTML = "";
+    setStatsRefresh(null);
+    const h2 = document.createElement("h2");
+    h2.innerHTML = `🛡 biliHoyoFairy · 抗击黑潮 <small style="font-weight:normal;opacity:.6;font-size:12px">v${VERSION} · ${pageType()}</small> <span class="x" role="button" tabindex="0" aria-label="关闭设置面板">✕</span>`;
+    p.appendChild(h2);
+    const xBtn = h2.querySelector(".x");
+    xBtn.onclick = closePanel;
+    xBtn.onkeydown = (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        closePanel();
+      }
+    };
+    const tabBar = document.createElement("div");
+    tabBar.className = "tabs";
+    p.appendChild(tabBar);
+    if (!PANEL_TABS.some(([id]) => id === activeTab)) activeTab = "base";
+    const groups = {};
+    PANEL_TABS.forEach(([id, label, tip]) => {
+      const tb = document.createElement("button");
+      tb.className = "tab" + (id === activeTab ? " active" : "");
+      tb.textContent = label;
+      tabBar.appendChild(tb);
+      const g = document.createElement("div");
+      g.className = "bfb-group" + (id === activeTab ? " active" : "");
+      const tipEl = document.createElement("div");
+      tipEl.className = "grp-tip";
+      tipEl.textContent = tip;
+      g.appendChild(tipEl);
+      p.appendChild(g);
+      groups[id] = g;
+      tb.onclick = () => {
+        activeTab = id;
+        tabBar.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
+        tb.classList.add("active");
+        Object.values(groups).forEach((x) => x.classList.remove("active"));
+        g.classList.add("active");
+        p.scrollTop = 0;
+      };
+    });
+    const ctx = {
+      panel: p,
+      groups,
+      // 重渲整个面板并保持打开状态（分区改了会影响别处展示时用）
+      rerender: () => {
+        renderPanel(p);
+        p.classList.add("open");
+      },
+      refreshStats: () => runStatsRefresh(),
+      setStatsRefresh
+    };
+    for (const sec of SECTIONS) {
+      const host = groups[sec.tab];
+      if (!host) continue;
+      sec.render(host, ctx);
+    }
+  }
   function openPanel2() {
     lastFocus = document.activeElement;
     buildPanel();
@@ -3570,7 +3912,7 @@
     renderPanel(panelEl());
   }
   function refreshStatsIfOpen() {
-    if (panelStatsRefresh && isPanelOpen()) panelStatsRefresh();
+    if (hasStatsRefresh() && isPanelOpen()) runStatsRefresh();
   }
 
   // src/main.ts
@@ -3595,6 +3937,7 @@
           shadowRoots.add(root);
           if (CMT_TAGS[this.tagName] !== void 0) scheduleCommentScan();
         } catch (e) {
+          logErr("attachShadow.hook", e);
         }
         return root;
       };
@@ -3602,6 +3945,7 @@
       try {
         Element.prototype.attachShadow = wrapped;
       } catch (e) {
+        logErr("installShadowHook", e);
       }
     }
     function start() {
@@ -3647,7 +3991,9 @@
       }));
       observer.observe(document.body, { childList: true, subtree: true });
       setTimeout(() => {
-        if (!CONFIG.enabled || sessionBlocked <= 0) return;
+        if (!CONFIG.enabled) return;
+        for (const w of healthReport()) logErr("运行自检", w);
+        if (sessionBlocked <= 0) return;
         const top = Object.entries(tallyLog()).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, v]) => `${k}×${v}`).join("、");
         toast(`🛡 本次加载已拦截 ${sessionBlocked} 个：${top}（点右下角🛡看明细 / 放行）`);
       }, 3500);

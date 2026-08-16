@@ -2,6 +2,17 @@
 // 归一成同形状的 CardInfo，供匹配引擎判定。两路同构，判定一致。
 // 广告/直播检测是热路径开销，仅在对应功能开启时才做——开关经 configureCardDetect 注入，避免直接耦合 CONFIG。
 import { parseDuration, parseCount } from './util';
+import {
+  AD_CARD_SELECTOR,
+  CARD_DURATION_SELECTORS,
+  CARD_MID_ATTRS,
+  CARD_MID_ATTR_SELECTOR,
+  CARD_PARTITION_SELECTORS,
+  CARD_TITLE_SELECTORS,
+  CARD_UP_SELECTORS,
+  CARD_VIEWS_SELECTORS,
+  LIVE_CARD_SELECTOR,
+} from './selectors';
 
 // 归一后的卡片信息：DOM 抽取与接口归一两路同构。
 export interface CardInfo {
@@ -43,30 +54,24 @@ function pickText(card: Element, selectors: string[]): string {
 export function extractCardInfo(card: Element, deepUid = true): CardInfo {
   const info: CardInfo = { title: '', up: '', uid: '', partition: '', bvid: '', duration: null, views: null, likes: null, isLive: false, isAd: false };
 
-  info.title = pickText(card, [
-    '.bili-video-card__info--tit',
-    '.video-name',
-    'h3[title]',
-    '.title',
-    '.bili-dyn-card-video__title', // 动态内视频标题
-    '.dyn-card-opus__title', // 动态专栏/图文标题
-    '.bili-dyn-content__orig__desc', // 动态正文（文字动态，便于关键词命中）
-  ]);
-  info.up = pickText(card, [
-    '.bili-video-card__info--author',
-    '.up-name__text',
-    '.up-name',
-    '.bili-video-card__info--owner span',
-    '.upname .name',
-    '.bili-dyn-title__text', // 动态发布者
-  ]);
+  info.title = pickText(card, CARD_TITLE_SELECTORS);
+  info.up = pickText(card, CARD_UP_SELECTORS);
 
   // UID（拉黑必需）：space 链接 → data-* → innerHTML 兜底（含纯文本卡内嵌的 "mid":数字）
   const upA = card.querySelector('a[href*="space.bilibili.com"]');
   if (upA) info.uid = ((upA.getAttribute('href') || '').match(/space\.bilibili\.com\/(\d+)/) || [])[1] || '';
   if (!info.uid) {
-    const midEl = card.querySelector('[data-mid],[data-up-mid],[data-user-id]');
-    if (midEl) info.uid = midEl.getAttribute('data-mid') || midEl.getAttribute('data-up-mid') || midEl.getAttribute('data-user-id') || '';
+    const midEl = card.querySelector(CARD_MID_ATTR_SELECTOR);
+    // 逐个短路取值（不用 map+find：这是每张卡都会走的热路径，别为一次取值分配临时数组）
+    if (midEl) {
+      for (const a of CARD_MID_ATTRS) {
+        const v = midEl.getAttribute(a);
+        if (v) {
+          info.uid = v;
+          break;
+        }
+      }
+    }
   }
   // innerHTML 兜底会序列化整张卡 HTML，开销较大：仅在需要 UID（存在 UID 规则或拉黑场景）且 DOM 没抠到时才走
   if (!info.uid && deepUid) {
@@ -74,7 +79,7 @@ export function extractCardInfo(card: Element, deepUid = true): CardInfo {
     if (!info.uid) info.uid = (card.innerHTML.match(/"(?:mid|owner_?id|up_?mid)"\s*:\s*"?(\d{2,})"?/) || [])[1] || '';
   }
 
-  info.partition = pickText(card, ['.bili-video-card__info--tag', '.rcmd-tag']);
+  info.partition = pickText(card, CARD_PARTITION_SELECTORS);
 
   const aVideo = card.querySelector('a[href*="/video/"]');
   if (aVideo) {
@@ -82,35 +87,38 @@ export function extractCardInfo(card: Element, deepUid = true): CardInfo {
     if (m) info.bvid = m[1];
   }
 
-  info.duration = parseDuration(pickText(card, ['.bili-video-card__stats__duration', '.duration', '.bili-dyn-card-video__duration']));
+  info.duration = parseDuration(pickText(card, CARD_DURATION_SELECTORS));
 
-  const statEl = card.querySelector('.bili-video-card__stats--item') || card.querySelector('.play-text');
-  if (statEl) info.views = parseCount(statEl.textContent);
+  // 按优先级逐个试（不能 join 成一条选择器：那样返回的是文档序首个元素，而非优先级首选）
+  for (const sel of CARD_VIEWS_SELECTORS) {
+    const statEl = card.querySelector(sel);
+    if (statEl) {
+      info.views = parseCount(statEl.textContent);
+      break;
+    }
+  }
 
   const { detectAd, detectLive } = getDetect();
   // 直播识别：服务于「屏蔽直播推荐卡」，并避免把直播误当广告。hideAd / hideLiveCard 任一开启才算（省热路径）。
   if (detectAd || detectLive) {
     info.isLive = !!(
       card.querySelector('a[href*="live.bilibili.com"]') ||
-      card.querySelector('.bili-live-card, [class*="live-card"]') ||
+      card.querySelector(LIVE_CARD_SELECTOR) ||
       /直播中|正在直播/.test(card.textContent || '')
     );
   }
 
   // 广告判定（含遍历全卡 span/div 找角标文案）只服务于「屏蔽广告卡」，hideAd 关时整段跳过，省热路径开销。
-  if (detectAd) {
-    const adBadge = Array.from(card.querySelectorAll('span,div')).some((el) => {
-      const tx = (el.textContent || '').trim();
-      return tx === '广告' || tx === '赞助' || tx === '推广';
-    });
+  // 直播卡直接判非广告（下面本来也是 !isLive && …），顺带省掉那次全卡 span/div 遍历。
+  if (detectAd && !info.isLive) {
     // 仅用稳定的广告标识判定：官方广告类名 / 投流域名 / 运营推广链接 / 显式角标文案。
-    info.isAd = !info.isLive && !!(
-      card.querySelector('.bili-video-card__info--ad') ||
-      card.querySelector('a[href*="cm.bilibili.com"]') ||
-      card.querySelector('a[href*="//mall.bilibili.com"]') ||
-      card.querySelector('a[href*="specialRecommendByOp"]') ||
-      adBadge
-    );
+    // 角标文案要遍历全卡节点，最贵，放在选择器之后惰性求值。
+    const adBadge = () =>
+      Array.from(card.querySelectorAll('span,div')).some((el) => {
+        const tx = (el.textContent || '').trim();
+        return tx === '广告' || tx === '赞助' || tx === '推广';
+      });
+    info.isAd = !!card.querySelector(AD_CARD_SELECTOR) || adBadge();
   }
 
   return info;

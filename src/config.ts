@@ -1,5 +1,5 @@
 // 配置：默认值 + 本地存储（GM）+ 载入合并 + 导入/导出。CONFIG 为全局共享单例（对象被各模块就地读写）。
-import { STORE_KEY, UNSAFE_KEYS, VERSION } from './constants';
+import { SCHEMA_VERSION, STORE_KEY, UNSAFE_KEYS, VERSION } from './constants';
 
 export interface BlockConfig {
   keywords: string[];
@@ -48,6 +48,7 @@ export interface Subscription {
 }
 
 export interface AppConfig {
+  schemaVersion: number;
   enabled: boolean;
   reviewMode: boolean;
   rightClickBlock: boolean;
@@ -70,6 +71,7 @@ export interface AppConfig {
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
+  schemaVersion: SCHEMA_VERSION,
   enabled: true,
   reviewMode: false, // 审查模式：被拦视频不删/不隐，而是标记+就地放行，便于核对防误伤
   rightClickBlock: true,
@@ -137,13 +139,42 @@ export function deepMerge(base: Record<string, any>, override: any): Record<stri
   return base;
 }
 
-// 读取存档并与默认值合并：新增字段由 deepMerge 自动补默认值，无需版本迁移。
+// 结构迁移表：键 = 存档的当前 schemaVersion，值 = 把它就地升到 键+1 的函数。
+// 只有「改字段名/改语义/改单位」这类 deepMerge 补不了的变更才需要在这里登记；
+// 纯新增字段不需要（deepMerge 会自动补默认值），也就不需要动 SCHEMA_VERSION。
+//
+// 例：把旧的分钟单位时长改成秒，就写
+//   1: (c) => { if (c.block) c.block.minDuration = (c.block.minDuration || 0) * 60; },
+// 并把 SCHEMA_VERSION 提到 2。
+const MIGRATIONS: Record<number, (c: any) => void> = {};
+
+// 把任意来源（存档/导入文件）的原始配置对象升级到当前结构版本，就地修改。
+// 缺 schemaVersion 的老存档视为 0，从头逐级跑；单级迁移抛错时停在该级，
+// 剩下的交给 deepMerge 用默认值兜底——宁可丢一部分配置，也不要让脚本起不来。
+export function migrateConfig(parsed: any): any {
+  if (!parsed || typeof parsed !== 'object') return parsed;
+  let v = typeof parsed.schemaVersion === 'number' ? parsed.schemaVersion : 0;
+  while (v < SCHEMA_VERSION) {
+    const step = MIGRATIONS[v];
+    if (!step) break; // 无登记迁移=该级无需改写，直接跳过
+    try {
+      step(parsed);
+    } catch (e) {
+      break;
+    }
+    v++;
+  }
+  parsed.schemaVersion = SCHEMA_VERSION;
+  return parsed;
+}
+
+// 读取存档：先按 schemaVersion 逐级迁移，再与默认值合并（新增字段由 deepMerge 自动补默认值）。
 export function loadConfig(): AppConfig {
   const raw = GM_getValue(STORE_KEY, null);
   if (!raw) return structuredClone(DEFAULT_CONFIG);
   try {
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    return deepMerge(structuredClone(DEFAULT_CONFIG), parsed) as AppConfig;
+    return deepMerge(structuredClone(DEFAULT_CONFIG), migrateConfig(parsed)) as AppConfig;
   } catch (e) {
     return structuredClone(DEFAULT_CONFIG);
   }
@@ -185,6 +216,33 @@ export function exportConfig(): string {
 
 // 单个规则数组导入后的容量上限：防恶意/超大「规则文件」灌入无界列表拖垮匹配。
 const IMPORT_ARRAY_CAP = 50000;
+
+// 按 DEFAULT_CONFIG 的形状清洗**不可信**输入（导入的规则文件、订阅里带的配置）。
+// 只保留默认配置里存在的键，且类型必须对得上：
+//   - 类型不符的标量直接丢弃（保留原值，不做强转——把 "abc" 转成 0 比丢掉更难排查）
+//   - 数组：非数组丢弃；元素只留字符串（曾经的坑：keywords 被写成字符串时，
+//     下游 for..of 会按**字符**遍历，把 "原神" 变成两条单字规则，几乎屏蔽整个首页）
+//   - 对象：按默认值递归；DEFAULT 里是空对象的（uidNames）无形状可依，整块丢弃
+// 只用于导入路径，不用于 loadConfig——本地存档里 uidNames/subscriptions 是有内容的合法数据。
+export function sanitizeConfigInput(input: any, ref: any = DEFAULT_CONFIG): Record<string, any> {
+  const out: Record<string, any> = {};
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return out;
+  for (const k of Object.keys(ref)) {
+    if (UNSAFE_KEYS.has(k)) continue;
+    if (!Object.prototype.hasOwnProperty.call(input, k)) continue;
+    const v = input[k];
+    const r = ref[k];
+    if (Array.isArray(r)) {
+      if (Array.isArray(v)) out[k] = v.filter((x) => typeof x === 'string');
+    } else if (r && typeof r === 'object') {
+      const sub = sanitizeConfigInput(v, r);
+      if (Object.keys(sub).length) out[k] = sub;
+    } else if (typeof v === typeof r) {
+      out[k] = v;
+    }
+  }
+  return out;
+}
 
 // 导入合并：规则数组取并集（不丢已有），对象递归，标量以导入值为准。
 export function mergeImport(base: Record<string, any>, inc: any): void {

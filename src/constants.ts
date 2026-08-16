@@ -5,6 +5,10 @@ export const VERSION: string =
   (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.0.1';
 
 export const STORE_KEY = 'bfb_config_v2';
+// 配置结构版本。**只在需要就地改写老存档时**递增（改字段名、改语义、改单位），
+// 单纯新增带默认值的字段不用动它——deepMerge 会自动补齐。递增时必须在 config.ts 的
+// MIGRATIONS 里补上对应迁移函数，否则老用户升级后会静默丢配置。
+export const SCHEMA_VERSION = 1;
 // 订阅拉取结果缓存：{ [url]: { meta, rules, lastSync, ok, count, error } }
 export const SUB_STORE_KEY = 'bfb_subs_v1';
 export const BLACKLIST_MANAGE_URL = 'https://account.bilibili.com/account/blacklist';

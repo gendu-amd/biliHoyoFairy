@@ -29,6 +29,7 @@ src/
 ├─ constants.ts         存储键 / DOM 标记属性 / 风控码 / 内置名单（AI机器人、广告正则）
 ├─ util.ts              纯工具：getCookie / parseDuration / parseCount / escapeHtml
 ├─ page.ts              页面类型识别 + 「视频卡」选择器 + 网格格子定位
+├─ selectors.ts         ★B 站 DOM 选择器登记表（唯一来源；B 站改版只改这一个文件）
 ├─ events.ts            规则变更事件 seam（onRulesChanged）——打断 dom↔rules 环
 ├─ presets.ts           预置规则库数据（PRESET_LIBRARY）
 ├─ shadow.ts            开放 shadowRoot 注册表（评论/卡片穿透用）
@@ -41,7 +42,8 @@ src/
 │
 │  ── L1~L3 状态 / 数据 / 副作用 ──
 ├─ config.ts            AppConfig 类型 + CONFIG 单例 + 存取/合并/导入导出（deepMerge 原型链防护）
-├─ logging.ts           log / logErr / safe（错误边界）+ BADGE
+├─ logging.ts           log / logErr / safe（错误边界）+ BADGE（传函数即惰性求值）
+├─ health.ts            运行自检计数器 + healthReport/healthSummary（识别「静默失效」）
 ├─ cardinfo.ts          卡片信息抽取：DOM(extractCardInfo) 与接口(normFeedItem) 归一成同形 CardInfo
 ├─ hotsearch.ts         热搜词屏蔽（注入/移除一段 CSS）
 ├─ stats.ts             拦截计数 + 环形屏蔽记录 + setStatsListener（命中后回调 UI）
@@ -61,7 +63,11 @@ src/
 ├─ ui/toast.ts          角标 updateBadge + 轻提示 toast
 ├─ ui/field.ts          通用列表字段组件（折叠/添加/批量管理/chip）+ chipModel/upModel
 ├─ ui/menu.ts           右键菜单 + 悬停拉黑浮层
-└─ ui/panel.ts          设置面板（最大模块）：构建/渲染、各分组、预置、订阅、批量、正则测试、屏蔽记录
+└─ ui/panel/            设置面板
+   ├─ index.ts          面板外壳：Tab 骨架 + 分区注册表 SECTIONS（数组顺序=显示顺序）+ 开关/重渲
+   ├─ ctx.ts            分区契约 PanelSection/PanelCtx（叶子：不 import 任何 section，也不 import index）
+   └─ sections/*.ts     13 个分区各自成文件：base / lists / advanced / comment / presets / regex-tester
+                        / io / name-list / subscriptions / batch-block / reset / health / log
 ```
 
 ★ = 两处关键设计（匹配引擎、拦截层），改动前务必理解（见 §5 扩展点）。
@@ -73,16 +79,16 @@ src/
 每条 import 都指向**更低层**；UI 永远不被低层直接 import（靠注入 seam 回调）。
 
 ```
-L0 叶子   constants · util · page · events · presets · shadow · batch
+L0 叶子   constants · util · page · selectors · events · presets · shadow · batch
           match/normalize · subscriptions/parse · ui/hooks · ui/panel.styles · ui/confirm
 L1        config
-L2        logging · cardinfo · hotsearch
+L2        logging · health · cardinfo · hotsearch
 L3        stats · subscriptions/store
 L4        ui/toast · match/engine
 L5        api · rules · subscriptions/refresh · net · comments
 L6        ui/field · blacklist · dom
 L7        ui/menu
-L8        ui/panel
+L8        ui/panel/（index → sections/* → ctx）
 L9        main（bootstrap，装配一切）
 ```
 
@@ -122,7 +128,16 @@ L9        main（bootstrap，装配一切）
 改 `net.ts` 的 `FEED_HOOKS`，加一条 `{ re: URL正则, get: (data) => 可过滤数组 }`。
 
 ### 加一个配置项
-改 `config.ts`：`DEFAULT_CONFIG` 加默认值 + `AppConfig` 接口加字段。旧存档由 `deepMerge` 自动补默认，无需写迁移。面板控件用 `ui/field.bindControl` 绑定。
+改 `config.ts`：`DEFAULT_CONFIG` 加默认值 + `AppConfig` 接口加字段。旧存档由 `deepMerge` 自动补默认，**纯新增字段无需写迁移、也不用升 `SCHEMA_VERSION`**。面板控件用 `ui/field.bindControl` 绑定。
+只有当老存档需要被**改写**时（重命名字段、改变语义/单位）才升 `constants.SCHEMA_VERSION`，并在 `config.MIGRATIONS` 里加一步 `旧版本号 -> 改写函数`（迁移链会逐级执行到最新版）。
+
+### 加一个面板分区
+在 `ui/panel/sections/` 加一个文件，导出 `{ tab, render(host, ctx) }`（`tab` 取 `PANEL_TABS` 的 id），再把它加进 `ui/panel/index.ts` 的 `SECTIONS` 数组——**数组顺序即面板内的显示顺序**。分区只能 import `ctx.ts` 与更低层模块，**不要 import `index.ts` 或别的分区**（会成环）；需要整面板重渲染调 `ctx.rerender()`，需要「面板打开时刷新」用 `ui/hooks.refreshPanelIfOpen`。
+
+### 加一个 B 站 DOM 选择器
+一律加到 `selectors.ts`，业务模块从那里 import，别把选择器字面量写在业务代码里。注意：多个候选选择器有**优先级**时（先试 A 再试 B），必须逐个 `querySelector` 循环，不能 `join(',')`——那样返回的是文档序第一个而非优先级第一个。
+
+`closest()` 有同一类陷阱，且更隐蔽：`el.closest('a, b')` 返回的是**最近的祖先**，不是「优先级最高的那个选择器」。`CELL_CONTAINERS`（网格格子定位）就踩过——首页真实结构是 `.container(display:grid) > .feed-card > .bili-feed-card > .bili-video-card`，网格项是外层 `.feed-card`，join 写法会停在更近的 `.bili-feed-card`，隐藏它之后 `.feed-card` 仍占着一个网格单元 → 屏蔽后留下空洞、后面的卡不补位。所以 `cellOf` 按 `CELL_CONTAINERS` 顺序（由外到内）逐个 `closest`；`tests/page.test.ts` 用一个手写的最小 DOM 替身锁住这个语义。
 
 ---
 
@@ -134,7 +149,9 @@ L9        main（bootstrap，装配一切）
 | 拦截哪些接口/页面 | `net.ts`（FEED_HOOKS） |
 | 卡片信息怎么抠（标题/UP/UID…） | `cardinfo.ts` |
 | 默认配置 / 配置结构 | `config.ts` |
-| 设置面板长相/交互 | `ui/panel.ts`（+ `ui/panel.styles.ts` 样式、`ui/field.ts` 列表字段组件） |
+| 设置面板长相/交互 | `ui/panel/sections/*.ts`（骨架与分区顺序在 `ui/panel/index.ts`；样式 `ui/panel.styles.ts`；列表字段组件 `ui/field.ts`） |
+| B 站 DOM 选择器（改版失效） | `selectors.ts`（唯一来源） |
+| 「脚本是不是失效了」自检 | `health.ts`（面板「工具 → 🩺 运行自检」+ 控制台首屏告警） |
 | 右键菜单 / 悬停按钮 | `ui/menu.ts` |
 | 一键/批量拉黑逻辑 | `blacklist.ts`（接口层在 `api.ts`） |
 | 评论区过滤 | `comments.ts` |
@@ -148,8 +165,8 @@ L9        main（bootstrap，装配一切）
 
 ## 7. 类型现状
 
-- **强类型（无 `@ts-nocheck`）**：核心/纯逻辑层全部——`constants/util/page/events/presets/batch/shadow/config/logging/cardinfo/hotsearch/stats/api/rules/match·{normalize,engine}/subscriptions·{parse,store,refresh}/ui·{hooks,toast,confirm,panel.styles}` 等。改这些会受完整类型检查。
-- **`@ts-nocheck`（渐进类型化）**：仅限 DOM/effect/UI 密集层——`net`(fetch/XHR 猴补丁)、`dom`、`comments`(.__data)、`blacklist`(GM POST)、`ui/{panel,menu,field}`、`main`。这些仍受 `eslint no-undef` 兜底（漏 import = 报错）。
+- **强类型（无 `@ts-nocheck`）**：核心/纯逻辑层全部——`constants/util/page/selectors/events/presets/batch/shadow/config/logging/health/cardinfo/hotsearch/stats/api/rules/net/match·{normalize,engine}/subscriptions·{parse,store,refresh}/ui·{hooks,toast,confirm,panel.styles,panel/ctx}` 等。改这些会受完整类型检查。
+- **`@ts-nocheck`（渐进类型化）**：仅限 DOM/effect/UI 密集层——`dom`、`comments`(.__data)、`blacklist`(GM POST)、`ui/{menu,field}`、`ui/panel/{index,sections/*}`、`main`。这些仍受 `eslint no-undef` 兜底（漏 import = 报错）。
 
 ---
 
@@ -166,6 +183,8 @@ npm test           # vitest 纯逻辑单测
 - **改代码只改 `src/`**，别手改根目录 `biliHoyoFairy.user.js`（它是构建产物，CI 有漂移校验）。
 - 装油猴测试：`npm run build` 后把根产物粘进 Tampermonkey（详见 [docs/review/SMOKE-TEST.md](review/SMOKE-TEST.md)）。
 - 纯逻辑加了就配套加 `tests/*.test.ts`。
+- **加了 feed 接口端点（`net.FEED_HOOKS`）就配套加 `tests/fixtures/` 样本**：纯逻辑测试发现不了 B 站改结构，fixture 契约测试（`tests/net.test.ts`）可以。样本请脱敏并裁剪到几条。
+- 改了 `src/` 就要升 `src/meta.js` 的版本号（CI 的 `version` job 会在 PR 上强制检查）。
 
 ---
 
@@ -182,4 +201,5 @@ npm test           # vitest 纯逻辑单测
 - `@updateURL` 指向 main = 合入即发布；对外可见改动要 bump `meta.js` 的 `@version`，否则用户不会自动更新。
 - 第三方致谢集中在 README，勿散落代码注释。
 - **安全红线**（0.0.6 起）：`@connect` 只声明已知域（B 站 + 常见 CDN），不留 `*`；配置**导出与导入都剔除 `NON_PORTABLE`**（尤其 `subscriptions`，防分享文件注入自动联网 URL）；订阅/导入的 `/正则/` 受 `MAX_REGEX_LEN` 长度上限保护（防 ReDoS）。
+- **不可信配置必须过 `sanitizeConfigInput`**（0.0.8 起）：导入路径按 `DEFAULT_CONFIG` 的形状清洗，未知键 / 类型不符的值 / 数组里的非字符串元素一律丢弃。它**只用于导入，不用于 `loadConfig`**——`DEFAULT_CONFIG.uidNames` 是 `{}`、`subscriptions` 是 `[]`，拿它们当类型参照会把用户已存的缓存与订阅全部清空。已落盘的坏配置由消费侧的 `match/normalize.ruleLines` 兜底（规则数组的唯一入口）。
 - **账号写操作红线**：单条拉黑（右键/悬停）执行前必须二次确认；批量拉黑必须可停止、限速、风控自动退避；`doBlacklistMany` 批量本地屏蔽统一一次 `saveConfig+emitRulesChanged`（勿逐条重扫）。

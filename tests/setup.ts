@@ -7,3 +7,7 @@ g.GM_setValue = (k: string, v: string) => {
   store[k] = v;
 };
 g.GM_info = { script: { version: '0.0.5' } };
+// page.ts 在模块初始化时读 location.host 判定页面类型；node 环境没有 location，给一个首页形态的桩。
+if (typeof g.location === 'undefined') {
+  g.location = { host: 'www.bilibili.com', hostname: 'www.bilibili.com', pathname: '/', href: 'https://www.bilibili.com/' };
+}
