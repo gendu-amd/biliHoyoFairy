@@ -3,9 +3,10 @@
 // 三处显示（头部条数 / 分类统计 / 底部累计）共用同一个 refreshLog，避免对不上。
 import { CONFIG } from '../../../config';
 import { BLACKLIST_MANAGE_URL } from '../../../constants';
-import { blockedLog, tallyLog, sessionBlocked } from '../../../stats';
+import { blockedLog, tallyLog, tallyRules, sessionBlocked } from '../../../stats';
 import { blacklistUp, unblockUp } from '../../../blacklist';
-import { addToList } from '../../../rules';
+import { addToList, removeFromList } from '../../../rules';
+import { locateRule, REASON_RULE_FIELD } from '../../../match/engine';
 import { escapeHtml } from '../../../util';
 import { toast } from '../../toast';
 import { confirmModal } from '../../confirm';
@@ -19,11 +20,13 @@ export const logSection = {
     logSec.innerHTML =
       `<label>🔎 屏蔽记录（本次会话共 <span id="bfb-log-count">0</span> 条） <button class="act ghost" id="bfb-log-toggle" style="float:right">展开 / 收起</button></label>` +
       `<div class="stat" id="bfb-log-tally">分类：暂无</div>` +
+      `<div class="stat" id="bfb-log-top" style="display:none"></div>` +
       `<div id="bfb-log-list" style="display:none;max-height:240px;overflow:auto;overscroll-behavior:contain;margin-top:6px;font-size:12px"></div>`;
     host.appendChild(logSec);
     const logList = logSec.querySelector('#bfb-log-list');
     const logCount = logSec.querySelector('#bfb-log-count');
     const logTally = logSec.querySelector('#bfb-log-tally');
+    const logTop = logSec.querySelector('#bfb-log-top');
 
     const foot = document.createElement('div');
     foot.className = 'sec';
@@ -39,6 +42,11 @@ export const logSection = {
       const tally = tallyLog();
       logTally.textContent =
         '分类：' + (Object.keys(tally).length ? Object.entries(tally).map(([k, v]) => `${k}×${v}`).join('  ') : '暂无');
+      // 规则体检：拦得最多的几条规则。命中数畸高往往意味着这条规则写得过宽（比如一个两字词），
+      // 是误伤的主要来源；只列 TOP 3，避免又变成一大片。
+      const rules = Object.entries(tallyRules()).sort((a, b) => b[1] - a[1]).slice(0, 3);
+      logTop.textContent = rules.length ? '最常命中的规则：' + rules.map(([k, v]) => `${k}×${v}`).join('  ') : '';
+      logTop.style.display = rules.length ? '' : 'none';
       footTotal.textContent = CONFIG.blockedCount;
       footSession.textContent = sessionBlocked;
       if (logList.style.display === 'none') return;
@@ -98,8 +106,38 @@ export const logSection = {
           };
           row.appendChild(pass);
         }
-        // 已写入账号黑名单（BL 来源且该 UID 仍在 block.uids）→ 提供「撤销拉黑」；否则提供「拉黑」。
+        // 误伤自愈：原因里带了具体规则时，直接定位到那一行并删。
+        // 上面的「放行」只赦免这一个 UP，规则本身还会继续误伤别人——关键词类误伤的病灶
+        // 通常是规则写得太宽（比如一个两字词），治标不治本。
+        // 已写入账号黑名单（BL 来源且该 UID 仍在 block.uids）→ 下面会给「撤销拉黑」。
         const isBlacklisted = b.uid && CONFIG.block.uids.map(String).includes(String(b.uid));
+        // 这种行不给「删规则」：它只删本地那条 UID 规则，**不会**把人从账号黑名单移出，
+        // 与旁边的「撤销拉黑」看着像但语义不同，同一行摆两个含义不同的撤销按钮必然误操作。
+        const loc = b.src === 'BL' && isBlacklisted ? null : locateRule(b.reason);
+        if (loc) {
+          const del = document.createElement('button');
+          del.className = 'log-pass';
+          del.textContent = '✂删规则';
+          del.title = `这条是被规则「${loc.line}」拦下的。删掉它（刷新后此类视频恢复推荐）。`;
+          del.onclick = () => {
+            confirmModal(`删除规则「${loc.line}」？此后它不再屏蔽任何视频。`, { title: '删除规则', okText: '删除', danger: true }).then((ok) => {
+              if (!ok) return;
+              removeFromList(CONFIG.block[loc.field], loc.line);
+              toast(`已删除规则：${loc.line}`);
+              refreshPanelIfOpen();
+            });
+          };
+          row.appendChild(del);
+        } else if (b.reason.indexOf(':') > 0 && REASON_RULE_FIELD[b.reason.slice(0, b.reason.indexOf(':'))]) {
+          // 维度认得、但规则不在用户名单里 → 来自已启用的订阅。不给删除按钮（删不掉），
+          // 但要说清楚，否则用户会在自己的名单里翻半天找不到这条规则。
+          const hint = document.createElement('span');
+          hint.className = 'log-src';
+          hint.textContent = '订阅';
+          hint.title = '这条规则来自已启用的订阅，不在你自己的名单里。要停用它请到「工具 → 规则订阅」。';
+          row.appendChild(hint);
+        }
+        // 已写入账号黑名单 → 提供「撤销拉黑」；否则提供「拉黑」。
         if (b.src === 'BL' && isBlacklisted) {
           const undo = document.createElement('button');
           undo.className = 'log-undo';

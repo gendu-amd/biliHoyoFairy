@@ -593,7 +593,10 @@
   }
   function compileLines(lines) {
     const plainParts = [];
+    const plainSrc = [];
+    const plainNorm = [];
     const regexes = [];
+    const regexSrc = [];
     for (const raw of ruleLines(lines)) {
       const line = raw.trim();
       if (!line) continue;
@@ -603,11 +606,16 @@
         try {
           const flags = (m[2] || "i").replace(/[gy]/g, "");
           regexes.push(new RegExp(m[1], flags.includes("i") ? flags : flags + "i"));
+          regexSrc.push(line);
         } catch (e) {
         }
       } else {
         const w = normMatch(line);
-        if (w) plainParts.push(escapeRe(w));
+        if (w) {
+          plainParts.push(escapeRe(w));
+          plainSrc.push(line);
+          plainNorm.push(w);
+        }
       }
     }
     let plain = null;
@@ -617,7 +625,7 @@
       } catch (e) {
       }
     }
-    return { plain, regexes, empty: !plain && !regexes.length };
+    return { plain, regexes, empty: !plain && !regexes.length, plainSrc, plainNorm, regexSrc };
   }
   function textHit(text, matcher) {
     if (!text || !matcher) return false;
@@ -627,6 +635,22 @@
       for (const r of matcher.regexes) if (r.test(t)) return true;
     }
     return false;
+  }
+  function whichHit(text, matcher) {
+    if (!text || !matcher) return null;
+    if (matcher.plain) {
+      const t = normMatch(text);
+      for (let i = 0; i < matcher.plainNorm.length; i++) {
+        if (t.includes(matcher.plainNorm[i])) return matcher.plainSrc[i];
+      }
+    }
+    if (matcher.regexes.length) {
+      const t = stripInvisible(text);
+      for (let i = 0; i < matcher.regexes.length; i++) {
+        if (matcher.regexes[i].test(t)) return matcher.regexSrc[i];
+      }
+    }
+    return null;
   }
   function compileScopedKeywords(lines) {
     const buckets = { all: [], title: [], up: [], part: [] };
@@ -647,6 +671,10 @@
   function kwHit(scoped, field, text) {
     if (!scoped || !text) return false;
     return textHit(text, scoped.all) || textHit(text, scoped[field]);
+  }
+  function kwWhich(scoped, field, text) {
+    if (!scoped || !text) return null;
+    return whichHit(text, scoped.all) || whichHit(text, scoped[field]);
   }
   function splitRuleInput(raw) {
     const out = [];
@@ -820,8 +848,19 @@
       }
     },
     // 关键词：标题 / UP名 / 分区任一命中即拦（标签维度在 matchApi 里补判）
-    { match: (i) => kwHit(M.blockKw, "title", i.title) || i.up && kwHit(M.blockKw, "up", i.up) || kwHit(M.blockKw, "part", i.partition) ? "关键词" : null },
-    { match: (i) => i.partition && textHit(i.partition, M.blockPartition) ? "分区:" + i.partition : null },
+    // 关键词命中要说清是**哪一条**词命中的——关键词是规则最多、最容易误伤的维度，
+    // 只报「关键词」等于让用户去上百条规则里自己猜。判定仍走 kwHit 的合并正则（热路径不变），
+    // 仅在确定命中后再 kwWhich 回查一次（每次拦截一次，不是每张卡一次）。
+    {
+      match: (i) => {
+        const field = kwHit(M.blockKw, "title", i.title) ? "title" : i.up && kwHit(M.blockKw, "up", i.up) ? "up" : kwHit(M.blockKw, "part", i.partition) ? "part" : null;
+        if (!field) return null;
+        const text = field === "title" ? i.title : field === "up" ? i.up : i.partition;
+        const rule = kwWhich(M.blockKw, field, text);
+        return rule ? "关键词:" + rule : "关键词";
+      }
+    },
+    { match: (i) => i.partition && textHit(i.partition, M.blockPartition) ? "分区:" + (whichHit(i.partition, M.blockPartition) || i.partition) : null },
     { match: (i) => i.up && M.blockUpNameSet.has(lc(i.up)) ? "UP主:" + i.up : null },
     { match: (i) => i.uid && M.blockUidSet.has(i.uid) ? "UID:" + i.uid : null },
     { match: (i) => i.bvid && M.blockBvidSet.has(i.bvid) ? "BV:" + i.bvid : null },
@@ -843,7 +882,8 @@
       // 含订阅并入的「视频标签」维度
       match: (info, ctx) => {
         for (const t of ctx.tags) {
-          if (textHit(t, M.blockTag)) return "标签:" + t;
+          if (!textHit(t, M.blockTag)) continue;
+          return "标签:" + (whichHit(t, M.blockTag) || t);
         }
         return null;
       }
@@ -871,9 +911,36 @@
       needs: "card",
       active: () => M.upBioActive,
       // 含订阅并入的简介词
-      match: (info, ctx) => !M.upBio.empty && textHit(ctx.sign, M.upBio) ? "UP简介" : null
+      match: (info, ctx) => {
+        if (M.upBio.empty || !textHit(ctx.sign, M.upBio)) return null;
+        const rule = whichHit(ctx.sign, M.upBio);
+        return rule ? "UP简介:" + rule : "UP简介";
+      }
     }
   ];
+  var REASON_RULE_FIELD = {
+    关键词: "keywords",
+    分区: "partitions",
+    UP主: "upNames",
+    UID: "uids",
+    BV: "bvids",
+    标签: "tags",
+    双标签: "dualTags",
+    UP简介: "upBio"
+  };
+  function locateRule(reason) {
+    const i = reason.indexOf(":");
+    if (i <= 0) return null;
+    const field = REASON_RULE_FIELD[reason.slice(0, i)];
+    const rule = reason.slice(i + 1);
+    if (!field || !rule) return null;
+    for (const line of ruleLines(CONFIG.block[field])) {
+      if (line.trim() === rule) return { field, line };
+      const m = !line.trim().startsWith("/") && line.trim().match(/^(?:title|up|part)\s*:\s*(.+)$/i);
+      if (m && m[1].trim() === rule) return { field, line };
+    }
+    return null;
+  }
   function matchRule(info) {
     if (isWhitelisted(info)) return null;
     for (const d of SYNC_DIMS) {
@@ -927,9 +994,23 @@
   function setSessionBlocked(n) {
     sessionBlocked = n;
   }
+  var reasonDim = (reason) => {
+    const i = reason.indexOf(":");
+    return i > 0 ? reason.slice(0, i) : reason;
+  };
   function tallyLog() {
     const t = {};
-    for (const b of blockedLog) t[b.reason] = (t[b.reason] || 0) + 1;
+    for (const b of blockedLog) {
+      const d = reasonDim(b.reason);
+      t[d] = (t[d] || 0) + 1;
+    }
+    return t;
+  }
+  function tallyRules() {
+    const t = {};
+    for (const b of blockedLog) {
+      if (b.reason.indexOf(":") > 0) t[b.reason] = (t[b.reason] || 0) + 1;
+    }
     return t;
   }
   function logBlocked(reason, info, src) {
@@ -3668,11 +3749,12 @@
     render(host, ctx) {
       const logSec = document.createElement("div");
       logSec.className = "sec";
-      logSec.innerHTML = `<label>🔎 屏蔽记录（本次会话共 <span id="bfb-log-count">0</span> 条） <button class="act ghost" id="bfb-log-toggle" style="float:right">展开 / 收起</button></label><div class="stat" id="bfb-log-tally">分类：暂无</div><div id="bfb-log-list" style="display:none;max-height:240px;overflow:auto;overscroll-behavior:contain;margin-top:6px;font-size:12px"></div>`;
+      logSec.innerHTML = `<label>🔎 屏蔽记录（本次会话共 <span id="bfb-log-count">0</span> 条） <button class="act ghost" id="bfb-log-toggle" style="float:right">展开 / 收起</button></label><div class="stat" id="bfb-log-tally">分类：暂无</div><div class="stat" id="bfb-log-top" style="display:none"></div><div id="bfb-log-list" style="display:none;max-height:240px;overflow:auto;overscroll-behavior:contain;margin-top:6px;font-size:12px"></div>`;
       host.appendChild(logSec);
       const logList = logSec.querySelector("#bfb-log-list");
       const logCount = logSec.querySelector("#bfb-log-count");
       const logTally = logSec.querySelector("#bfb-log-tally");
+      const logTop = logSec.querySelector("#bfb-log-top");
       const foot = document.createElement("div");
       foot.className = "sec";
       foot.innerHTML = `<a class="manage" href="${BLACKLIST_MANAGE_URL}" target="_blank">→ 打开 B 站官方黑名单管理页（取消拉黑 / 查看人数）</a>
@@ -3684,6 +3766,9 @@
         logCount.textContent = blockedLog.length;
         const tally = tallyLog();
         logTally.textContent = "分类：" + (Object.keys(tally).length ? Object.entries(tally).map(([k, v]) => `${k}×${v}`).join("  ") : "暂无");
+        const rules = Object.entries(tallyRules()).sort((a, b) => b[1] - a[1]).slice(0, 3);
+        logTop.textContent = rules.length ? "最常命中的规则：" + rules.map(([k, v]) => `${k}×${v}`).join("  ") : "";
+        logTop.style.display = rules.length ? "" : "none";
         footTotal.textContent = CONFIG.blockedCount;
         footSession.textContent = sessionBlocked;
         if (logList.style.display === "none") return;
@@ -3722,6 +3807,28 @@
             row.appendChild(pass);
           }
           const isBlacklisted = b.uid && CONFIG.block.uids.map(String).includes(String(b.uid));
+          const loc = b.src === "BL" && isBlacklisted ? null : locateRule(b.reason);
+          if (loc) {
+            const del = document.createElement("button");
+            del.className = "log-pass";
+            del.textContent = "✂删规则";
+            del.title = `这条是被规则「${loc.line}」拦下的。删掉它（刷新后此类视频恢复推荐）。`;
+            del.onclick = () => {
+              confirmModal(`删除规则「${loc.line}」？此后它不再屏蔽任何视频。`, { title: "删除规则", okText: "删除", danger: true }).then((ok) => {
+                if (!ok) return;
+                removeFromList(CONFIG.block[loc.field], loc.line);
+                toast(`已删除规则：${loc.line}`);
+                refreshPanelIfOpen();
+              });
+            };
+            row.appendChild(del);
+          } else if (b.reason.indexOf(":") > 0 && REASON_RULE_FIELD[b.reason.slice(0, b.reason.indexOf(":"))]) {
+            const hint = document.createElement("span");
+            hint.className = "log-src";
+            hint.textContent = "订阅";
+            hint.title = "这条规则来自已启用的订阅，不在你自己的名单里。要停用它请到「工具 → 规则订阅」。";
+            row.appendChild(hint);
+          }
           if (b.src === "BL" && isBlacklisted) {
             const undo = document.createElement("button");
             undo.className = "log-undo";

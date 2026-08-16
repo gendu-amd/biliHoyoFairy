@@ -23,10 +23,32 @@ export function setSessionBlocked(n: number): void {
   sessionBlocked = n;
 }
 
-// 按拦截原因聚合计数，供面板「分类」与启动汇总共用。
+// 原因字符串的形态是 `维度` 或 `维度:具体规则`（如 `关键词:原神`、`UP主:某某`）。
+// 冒号前即维度名——注意用半角冒号切，规则本身可能含全角「：」。
+export const reasonDim = (reason: string): string => {
+  const i = reason.indexOf(':');
+  return i > 0 ? reason.slice(0, i) : reason;
+};
+
+// 按**维度**聚合计数，供面板「分类」与启动汇总共用。
+// 不按完整原因聚合：自 0.0.8 起关键词/标签/简介等会带上具体命中规则，按完整原因分组会让
+// 分类栏碎成几十项（`关键词:原神×3`、`关键词:恰饭×2`…）。具体规则在每条记录里能看到。
 export function tallyLog(): Record<string, number> {
   const t: Record<string, number> = {};
-  for (const b of blockedLog) t[b.reason] = (t[b.reason] || 0) + 1;
+  for (const b of blockedLog) {
+    const d = reasonDim(b.reason);
+    t[d] = (t[d] || 0) + 1;
+  }
+  return t;
+}
+
+// 按**具体规则**聚合（规则体检用）：哪条规则拦得最多（可能过宽）、哪条从没命中（可能写错了）。
+// 与 tallyLog 分开，因为两者回答的是不同问题。
+export function tallyRules(): Record<string, number> {
+  const t: Record<string, number> = {};
+  for (const b of blockedLog) {
+    if (b.reason.indexOf(':') > 0) t[b.reason] = (t[b.reason] || 0) + 1;
+  }
   return t;
 }
 

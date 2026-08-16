@@ -39,6 +39,13 @@ export interface Matcher {
   plain: RegExp | null;
   regexes: RegExp[];
   empty: boolean;
+  // —— 以下三项仅供「解释」冷路径（whichHit）使用，热路径不读 ——
+  // plain 是把所有普通词合并成的**一条**正则（性能考虑），命中后无从知道是哪个词命中的。
+  // 于是并存一份逐条的原始规则行 + 归一后的词，命中之后再逐条回查。
+  // 这条回查路径每次拦截只走一次（而非每张卡），所以宁可慢也不动热路径。
+  plainSrc: string[]; // 原始规则行（展示给用户看的那一份）
+  plainNorm: string[]; // 与 plainSrc 一一对应的归一词（未转义，可直接 includes）
+  regexSrc: string[]; // 与 regexes 一一对应的原始 /正则/ 行
 }
 
 // 单条 /正则/ 模式体的长度上限（针对订阅/导入的不可信正则）。正常规则远不及此。
@@ -64,7 +71,10 @@ export function ruleLines(lines: unknown): string[] {
 // /.../ 行 → 各自独立编译（保留其原有 flags，如 m/s/g 语义不被合并破坏）。
 export function compileLines(lines: readonly string[] | null | undefined): Matcher {
   const plainParts: string[] = [];
+  const plainSrc: string[] = [];
+  const plainNorm: string[] = [];
   const regexes: RegExp[] = [];
+  const regexSrc: string[] = [];
   for (const raw of ruleLines(lines)) {
     const line = raw.trim();
     if (!line) continue;
@@ -76,12 +86,17 @@ export function compileLines(lines: readonly string[] | null | undefined): Match
         // 剥除 g/y：编译出的 RegExp 会跨多张卡复用 .test()，全局/粘性标志会让 lastIndex 粘连导致间歇漏判。
         const flags = (m[2] || 'i').replace(/[gy]/g, '');
         regexes.push(new RegExp(m[1], flags.includes('i') ? flags : flags + 'i'));
+        regexSrc.push(line);
       } catch (e) {
         /* 非法正则：忽略该行 */
       }
     } else {
       const w = normMatch(line); // 与 textHit 同一套归一（含反绕过），两侧一致
-      if (w) plainParts.push(escapeRe(w));
+      if (w) {
+        plainParts.push(escapeRe(w));
+        plainSrc.push(line);
+        plainNorm.push(w);
+      }
     }
   }
   let plain: RegExp | null = null;
@@ -92,7 +107,7 @@ export function compileLines(lines: readonly string[] | null | undefined): Match
       /* 理论上不会到这里：各部分已转义 */
     }
   }
-  return { plain, regexes, empty: !plain && !regexes.length };
+  return { plain, regexes, empty: !plain && !regexes.length, plainSrc, plainNorm, regexSrc };
 }
 
 export function textHit(text: unknown, matcher: Matcher | null | undefined): boolean {
@@ -103,6 +118,27 @@ export function textHit(text: unknown, matcher: Matcher | null | undefined): boo
     for (const r of matcher.regexes) if (r.test(t)) return true;
   }
   return false;
+}
+
+// 「是哪条规则命中的」——冷路径回查，仅在已判定拦截后为了向用户解释才调用。
+// 与 textHit 的判定顺序保持一致（先普通词后正则），否则解释出来的规则可能不是真正生效的那条。
+// plainNorm 是归一后的词、text 也走同一套归一，故 includes 与合并正则的判定完全等价
+// （plainParts 是它 escapeRe 后的字面量，正则里没有元字符参与）。
+export function whichHit(text: unknown, matcher: Matcher | null | undefined): string | null {
+  if (!text || !matcher) return null;
+  if (matcher.plain) {
+    const t = normMatch(text);
+    for (let i = 0; i < matcher.plainNorm.length; i++) {
+      if (t.includes(matcher.plainNorm[i])) return matcher.plainSrc[i];
+    }
+  }
+  if (matcher.regexes.length) {
+    const t = stripInvisible(text);
+    for (let i = 0; i < matcher.regexes.length; i++) {
+      if (matcher.regexes[i].test(t)) return matcher.regexSrc[i];
+    }
+  }
+  return null;
 }
 
 // 关键词作用域：行首可加 title: / up: / part: 前缀，限定只匹配 标题/UP名/分区；
@@ -138,6 +174,12 @@ export function compileScopedKeywords(lines: readonly string[] | null | undefine
 export function kwHit(scoped: ScopedKw | null | undefined, field: KwScope, text: unknown): boolean {
   if (!scoped || !text) return false;
   return textHit(text, scoped.all) || textHit(text, scoped[field]);
+}
+
+// kwHit 的解释版（冷路径）：返回命中的原始规则行。判定顺序与 kwHit 一致：先 all 后带前缀。
+export function kwWhich(scoped: ScopedKw | null | undefined, field: KwScope, text: unknown): string | null {
+  if (!scoped || !text) return null;
+  return whichHit(text, scoped.all) || whichHit(text, scoped[field]);
 }
 
 // 把多条输入拆成规则数组（正则感知）：换行总是分隔；以 / 开头的行视为整条正则、不按逗号拆

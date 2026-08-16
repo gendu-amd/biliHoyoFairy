@@ -2,8 +2,8 @@
 // M（编译后的匹配器）与 ruleVersion 是共享可变状态，经 rebuildRules 重建；以 ESM 实时绑定导出，
 // 其它模块 import 后读到的是最新值（切勿解构后缓存）。
 import { CONFIG } from '../config';
-import { compileScopedKeywords, compileLines, kwHit, textHit, lc, ruleLines, configureFuzzy } from './normalize';
-import type { Matcher, ScopedKw } from './normalize';
+import { compileScopedKeywords, compileLines, kwHit, kwWhich, textHit, whichHit, lc, ruleLines, configureFuzzy } from './normalize';
+import type { Matcher, ScopedKw, KwScope } from './normalize';
 import type { CardInfo } from '../cardinfo';
 import { collectSubRules } from '../subscriptions/store';
 
@@ -130,8 +130,25 @@ export const SYNC_DIMS: SyncDim[] = [
     },
   },
   // 关键词：标题 / UP名 / 分区任一命中即拦（标签维度在 matchApi 里补判）
-  { match: (i) => (kwHit(M.blockKw, 'title', i.title) || (i.up && kwHit(M.blockKw, 'up', i.up)) || kwHit(M.blockKw, 'part', i.partition) ? '关键词' : null) },
-  { match: (i) => (i.partition && textHit(i.partition, M.blockPartition) ? '分区:' + i.partition : null) },
+  // 关键词命中要说清是**哪一条**词命中的——关键词是规则最多、最容易误伤的维度，
+  // 只报「关键词」等于让用户去上百条规则里自己猜。判定仍走 kwHit 的合并正则（热路径不变），
+  // 仅在确定命中后再 kwWhich 回查一次（每次拦截一次，不是每张卡一次）。
+  {
+    match: (i) => {
+      const field: KwScope | null = kwHit(M.blockKw, 'title', i.title)
+        ? 'title'
+        : i.up && kwHit(M.blockKw, 'up', i.up)
+          ? 'up'
+          : kwHit(M.blockKw, 'part', i.partition)
+            ? 'part'
+            : null;
+      if (!field) return null;
+      const text = field === 'title' ? i.title : field === 'up' ? i.up : i.partition;
+      const rule = kwWhich(M.blockKw, field, text);
+      return rule ? '关键词:' + rule : '关键词';
+    },
+  },
+  { match: (i) => (i.partition && textHit(i.partition, M.blockPartition) ? '分区:' + (whichHit(i.partition, M.blockPartition) || i.partition) : null) },
   { match: (i) => (i.up && M.blockUpNameSet.has(lc(i.up)) ? 'UP主:' + i.up : null) },
   { match: (i) => (i.uid && M.blockUidSet.has(i.uid) ? 'UID:' + i.uid : null) },
   { match: (i) => (i.bvid && M.blockBvidSet.has(i.bvid) ? 'BV:' + i.bvid : null) },
@@ -154,7 +171,10 @@ export const API_DIMS: ApiDim[] = [
     active: () => M.tagActive, // 含订阅并入的「视频标签」维度
     match: (info, ctx) => {
       for (const t of ctx.tags) {
-        if (textHit(t, M.blockTag)) return '标签:' + t;
+        if (!textHit(t, M.blockTag)) continue;
+        // 报「哪条规则」而不是「视频的哪个标签」：规则若是 /正则/ 或部分词，
+        // 只看标签值用户仍不知道该改哪一条。原因串统一为 `维度:规则`，UI 才能据此定位到规则去删。
+        return '标签:' + (whichHit(t, M.blockTag) || t);
       }
       return null;
     },
@@ -181,9 +201,47 @@ export const API_DIMS: ApiDim[] = [
     source: 'card',
     needs: 'card',
     active: () => M.upBioActive, // 含订阅并入的简介词
-    match: (info, ctx) => (!M.upBio.empty && textHit(ctx.sign, M.upBio) ? 'UP简介' : null),
+    match: (info, ctx) => {
+      if (M.upBio.empty || !textHit(ctx.sign, M.upBio)) return null;
+      const rule = whichHit(ctx.sign, M.upBio);
+      return rule ? 'UP简介:' + rule : 'UP简介';
+    },
   },
 ];
+
+// 原因串的「维度名 → 该规则住在 CONFIG.block 的哪个字段」。
+// 供 UI 从一条屏蔽记录反查到具体规则行、一键删除（误伤自愈）。
+// ⚠ 必须与上面各 DIM 产出的 `维度:规则` 前缀保持一致——改了原因串就要改这里，
+// tests/explain.test.ts 会核对两侧不漂移。未列出的维度（广告卡/直播卡/播放</ 时长< 等阈值类）
+// 没有「一条可删的规则」，是开关或数值，UI 不给删除入口。
+export const REASON_RULE_FIELD: Record<string, keyof typeof CONFIG.block> = {
+  关键词: 'keywords',
+  分区: 'partitions',
+  UP主: 'upNames',
+  UID: 'uids',
+  BV: 'bvids',
+  标签: 'tags',
+  双标签: 'dualTags',
+  UP简介: 'upBio',
+};
+
+// 从一条屏蔽原因反查到用户名单里的**那一行**规则（供 UI 一键删除）。
+// 找不到 = 该规则不在用户自己的名单里，多半来自已启用的订阅——此时不能假装能删。
+export function locateRule(reason: string): { field: keyof typeof CONFIG.block; line: string } | null {
+  const i = reason.indexOf(':');
+  if (i <= 0) return null;
+  const field = REASON_RULE_FIELD[reason.slice(0, i)];
+  const rule = reason.slice(i + 1);
+  if (!field || !rule) return null;
+  for (const line of ruleLines(CONFIG.block[field])) {
+    if (line.trim() === rule) return { field, line };
+    // 关键词的 title:/up:/part: 前缀在编译时已被剥掉，原因串里是剥后的词，
+    // 回查必须认得带前缀的原行，否则会把用户自己的规则误判成「来自订阅」。
+    const m = !line.trim().startsWith('/') && line.trim().match(/^(?:title|up|part)\s*:\s*(.+)$/i);
+    if (m && m[1].trim() === rule) return { field, line };
+  }
+  return null;
+}
 
 export function matchRule(info: CardInfo): string | null {
   if (isWhitelisted(info)) return null;

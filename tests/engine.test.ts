@@ -20,7 +20,7 @@ describe('matchRule：本地同步维度', () => {
   it('关键词命中标题', () => {
     CONFIG.block.keywords.push('原神');
     rebuildRules();
-    expect(matchRule(card({ title: '今天玩原神' }))).toBe('关键词');
+    expect(matchRule(card({ title: '今天玩原神' }))).toBe('关键词:原神');
     expect(matchRule(card({ title: '鸣潮启动' }))).toBe(null);
   });
 
@@ -133,7 +133,7 @@ describe('matchApi：联网维度', () => {
   it('UP 简介（cardData.card.sign）', () => {
     CONFIG.block.upBio.push('恰饭');
     rebuildRules();
-    expect(matchApi(card(), null, null, { card: { sign: '专业恰饭十年' } })).toBe('UP简介');
+    expect(matchApi(card(), null, null, { card: { sign: '专业恰饭十年' } })).toBe('UP简介:恰饭');
     expect(matchApi(card(), null, null, { card: { sign: '佛系UP' } })).toBe(null);
   });
 });
