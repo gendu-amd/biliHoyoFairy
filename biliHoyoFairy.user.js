@@ -1949,6 +1949,70 @@
     scanComments();
   }
 
+  // src/scanner.ts
+  var STEADY_THROTTLE_MS = 250;
+  function createScanScheduler(deps) {
+    let firstPaint = true;
+    let queued = false;
+    const run = () => {
+      queued = false;
+      deps.scan();
+    };
+    const request = () => {
+      if (queued) return;
+      queued = true;
+      if (firstPaint) deps.raf(run);
+      else deps.timeout(run, STEADY_THROTTLE_MS);
+    };
+    return {
+      request,
+      toSteadyState() {
+        if (!firstPaint) return;
+        firstPaint = false;
+      }
+    };
+  }
+  var installed = false;
+  function startScanner() {
+    if (installed) return;
+    installed = true;
+    const scheduler = createScanScheduler({
+      scan: scanAll,
+      raf: (cb) => typeof requestAnimationFrame === "function" ? requestAnimationFrame(cb) : setTimeout(cb, 0),
+      timeout: (cb, ms) => setTimeout(cb, ms)
+    });
+    let sawShadowHost = false;
+    const observer = new MutationObserver(
+      safe("observer", (muts) => {
+        let touched = false;
+        for (const m of muts) {
+          if (!m.addedNodes || !m.addedNodes.length) continue;
+          touched = true;
+          for (const n of m.addedNodes) {
+            const el = n;
+            if (n.nodeType === 1 && el.shadowRoot && el.id !== "bfb-overlay-host") {
+              shadowRoots.add(el.shadowRoot);
+              sawShadowHost = true;
+            }
+          }
+        }
+        if (!touched) return;
+        if (sawShadowHost) {
+          sawShadowHost = false;
+          harvestShadowRoots(document);
+        }
+        scheduler.request();
+      })
+    );
+    observer.observe(document, { childList: true, subtree: true });
+    scanAll();
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", () => scheduler.toSteadyState(), { once: true });
+    } else {
+      scheduler.toSteadyState();
+    }
+  }
+
   // src/blacklist.ts
   function resolveUidByBvid(bvid, cb) {
     fetchView(bvid, (d) => {
@@ -4070,33 +4134,6 @@
       document.addEventListener("contextmenu", safe("onContextMenu", onContextMenu), true);
       document.addEventListener("mouseover", safe("onCardHover", onCardHover), true);
       document.addEventListener("scroll", safe("hideHoverBtn", hideHoverBtn), true);
-      let sawShadowHost = false;
-      const observer = new MutationObserver(safe("observer", (muts) => {
-        let touched = false;
-        for (const m of muts) {
-          if (m.addedNodes && m.addedNodes.length) {
-            touched = true;
-            for (const n of m.addedNodes) {
-              if (n.nodeType === 1 && n.shadowRoot && n.id !== "bfb-overlay-host") {
-                shadowRoots.add(n.shadowRoot);
-                sawShadowHost = true;
-              }
-            }
-          }
-        }
-        if (touched) {
-          if (start._t) return;
-          start._t = setTimeout(() => {
-            start._t = null;
-            if (sawShadowHost) {
-              sawShadowHost = false;
-              harvestShadowRoots(document);
-            }
-            scanAll();
-          }, 250);
-        }
-      }));
-      observer.observe(document.body, { childList: true, subtree: true });
       setTimeout(() => {
         if (!CONFIG.enabled) return;
         for (const w of healthReport()) logErr("运行自检", w);
@@ -4115,6 +4152,7 @@
     }
     installNetworkHooks();
     installShadowHook();
+    startScanner();
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", start);
     } else {

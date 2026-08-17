@@ -19,6 +19,7 @@ import { setRulesChangedHandler } from './events';
 import { CMT_TAGS, scanComments, scheduleCommentScan } from './comments';
 import { applyHotSearchStyle } from './hotsearch';
 import { scanAll, rescanAfterRuleChange } from './dom';
+import { startScanner } from './scanner';
 import { onContextMenu, onCardHover, hideHoverBtn } from './ui/menu';
 import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
 /*
@@ -94,35 +95,8 @@ import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
     document.addEventListener('mouseover', safe('onCardHover', onCardHover), true);
     document.addEventListener('scroll', safe('hideHoverBtn', hideHoverBtn), true);
 
-    // 信息流无限滚动：节流扫描新卡（已处理过的卡会被廉价短路跳过）
-    let sawShadowHost = false; // 本批是否出现新的 shadow host；没有就不做昂贵的全子树采集
-    const observer = new MutationObserver(safe('observer', (muts) => {
-      let touched = false;
-      for (const m of muts) {
-        if (m.addedNodes && m.addedNodes.length) {
-          touched = true;
-          for (const n of m.addedNodes) {
-            if (n.nodeType === 1 && n.shadowRoot && n.id !== 'bfb-overlay-host') {
-              shadowRoots.add(n.shadowRoot);
-              sawShadowHost = true;
-            }
-          }
-        }
-      }
-      if (touched) {
-        if (start._t) return;
-        start._t = setTimeout(() => {
-          start._t = null;
-          // shadow host 极少出现：仅在本批确实新增了 host 时，才做一次（节流内的）全子树采集，常态零成本
-          if (sawShadowHost) {
-            sawShadowHost = false;
-            harvestShadowRoots(document);
-          }
-          scanAll();
-        }, 250);
-      }
-    }));
-    observer.observe(document.body, { childList: true, subtree: true });
+    // 信息流的增量扫描由 ./scanner 负责，且早在 document-start 就已装好（首屏 SSR 的卡
+    // 必须在解析出来的当帧判定，等到这里就已经画在屏幕上了）。此处不再另装观察器。
 
     // 首屏稳定后弹一次「本次拦截」汇总：让你确认脚本真的在干活（区别于 B 站随机换批）
     setTimeout(() => {
@@ -152,8 +126,12 @@ import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
   // 拦截层必须尽早安装（document-start，先于页面脚本发起请求 / 构建评论组件）
   installNetworkHooks();
   installShadowHook();
+  // DOM 兜底层的**扫描**同样要尽早：首页首屏是 SSR，卡片由解析器一张张吐出来，
+  // 拦截层（改 JSON）够不着，等 DOMContentLoaded 再扫它们早就绘制出来了。
+  // 只隐藏肯定命中的卡，故不存在「脚本挂了 → 空白首页」的失败模式。
+  startScanner();
 
-  // DOM 兜底层依赖 DOM，延迟到文档就绪再启动
+  // 其余 DOM 相关启动（事件监听 / 评论 / 菜单 / 汇总）延迟到文档就绪
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start);
   } else {

@@ -12,7 +12,7 @@ biliHoyoFairy 是一个净化 B 站推荐流的油猴脚本。源码是 **TypeSc
 **两层过滤模型**（核心心智）：
 
 1. **拦截层（主）**：`document-start` 时 hook `fetch`/`XHR`，在 B 站读取推荐 JSON 之前就把命中规则的项从数组里删掉 → 页面只渲染保留项（无遮罩、无留白、不重发请求、不触发风控）。
-2. **DOM 兜底层（薄）**：`MutationObserver` 处理拦截层覆盖不到的（首屏 SSR、需联网取数的进阶维度、评论区），命中即安全隐藏。
+2. **DOM 兜底层（薄）**：`MutationObserver` 处理拦截层覆盖不到的（首屏 SSR、需联网取数的进阶维度、评论区），命中即安全隐藏。观察器同样在 `document-start` 就装（`scanner.ts`）——首页首屏是 SSR，卡片由解析器一张张吐出来，拦截层改 JSON 够不着，等 `DOMContentLoaded` 再扫它们早就绘制出来了（会先闪一下再消失）。
 3. **同一套规则**：两层共用 `matchRule` + 维度注册表，数据源不同、判定一致。
 4. **一键拉黑**：调官方 `relation/modify` 写账号黑名单，刷新后不再被推荐。
 
@@ -22,7 +22,7 @@ biliHoyoFairy 是一个净化 B 站推荐流的油猴脚本。源码是 **TypeSc
 
 ```
 src/
-├─ main.ts              入口 bootstrap：装 hook、接线注入 seam、起 observer、注册菜单（只装配，无业务逻辑）
+├─ main.ts              入口 bootstrap：装 hook、接线注入 seam、起 scanner、注册菜单（只装配，无业务逻辑）
 ├─ meta.js              UserScript 头部（@version 单一来源；esbuild 把它 prepend 到产物）
 │
 │  ── L0 纯叶子（无内部依赖，可独立单测）──
@@ -56,7 +56,8 @@ src/
 ├─ rules.ts             规则增删统一入口 addToList/removeFromList/pushUnique（改完发 events）
 ├─ subscriptions/refresh.ts  订阅刷新（联网拉取→解析→写缓存→发 events）
 ├─ comments.ts          评论区过滤（读评论组件 .__data，折叠/隐藏）
-├─ dom.ts               DOM 兜底层：扫描/隐藏/审查标记/按需联网评估 + rescanAfterRuleChange
+├─ dom.ts               DOM 兜底层：扫描/隐藏/审查标记/按需联网评估 + rescanAfterRuleChange（扫描**什么**）
+├─ scanner.ts           ★扫描调度：document-start 起观察器 + 分阶段合批策略（扫描**何时**）
 ├─ blacklist.ts         一键拉黑：relation/modify + 联合投稿连带 + 顺序批量(限速+风控暂停)
 │
 │  ── L6+ UI ──
@@ -87,6 +88,7 @@ L3        stats · subscriptions/store
 L4        ui/toast · match/engine
 L5        api · rules · subscriptions/refresh · net · comments
 L6        ui/field · blacklist · dom
+L6.5      scanner（依赖 dom/shadow/logging；无人依赖它，仅 main 启动）
 L7        ui/menu
 L8        ui/panel/（index → sections/* → ctx）
 L9        main（bootstrap，装配一切）
@@ -160,6 +162,7 @@ L9        main（bootstrap，装配一切）
 | 订阅格式/刷新 | `subscriptions/{parse,store,refresh}.ts` |
 | 角标/提示文案 | `ui/toast.ts` |
 | 启动顺序/事件接线 | `main.ts` |
+| 什么时候扫描（首屏不闪 / 滚动节流） | `scanner.ts`（策略 `createScanScheduler` 可单测；扫描**内容**在 `dom.ts`） |
 
 ---
 
