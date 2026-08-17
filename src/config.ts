@@ -67,6 +67,11 @@ export interface AppConfig {
   debug: boolean;
   blockedCount: number;
   uidNames: Record<string, string>;
+  // 每条规则的累计命中次数（键 = 原因串 `维度:规则`）。跨会话持久化：一条规则是不是「死规则」，
+  // 单次会话根本判不出来（今天首页没推这类视频不代表规则写错了），必须看长期计数。
+  ruleStats: Record<string, number>;
+  // 开始统计的时间戳。没有它就无法区分「装了三个月没命中=可疑」和「昨天刚装=正常」。
+  ruleStatsSince: number;
   subscriptions: Subscription[];
 }
 
@@ -122,6 +127,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   debug: false,
   blockedCount: 0,
   uidNames: {}, // uid -> UP 名 缓存（仅用于面板按名称展示；拉黑仍用 uid）
+  ruleStats: {}, // 规则 -> 累计命中次数（规则体检：过宽 / 从未命中）
+  ruleStatsSince: 0, // 首次记账的时间戳（0=尚未开始统计）
   // 规则订阅：每条 { url, name, enabled }。拉取到的规则数据另存于 SUB_STORE_KEY 缓存（不进 config，不外传）
   subscriptions: [],
 };
@@ -207,7 +214,9 @@ export function scheduleSave(): void {
 // 导出：仅含可分享的规则与过滤开关，剔除统计/缓存/个人会话偏好。
 // 不可移植键：导出时剔除、导入时同样剔除（对称）。尤其 subscriptions——否则别人分享的「规则文件」
 // 可借导入悄悄塞进会自动联网拉取的订阅 URL（安全风险）。
-export const NON_PORTABLE = ['blockedCount', 'uidNames', 'enabled', 'debug', 'reviewMode', 'subscriptions'];
+// ruleStats/ruleStatsSince 属于个人使用数据而非规则本身：别人的命中次数对你没有意义，
+// 更会让导入者的「死规则」判断建立在别人的浏览历史上。
+export const NON_PORTABLE = ['blockedCount', 'uidNames', 'enabled', 'debug', 'reviewMode', 'subscriptions', 'ruleStats', 'ruleStatsSince'];
 export function exportConfig(): string {
   const c: Record<string, any> = structuredClone(CONFIG);
   NON_PORTABLE.forEach((k) => delete c[k]);

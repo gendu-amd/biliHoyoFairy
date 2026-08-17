@@ -3,7 +3,7 @@
 // 三处显示（头部条数 / 分类统计 / 底部累计）共用同一个 refreshLog，避免对不上。
 import { CONFIG } from '../../../config';
 import { BLACKLIST_MANAGE_URL } from '../../../constants';
-import { blockedLog, tallyLog, tallyRules, sessionBlocked } from '../../../stats';
+import { blockedLog, tallyLog, sessionBlocked } from '../../../stats';
 import { blacklistUp, unblockUp } from '../../../blacklist';
 import { addToList, removeFromList } from '../../../rules';
 import { locateRule, REASON_RULE_FIELD } from '../../../match/engine';
@@ -20,13 +20,11 @@ export const logSection = {
     logSec.innerHTML =
       `<label>🔎 屏蔽记录（本次会话共 <span id="bfb-log-count">0</span> 条） <button class="act ghost" id="bfb-log-toggle" style="float:right">展开 / 收起</button></label>` +
       `<div class="stat" id="bfb-log-tally">分类：暂无</div>` +
-      `<div class="stat" id="bfb-log-top" style="display:none"></div>` +
       `<div id="bfb-log-list" style="display:none;max-height:240px;overflow:auto;overscroll-behavior:contain;margin-top:6px;font-size:12px"></div>`;
     host.appendChild(logSec);
     const logList = logSec.querySelector('#bfb-log-list');
     const logCount = logSec.querySelector('#bfb-log-count');
     const logTally = logSec.querySelector('#bfb-log-tally');
-    const logTop = logSec.querySelector('#bfb-log-top');
 
     const foot = document.createElement('div');
     foot.className = 'sec';
@@ -42,11 +40,6 @@ export const logSection = {
       const tally = tallyLog();
       logTally.textContent =
         '分类：' + (Object.keys(tally).length ? Object.entries(tally).map(([k, v]) => `${k}×${v}`).join('  ') : '暂无');
-      // 规则体检：拦得最多的几条规则。命中数畸高往往意味着这条规则写得过宽（比如一个两字词），
-      // 是误伤的主要来源；只列 TOP 3，避免又变成一大片。
-      const rules = Object.entries(tallyRules()).sort((a, b) => b[1] - a[1]).slice(0, 3);
-      logTop.textContent = rules.length ? '最常命中的规则：' + rules.map(([k, v]) => `${k}×${v}`).join('  ') : '';
-      logTop.style.display = rules.length ? '' : 'none';
       footTotal.textContent = CONFIG.blockedCount;
       footSession.textContent = sessionBlocked;
       if (logList.style.display === 'none') return;

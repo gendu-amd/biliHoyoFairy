@@ -58,6 +58,7 @@ src/
 ├─ comments.ts          评论区过滤（读评论组件 .__data，折叠/隐藏）
 ├─ dom.ts               DOM 兜底层：扫描/隐藏/审查标记/按需联网评估 + rescanAfterRuleChange（扫描**什么**）
 ├─ scanner.ts           ★扫描调度：document-start 起观察器 + 分阶段合批策略（扫描**何时**）
+├─ rulehealth.ts        规则体检：规则集 × 持久化命中计数 → 过宽的 / 从没命中的（判死规则的三条自我约束见文件头）
 ├─ blacklist.ts         一键拉黑：relation/modify + 联合投稿连带 + 顺序批量(限速+风控暂停)
 │
 │  ── L6+ UI ──
@@ -67,8 +68,8 @@ src/
 └─ ui/panel/            设置面板
    ├─ index.ts          面板外壳：Tab 骨架 + 分区注册表 SECTIONS（数组顺序=显示顺序）+ 开关/重渲
    ├─ ctx.ts            分区契约 PanelSection/PanelCtx（叶子：不 import 任何 section，也不 import index）
-   └─ sections/*.ts     13 个分区各自成文件：base / lists / advanced / comment / presets / regex-tester
-                        / io / name-list / subscriptions / batch-block / reset / health / log
+   └─ sections/*.ts     14 个分区各自成文件：base / lists / advanced / comment / presets / regex-tester
+                        / io / name-list / subscriptions / batch-block / reset / health / rule-health / log
 ```
 
 ★ = 两处关键设计（匹配引擎、拦截层），改动前务必理解（见 §5 扩展点）。
@@ -86,7 +87,7 @@ L1        config
 L2        logging · health · cardinfo · hotsearch
 L3        stats · subscriptions/store
 L4        ui/toast · match/engine
-L5        api · rules · subscriptions/refresh · net · comments
+L5        api · rules · subscriptions/refresh · net · comments · rulehealth
 L6        ui/field · blacklist · dom
 L6.5      scanner（依赖 dom/shadow/logging；无人依赖它，仅 main 启动）
 L7        ui/menu
@@ -163,6 +164,8 @@ L9        main（bootstrap，装配一切）
 | 角标/提示文案 | `ui/toast.ts` |
 | 启动顺序/事件接线 | `main.ts` |
 | 什么时候扫描（首屏不闪 / 滚动节流） | `scanner.ts`（策略 `createScanScheduler` 可单测；扫描**内容**在 `dom.ts`） |
+| 规则→原因串 / 原因串→规则 | `match/engine.ts` 的 `ruleKeyOf` / `locateRule`（两侧必须字节一致，`tests/rulehealth.test.ts` 守着） |
+| 哪条规则过宽 / 从没命中 | `rulehealth.ts`（读 `CONFIG.ruleStats` × `enumerateRules()`） |
 
 ---
 

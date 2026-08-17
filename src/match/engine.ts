@@ -20,7 +20,9 @@ export interface Matchers {
   upBio: Matcher;
   blockUidSet: Set<string>;
   blockBvidSet: Set<string>;
-  blockUpNameSet: Set<string>;
+  // lc(UP名) -> 规则原行。存原行是为了命中后能报「哪条规则」而不是「视频里那个名字」——
+  // 两者仅大小写不同时，报视频值会让 locateRule 反查不到（精确比对），删规则按钮就静默消失了。
+  blockUpNameMap: Map<string, string>;
   allowUidSet: Set<string>;
   allowUpNameSet: Set<string>;
   cmtKw: Matcher;
@@ -52,7 +54,7 @@ export function buildMatchers(): Matchers {
     upBio,
     blockUidSet,
     blockBvidSet: new Set(u('bvids')),
-    blockUpNameSet: lcSet(u('upNames')),
+    blockUpNameMap: new Map(ruleLines(u('upNames')).map((x) => [lc(x), x.trim()] as [string, string]).filter(([k]) => k)),
     allowUidSet,
     allowUpNameSet: lcSet(CONFIG.allow.upNames),
     // 评论区维度（独立编译）
@@ -149,7 +151,7 @@ export const SYNC_DIMS: SyncDim[] = [
     },
   },
   { match: (i) => (i.partition && textHit(i.partition, M.blockPartition) ? '分区:' + (whichHit(i.partition, M.blockPartition) || i.partition) : null) },
-  { match: (i) => (i.up && M.blockUpNameSet.has(lc(i.up)) ? 'UP主:' + i.up : null) },
+  { match: (i) => (i.up && M.blockUpNameMap.has(lc(i.up)) ? 'UP主:' + M.blockUpNameMap.get(lc(i.up)) : null) },
   { match: (i) => (i.uid && M.blockUidSet.has(i.uid) ? 'UID:' + i.uid : null) },
   { match: (i) => (i.bvid && M.blockBvidSet.has(i.bvid) ? 'BV:' + i.bvid : null) },
   {
@@ -241,6 +243,62 @@ export function locateRule(reason: string): { field: keyof typeof CONFIG.block; 
     if (m && m[1].trim() === rule) return { field, line };
   }
   return null;
+}
+
+// REASON_RULE_FIELD 的反向表（字段 -> 维度名），供 enumerateRules 由规则行推出原因串。
+const FIELD_REASON_DIM: Partial<Record<keyof typeof CONFIG.block, string>> = {};
+for (const dim of Object.keys(REASON_RULE_FIELD)) FIELD_REASON_DIM[REASON_RULE_FIELD[dim]] = dim;
+
+// 联网维度的规则在「精确过滤」关闭时根本不会被求值——此时它们零命中是配置使然，不是规则写错。
+const API_FIELDS = new Set<keyof typeof CONFIG.block>(['tags', 'dualTags', 'upBio']);
+
+export interface RuleRef {
+  key: string; // 命中时记账所用的原因串 `维度:规则`
+  dim: string;
+  field: keyof typeof CONFIG.block;
+  line: string; // 名单里的原行（可直接交给 removeFromList）
+  own: boolean; // true=用户自己的名单；false=来自已启用的订阅
+  active: boolean; // 当前配置下这条规则是否有可能命中
+}
+
+// 规则行 -> 命中时会产生的原因串。**必须**与各 DIM 的产出字节级一致，否则规则体检会把
+// 一条天天在拦的规则报成「从未命中」。两处的差异都出在「用不用 trim / 剥不剥前缀」上：
+//   - 关键词：compileScopedKeywords 剥掉 title:/up:/part: 前缀并 trim，原因串里是剥后的词
+//   - 分区/标签/UP简介：compileLines 内部 trim 后存 plainSrc，原因串是 trim 过的
+//   - UID/BV/双标签：直接拿数组元素原样拼进原因串，不能 trim（trim 了就对不上）
+// tests/rulehealth.test.ts 走真实 matchRule/matchApi 核对两侧不漂移。
+export function ruleKeyOf(field: keyof typeof CONFIG.block, line: string): string | null {
+  const dim = FIELD_REASON_DIM[field];
+  if (!dim) return null;
+  if (field === 'uids' || field === 'bvids' || field === 'dualTags') return line ? dim + ':' + line : null;
+  let v = line.trim();
+  if (!v) return null;
+  if (field === 'keywords') {
+    const m = !v.startsWith('/') && v.match(/^(?:title|up|part)\s*:\s*(.+)$/i);
+    if (m) v = m[1].trim();
+    if (!v) return null;
+  }
+  return dim + ':' + v;
+}
+
+// 枚举当前生效的每一条「可定位规则」（用户名单 + 已启用订阅）。
+// 规则体检据此与 CONFIG.ruleStats 求差集：有键无命中 = 可疑的死规则。
+export function enumerateRules(): RuleRef[] {
+  const out: RuleRef[] = [];
+  const sub: any = collectSubRules();
+  const seen = new Set<string>();
+  for (const field of Object.keys(REASON_RULE_FIELD).map((d) => REASON_RULE_FIELD[d])) {
+    const active = !API_FIELDS.has(field) || !!CONFIG.apiFilters;
+    const own = new Set(ruleLines(CONFIG.block[field]));
+    for (const line of ruleLines(CONFIG.block[field]).concat(ruleLines(sub[field]))) {
+      const key = ruleKeyOf(field, line);
+      // 同一条规则可能同时存在于用户名单与订阅里；只留一条，且以「用户自己的」为准（那份能删）。
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ key, dim: FIELD_REASON_DIM[field]!, field, line, own: own.has(line), active });
+    }
+  }
+  return out;
 }
 
 export function matchRule(info: CardInfo): string | null {

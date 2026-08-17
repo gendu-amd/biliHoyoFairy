@@ -20,6 +20,7 @@ import { subscriptionsSection } from './sections/subscriptions';
 import { batchBlockSection } from './sections/batch-block';
 import { resetSection } from './sections/reset';
 import { healthSection } from './sections/health';
+import { ruleHealthSection } from './sections/rule-health';
 import { logSection } from './sections/log';
 
 // 顶部分组 Tab：把杂乱的长列表归类成「基础 / 黑名单 / 进阶 / 评论 / 白名单 / 工具」
@@ -48,6 +49,7 @@ const SECTIONS = [
   batchBlockSection,
   resetSection,
   healthSection,
+  ruleHealthSection,
   logSection,
 ];
 

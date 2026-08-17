@@ -42,14 +42,12 @@ export function tallyLog(): Record<string, number> {
   return t;
 }
 
-// 按**具体规则**聚合（规则体检用）：哪条规则拦得最多（可能过宽）、哪条从没命中（可能写错了）。
-// 与 tallyLog 分开，因为两者回答的是不同问题。
-export function tallyRules(): Record<string, number> {
-  const t: Record<string, number> = {};
-  for (const b of blockedLog) {
-    if (b.reason.indexOf(':') > 0) t[b.reason] = (t[b.reason] || 0) + 1;
-  }
-  return t;
+// 规则级累计命中（持久化）。会话内的 blockedLog 只有 300 条、刷新即清，判不了「这条规则是不是从来没用过」。
+// 只记带具体规则的原因（`维度:规则`）——阈值/开关类维度（时长<、广告卡）没有可体检的规则行。
+export function bumpRuleStat(reason: string): void {
+  if (reason.indexOf(':') <= 0) return;
+  if (!CONFIG.ruleStatsSince) CONFIG.ruleStatsSince = Date.now();
+  CONFIG.ruleStats[reason] = (CONFIG.ruleStats[reason] || 0) + 1;
 }
 
 export function logBlocked(reason: string, info: any, src?: string): void {
@@ -92,6 +90,7 @@ function notifyBatched(): void {
 // 记账：计数 + 日志 + 通知 UI。拦截层（无 card）与 DOM 层共用。
 export function recordBlock(reason: string, info: any, src?: string): void {
   logBlocked(reason, info, src);
+  bumpRuleStat(reason);
   sessionBlocked++;
   CONFIG.blockedCount++;
   notifyBatched();

@@ -155,6 +155,10 @@
     blockedCount: 0,
     uidNames: {},
     // uid -> UP 名 缓存（仅用于面板按名称展示；拉黑仍用 uid）
+    ruleStats: {},
+    // 规则 -> 累计命中次数（规则体检：过宽 / 从未命中）
+    ruleStatsSince: 0,
+    // 首次记账的时间戳（0=尚未开始统计）
     // 规则订阅：每条 { url, name, enabled }。拉取到的规则数据另存于 SUB_STORE_KEY 缓存（不进 config，不外传）
     subscriptions: []
   };
@@ -213,7 +217,7 @@
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(saveConfig, 1200);
   }
-  var NON_PORTABLE = ["blockedCount", "uidNames", "enabled", "debug", "reviewMode", "subscriptions"];
+  var NON_PORTABLE = ["blockedCount", "uidNames", "enabled", "debug", "reviewMode", "subscriptions", "ruleStats", "ruleStatsSince"];
   function exportConfig() {
     const c = structuredClone(CONFIG);
     NON_PORTABLE.forEach((k) => delete c[k]);
@@ -800,7 +804,7 @@
       upBio,
       blockUidSet,
       blockBvidSet: new Set(u("bvids")),
-      blockUpNameSet: lcSet(u("upNames")),
+      blockUpNameMap: new Map(ruleLines(u("upNames")).map((x) => [lc(x), x.trim()]).filter(([k]) => k)),
       allowUidSet,
       allowUpNameSet: lcSet(CONFIG.allow.upNames),
       // 评论区维度（独立编译）
@@ -861,7 +865,7 @@
       }
     },
     { match: (i) => i.partition && textHit(i.partition, M.blockPartition) ? "分区:" + (whichHit(i.partition, M.blockPartition) || i.partition) : null },
-    { match: (i) => i.up && M.blockUpNameSet.has(lc(i.up)) ? "UP主:" + i.up : null },
+    { match: (i) => i.up && M.blockUpNameMap.has(lc(i.up)) ? "UP主:" + M.blockUpNameMap.get(lc(i.up)) : null },
     { match: (i) => i.uid && M.blockUidSet.has(i.uid) ? "UID:" + i.uid : null },
     { match: (i) => i.bvid && M.blockBvidSet.has(i.bvid) ? "BV:" + i.bvid : null },
     {
@@ -941,6 +945,38 @@
     }
     return null;
   }
+  var FIELD_REASON_DIM = {};
+  for (const dim of Object.keys(REASON_RULE_FIELD)) FIELD_REASON_DIM[REASON_RULE_FIELD[dim]] = dim;
+  var API_FIELDS = /* @__PURE__ */ new Set(["tags", "dualTags", "upBio"]);
+  function ruleKeyOf(field, line) {
+    const dim = FIELD_REASON_DIM[field];
+    if (!dim) return null;
+    if (field === "uids" || field === "bvids" || field === "dualTags") return line ? dim + ":" + line : null;
+    let v = line.trim();
+    if (!v) return null;
+    if (field === "keywords") {
+      const m = !v.startsWith("/") && v.match(/^(?:title|up|part)\s*:\s*(.+)$/i);
+      if (m) v = m[1].trim();
+      if (!v) return null;
+    }
+    return dim + ":" + v;
+  }
+  function enumerateRules() {
+    const out = [];
+    const sub = collectSubRules();
+    const seen = /* @__PURE__ */ new Set();
+    for (const field of Object.keys(REASON_RULE_FIELD).map((d) => REASON_RULE_FIELD[d])) {
+      const active = !API_FIELDS.has(field) || !!CONFIG.apiFilters;
+      const own = new Set(ruleLines(CONFIG.block[field]));
+      for (const line of ruleLines(CONFIG.block[field]).concat(ruleLines(sub[field]))) {
+        const key = ruleKeyOf(field, line);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push({ key, dim: FIELD_REASON_DIM[field], field, line, own: own.has(line), active });
+      }
+    }
+    return out;
+  }
   function matchRule(info) {
     if (isWhitelisted(info)) return null;
     for (const d of SYNC_DIMS) {
@@ -1006,12 +1042,10 @@
     }
     return t;
   }
-  function tallyRules() {
-    const t = {};
-    for (const b of blockedLog) {
-      if (b.reason.indexOf(":") > 0) t[b.reason] = (t[b.reason] || 0) + 1;
-    }
-    return t;
+  function bumpRuleStat(reason) {
+    if (reason.indexOf(":") <= 0) return;
+    if (!CONFIG.ruleStatsSince) CONFIG.ruleStatsSince = Date.now();
+    CONFIG.ruleStats[reason] = (CONFIG.ruleStats[reason] || 0) + 1;
   }
   function logBlocked(reason, info, src) {
     blockedLog.unshift({
@@ -1046,6 +1080,7 @@
   }
   function recordBlock(reason, info, src) {
     logBlocked(reason, info, src);
+    bumpRuleStat(reason);
     sessionBlocked++;
     CONFIG.blockedCount++;
     notifyBatched();
@@ -3807,18 +3842,137 @@
     }
   };
 
+  // src/rulehealth.ts
+  var OBSERVE_DAYS = 7;
+  var DAY = 864e5;
+  function ruleHealth() {
+    const refs = enumerateRules();
+    const stats = CONFIG.ruleStats || {};
+    const byKey = new Map(refs.map((r) => [r.key, r]));
+    const since = CONFIG.ruleStatsSince || 0;
+    const days = since ? Math.floor((Date.now() - since) / DAY) : 0;
+    const ready = !!since && days >= OBSERVE_DAYS;
+    const hot = Object.keys(stats).map((key) => ({ key, n: stats[key], ref: byKey.get(key) || null })).filter((x) => x.n > 0).sort((a, b) => b.n - a.n);
+    const dead = [];
+    const inactive = [];
+    for (const r of refs) {
+      if (!r.own || stats[r.key]) continue;
+      if (!r.active) inactive.push(r);
+      else if (ready) dead.push(r);
+    }
+    return { days, ready, hot, dead, inactive };
+  }
+  function pruneRuleStats() {
+    const stats = CONFIG.ruleStats;
+    if (!stats) return 0;
+    const live = new Set(enumerateRules().map((r) => r.key));
+    let n = 0;
+    for (const k of Object.keys(stats)) {
+      if (!live.has(k)) {
+        delete stats[k];
+        n++;
+      }
+    }
+    if (n) scheduleSave();
+    return n;
+  }
+
+  // src/ui/panel/sections/rule-health.ts
+  var HOT_N = 5;
+  var ruleHealthSection = {
+    tab: "tools",
+    render(host, ctx) {
+      const sec = document.createElement("div");
+      sec.className = "sec";
+      sec.innerHTML = `<label>🩹 规则体检 <button class="act ghost" id="bfb-rh-refresh" style="float:right">刷新</button></label>
+      <div class="stat" id="bfb-rh-since"></div>
+      <div class="stat" id="bfb-rh-hot" style="margin-top:4px"></div>
+      <div id="bfb-rh-dead" style="margin-top:6px"></div>`;
+      host.appendChild(sec);
+      const sinceEl = sec.querySelector("#bfb-rh-since");
+      const hotEl = sec.querySelector("#bfb-rh-hot");
+      const deadEl = sec.querySelector("#bfb-rh-dead");
+      const render = () => {
+        pruneRuleStats();
+        const h = ruleHealth();
+        sinceEl.textContent = h.days ? `已观察 ${h.days} 天，共 ${Object.keys(CONFIG.ruleStats || {}).length} 条规则有过命中` : "尚未积累命中数据（拦到第一个视频后开始统计）";
+        hotEl.innerHTML = h.hot.length ? "最常命中：" + h.hot.slice(0, HOT_N).map((x) => `<span title="命中越多越可能写得过宽">${escapeHtml(x.key)}×${x.n}</span>`).join("  ") : "";
+        hotEl.style.display = h.hot.length ? "" : "none";
+        deadEl.innerHTML = "";
+        if (h.inactive.length) {
+          const n = document.createElement("div");
+          n.className = "hint";
+          n.textContent = `ℹ ${h.inactive.length} 条标签 / 简介类规则当前不会生效（「精确过滤」未开启），不计入下面的统计。`;
+          deadEl.appendChild(n);
+        }
+        if (!h.ready) {
+          const n = document.createElement("div");
+          n.className = "hint";
+          n.textContent = h.days ? `观察满 ${OBSERVE_DAYS} 天后（还差 ${OBSERVE_DAYS - h.days} 天）才会列出「从未命中」的规则——时间太短，谁都还没命中。` : `观察满 ${OBSERVE_DAYS} 天后会在这里列出「从未命中」的规则。`;
+          deadEl.appendChild(n);
+          return;
+        }
+        if (!h.dead.length) {
+          const n = document.createElement("div");
+          n.className = "hint";
+          n.style.color = "#1b7a3d";
+          n.textContent = `✅ ${OBSERVE_DAYS} 天内每条规则都命中过，没有明显的死规则。`;
+          deadEl.appendChild(n);
+          return;
+        }
+        const title = document.createElement("div");
+        title.className = "hint";
+        title.textContent = `⚠ ${h.dead.length} 条规则在这 ${h.days} 天里一次都没命中，可能是写错了、或对象已经不发这类内容了：`;
+        deadEl.appendChild(title);
+        const list = document.createElement("div");
+        list.style.cssText = "max-height:180px;overflow:auto;overscroll-behavior:contain;margin-top:4px;font-size:12px";
+        h.dead.forEach((r) => {
+          const row = document.createElement("div");
+          row.className = "log-row";
+          const tx = document.createElement("span");
+          tx.className = "log-tx";
+          tx.innerHTML = `<span class="log-rs">[${escapeHtml(r.dim)}]</span> ${escapeHtml(r.line)}`;
+          tx.title = r.line;
+          row.appendChild(tx);
+          const del = document.createElement("button");
+          del.className = "log-pass";
+          del.textContent = "✂删";
+          del.title = "从名单中删除这条规则";
+          del.onclick = () => {
+            confirmModal({
+              title: "删除规则",
+              body: `将从「${r.dim}」名单中删除：
+${r.line}`,
+              okText: "删除",
+              danger: true,
+              onOk: () => {
+                removeFromList(CONFIG.block[r.field], r.line);
+                toast(`已删除规则：${r.line}`);
+                ctx.rerender();
+              }
+            });
+          };
+          row.appendChild(del);
+          list.appendChild(row);
+        });
+        deadEl.appendChild(list);
+      };
+      sec.querySelector("#bfb-rh-refresh").onclick = render;
+      render();
+    }
+  };
+
   // src/ui/panel/sections/log.ts
   var logSection = {
     tab: "tools",
     render(host, ctx) {
       const logSec = document.createElement("div");
       logSec.className = "sec";
-      logSec.innerHTML = `<label>🔎 屏蔽记录（本次会话共 <span id="bfb-log-count">0</span> 条） <button class="act ghost" id="bfb-log-toggle" style="float:right">展开 / 收起</button></label><div class="stat" id="bfb-log-tally">分类：暂无</div><div class="stat" id="bfb-log-top" style="display:none"></div><div id="bfb-log-list" style="display:none;max-height:240px;overflow:auto;overscroll-behavior:contain;margin-top:6px;font-size:12px"></div>`;
+      logSec.innerHTML = `<label>🔎 屏蔽记录（本次会话共 <span id="bfb-log-count">0</span> 条） <button class="act ghost" id="bfb-log-toggle" style="float:right">展开 / 收起</button></label><div class="stat" id="bfb-log-tally">分类：暂无</div><div id="bfb-log-list" style="display:none;max-height:240px;overflow:auto;overscroll-behavior:contain;margin-top:6px;font-size:12px"></div>`;
       host.appendChild(logSec);
       const logList = logSec.querySelector("#bfb-log-list");
       const logCount = logSec.querySelector("#bfb-log-count");
       const logTally = logSec.querySelector("#bfb-log-tally");
-      const logTop = logSec.querySelector("#bfb-log-top");
       const foot = document.createElement("div");
       foot.className = "sec";
       foot.innerHTML = `<a class="manage" href="${BLACKLIST_MANAGE_URL}" target="_blank">→ 打开 B 站官方黑名单管理页（取消拉黑 / 查看人数）</a>
@@ -3830,9 +3984,6 @@
         logCount.textContent = blockedLog.length;
         const tally = tallyLog();
         logTally.textContent = "分类：" + (Object.keys(tally).length ? Object.entries(tally).map(([k, v]) => `${k}×${v}`).join("  ") : "暂无");
-        const rules = Object.entries(tallyRules()).sort((a, b) => b[1] - a[1]).slice(0, 3);
-        logTop.textContent = rules.length ? "最常命中的规则：" + rules.map(([k, v]) => `${k}×${v}`).join("  ") : "";
-        logTop.style.display = rules.length ? "" : "none";
         footTotal.textContent = CONFIG.blockedCount;
         footSession.textContent = sessionBlocked;
         if (logList.style.display === "none") return;
@@ -3963,6 +4114,7 @@
     batchBlockSection,
     resetSection,
     healthSection,
+    ruleHealthSection,
     logSection
   ];
   var activeTab = "base";
