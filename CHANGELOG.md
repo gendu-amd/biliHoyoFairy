@@ -44,6 +44,8 @@ Phase 3：正确性修复 + 失败可见性 + 结构收敛（无用户可见的�
 ### 测试 / CI
 - **拦截层契约测试**：新增 `tests/fixtures/`（推荐/排行/热门/相关/搜索五个接口的脱敏样本）+ `tests/net.test.ts`（22 例），覆盖 URL 路由、各接口的列表提取契约、过滤与白名单、开关与审查模式、畸形数据容错、健康计数。B 站改结构时纯逻辑测试发现不了，这类 fixture 测试可以。
 - **可解释性闭环测试** `tests/explain.test.ts`：逐维度走真实的 `matchRule`/`matchApi`（不手写原因串），核对产出的原因都能被 `locateRule` 反查回名单里的那一行。维度产出与 `REASON_RULE_FIELD` 一旦漂移，「删规则」按钮会静默消失或指向错字段，而这种失效不报任何错。
+- **共享 DOM 替身 `tests/helpers/dom.ts`**：`page.ts` / `cardinfo.ts` 的**全部逻辑就是选择器逻辑**，不喂真元素树等于没测，而仓库刻意不引入 jsdom（依赖只保留 esbuild + vitest + eslint + typescript）。于是把原先散在 `page.test.ts` 里的手写替身抽成共享件并补全：支持 `tag/.cls/#id/[attr*=v]` 复合与后代选择器，且严格照规范语义（`closest` 取**最近祖先**、`querySelector` 取**文档序**首个）——这两条正是这类代码最容易踩的坑，替身放宽就测不出来。
+  据此新增 `isUnsafeHideTarget`（隐藏护栏：大容器 / 多卡元素判危险，隐错会连带删掉无限滚动的加载哨兵 → 整页空白且加载不出新内容）与 `extractCardInfo`（选择器优先级、UID 三级降级、`deepUid=false` 不做 innerHTML 兜底、广告角标必须精确等于「广告/赞助/推广」而非包含）的用例。
 - **版本号检查**：CI 新增 job——PR 里改了 `src/` 却没升 `src/meta.js` 的 `@version` 时失败（否则已安装脚本的用户收不到更新）。
 
 ## [0.0.7] - 未发布

@@ -1,0 +1,193 @@
+// 极简 DOM 替身。仓库刻意不引入 jsdom（依赖只保留 esbuild + vitest + eslint + typescript），
+// 但 page.ts / cardinfo.ts 这两个模块的**全部逻辑就是选择器逻辑**——不喂它们真的元素树就等于没测。
+// 于是手写一个够用的替身：只实现被测代码真正调用的那几个 API，且严格照规范语义
+// （closest 返回**最近的**祖先、querySelector 返回**文档序**首个），
+// 因为这两条「最近 / 文档序」正是这类代码最容易踩的坑，替身放宽了就测不出来。
+//
+// 支持的选择器子集：`tag`、`.cls`、`#id`、`[attr]`、`[attr=v]`、`[attr*=v]`、`[attr^=v]`、`[attr$=v]`，
+// 可复合（`a.link[href*=x]`）、可空格表示后代、可逗号并列。不支持伪类/子代/兄弟——用不到就不写，
+// 免得替身自己变成需要被测的东西。
+
+interface AttrCond {
+  name: string;
+  op?: '=' | '*=' | '^=' | '$=';
+  value?: string;
+}
+interface Compound {
+  tag: string;
+  classes: string[];
+  id: string;
+  attrs: AttrCond[];
+}
+
+function parseCompound(src: string): Compound | null {
+  const c: Compound = { tag: '', classes: [], id: '', attrs: [] };
+  let i = 0;
+  const m = src.match(/^[a-zA-Z*][\w-]*/);
+  if (m) {
+    c.tag = m[0] === '*' ? '' : m[0].toLowerCase();
+    i = m[0].length;
+  }
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === '.' || ch === '#') {
+      const n = src.slice(i + 1).match(/^[\w-]+/);
+      if (!n) return null;
+      if (ch === '.') c.classes.push(n[0]);
+      else c.id = n[0];
+      i += 1 + n[0].length;
+    } else if (ch === '[') {
+      const end = src.indexOf(']', i);
+      if (end < 0) return null;
+      const body = src.slice(i + 1, end);
+      const a = body.match(/^([\w-]+)(?:(\*=|\^=|\$=|=)\s*(.*))?$/);
+      if (!a) return null;
+      c.attrs.push({
+        name: a[1],
+        op: a[2] as AttrCond['op'],
+        value: a[3] ? a[3].replace(/^["']|["']$/g, '') : undefined,
+      });
+      i = end + 1;
+    } else return null;
+  }
+  return c;
+}
+
+// 选择器 → 若干「后代链」（每条链自左向右，最后一段是要匹配的元素本身）。
+const selCache = new Map<string, Compound[][]>();
+function parseSelector(sel: string): Compound[][] {
+  let out = selCache.get(sel);
+  if (out) return out;
+  out = [];
+  for (const part of sel.split(',')) {
+    const steps = part.trim().split(/\s+/).filter(Boolean).map(parseCompound);
+    if (steps.length && steps.every(Boolean)) out.push(steps as Compound[]);
+  }
+  selCache.set(sel, out);
+  return out;
+}
+
+export class El {
+  tag: string;
+  attrs: Record<string, string>;
+  children: El[] = [];
+  parentElement: El | null = null;
+  /** 本元素自身的文本（不含子元素的） */
+  own = '';
+  style: Record<string, string> = {};
+
+  constructor(tag: string, cls = '', attrs: Record<string, string> = {}, text = '') {
+    this.tag = tag.toLowerCase();
+    this.attrs = { ...attrs };
+    if (cls) this.attrs.class = cls;
+    this.own = text;
+  }
+
+  appendChild<T extends El>(c: T): T {
+    c.parentElement = this;
+    this.children.push(c);
+    return c;
+  }
+
+  getAttribute(n: string): string | null {
+    return n in this.attrs ? this.attrs[n] : null;
+  }
+
+  get classList(): string[] {
+    return (this.attrs.class || '').split(/\s+/).filter(Boolean);
+  }
+
+  get textContent(): string {
+    return this.own + this.children.map((c) => c.textContent).join('');
+  }
+
+  get innerHTML(): string {
+    return this.children.map((c) => c.outerHTML).join('') + this.own;
+  }
+
+  get outerHTML(): string {
+    const a = Object.keys(this.attrs)
+      .map((k) => ` ${k}="${this.attrs[k]}"`)
+      .join('');
+    return `<${this.tag}${a}>${this.innerHTML}</${this.tag}>`;
+  }
+
+  private matchCompound(c: Compound): boolean {
+    if (c.tag && c.tag !== this.tag) return false;
+    if (c.id && this.attrs.id !== c.id) return false;
+    const cls = this.classList;
+    if (!c.classes.every((x) => cls.includes(x))) return false;
+    return c.attrs.every((a) => {
+      const v = this.getAttribute(a.name);
+      if (v == null) return false;
+      if (!a.op) return true;
+      if (a.op === '=') return v === a.value;
+      if (a.op === '*=') return v.includes(a.value!);
+      if (a.op === '^=') return v.startsWith(a.value!);
+      return v.endsWith(a.value!);
+    });
+  }
+
+  matches(sel: string): boolean {
+    return parseSelector(sel).some((chain) => {
+      if (!this.matchCompound(chain[chain.length - 1])) return false;
+      // 后代链自右向左回溯祖先
+      let node: El | null = this.parentElement;
+      let i = chain.length - 2;
+      while (i >= 0) {
+        if (!node) return false;
+        if (node.matchCompound(chain[i])) i--;
+        node = node.parentElement;
+      }
+      return true;
+    });
+  }
+
+  closest(sel: string): El | null {
+    let p: El | null = this;
+    while (p) {
+      if (p.matches(sel)) return p;
+      p = p.parentElement;
+    }
+    return null;
+  }
+
+  /** 文档序（前序遍历）遍历后代，不含自身——与浏览器一致。 */
+  private descendants(out: El[] = []): El[] {
+    for (const c of this.children) {
+      out.push(c);
+      c.descendants(out);
+    }
+    return out;
+  }
+
+  querySelectorAll(sel: string): El[] {
+    return this.descendants().filter((e) => e.matches(sel));
+  }
+
+  querySelector(sel: string): El | null {
+    for (const e of this.descendants()) if (e.matches(sel)) return e;
+    return null;
+  }
+}
+
+/** 建树糖：h('div', '.cls', {attr}, 子元素或文本…) */
+export function h(tag: string, cls = '', attrs: Record<string, string> = {}, ...kids: (El | string)[]): El {
+  const el = new El(tag, cls, attrs);
+  for (const k of kids) {
+    if (typeof k === 'string') el.own += k;
+    else el.appendChild(k);
+  }
+  return el;
+}
+
+// isUnsafeHideTarget 会拿元素和 document.body / documentElement 比对；node 环境没有 document。
+// 返回 restore 以免污染其它测试文件（vitest 默认同进程跑多个文件）。
+export function installDocument(body: El, documentElement?: El): () => void {
+  const g = globalThis as any;
+  const prev = g.document;
+  g.document = { body, documentElement: documentElement || body };
+  return () => {
+    g.document = prev;
+  };
+}

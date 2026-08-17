@@ -1,40 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { cellOf } from '../src/page';
-
-// 极简 DOM 替身：只实现 cellOf 用到的 parentElement / closest，且严格照规范语义——
-// closest 沿祖先链向上，返回**最近的**匹配元素。仓库不引入 jsdom（依赖刻意保持最小），
-// 而这个 bug 的本质就是 closest 的「最近」语义，用替身足以锁住。
-class El {
-  classes: Set<string>;
-  tag: string;
-  parentElement: El | null = null;
-  constructor(tag: string, cls = '') {
-    this.tag = tag;
-    this.classes = new Set(cls.split(/\s+/).filter(Boolean));
-  }
-  appendChild(c: El): El {
-    c.parentElement = this;
-    return c;
-  }
-  matches(sel: string): boolean {
-    return sel.split(',').some((one) => {
-      const s = one.trim();
-      const m = s.match(/^([a-z]*)((?:\.[\w-]+)*)$/);
-      if (!m) return false;
-      if (m[1] && m[1] !== this.tag) return false;
-      const need = m[2].split('.').filter(Boolean);
-      return need.every((c) => this.classes.has(c));
-    });
-  }
-  closest(sel: string): El | null {
-    let p: El | null = this;
-    while (p) {
-      if (p.matches(sel)) return p;
-      p = p.parentElement;
-    }
-    return null;
-  }
-}
+import { describe, it, expect, afterEach } from 'vitest';
+import { cellOf, isUnsafeHideTarget } from '../src/page';
+import { El, installDocument } from './helpers/dom';
 
 // B 站首页 2026-08 的真实结构（抓自线上 HTML）：
 //   div.container(display:grid) > div.feed-card > div.bili-feed-card > div.bili-video-card
@@ -73,5 +39,49 @@ describe('cellOf', () => {
     const wrap = new El('div', 'whatever');
     const card = wrap.appendChild(new El('div', 'bili-video-card'));
     expect(cellOf(card as any)).toBe(card);
+  });
+});
+
+describe('isUnsafeHideTarget：隐藏前的护栏', () => {
+  // 这道护栏的作用是「宁可漏隐藏，也不能隐错」——把 .container / #i_cecream 之类的页面级
+  // 大容器隐掉，会连带删掉无限滚动的加载哨兵，用户看到的是**整页空白且再也加载不出新内容**。
+  let restore = () => {};
+  afterEach(() => restore());
+
+  const withPage = () => {
+    const html = new El('html');
+    const body = html.appendChild(new El('body'));
+    restore = installDocument(body, html);
+    return { html, body };
+  };
+
+  it('body / documentElement / null 一律判危险', () => {
+    const { html, body } = withPage();
+    expect(isUnsafeHideTarget(null as any)).toBe(true);
+    expect(isUnsafeHideTarget(body as any)).toBe(true);
+    expect(isUnsafeHideTarget(html as any)).toBe(true);
+  });
+
+  it('页面级大容器判危险（隐掉会连带删掉加载哨兵）', () => {
+    const { body } = withPage();
+    for (const cls of ['container', 'feed2', 'bili-feed4', 'bili-header']) {
+      expect(isUnsafeHideTarget(body.appendChild(new El('div', cls)) as any), cls).toBe(true);
+    }
+    expect(isUnsafeHideTarget(body.appendChild(new El('div', '', { id: 'i_cecream' })) as any)).toBe(true);
+  });
+
+  it('含多张视频卡的元素判危险（隐一张卡不该带走一整排）', () => {
+    const { body } = withPage();
+    const wrap = body.appendChild(new El('div', 'some-row'));
+    wrap.appendChild(new El('div', 'bili-video-card'));
+    wrap.appendChild(new El('div', 'bili-video-card'));
+    expect(isUnsafeHideTarget(wrap as any)).toBe(true);
+  });
+
+  it('只含一张卡的网格格子是安全目标（正是要隐的那个）', () => {
+    const { body } = withPage();
+    const cell = body.appendChild(new El('div', 'feed-card'));
+    cell.appendChild(new El('div', 'bili-feed-card')).appendChild(new El('div', 'bili-video-card'));
+    expect(isUnsafeHideTarget(cell as any)).toBe(false);
   });
 });
