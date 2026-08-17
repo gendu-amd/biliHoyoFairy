@@ -2,6 +2,7 @@
 // 自身不直接依赖 UI，避免环。拦截层（无 card）与 DOM 层共用。
 import { CONFIG, scheduleSave } from './config';
 import { log } from './logging';
+import { BLOCKED_LOG_MAX } from './constants';
 
 export interface BlockedEntry {
   title: string;
@@ -14,7 +15,7 @@ export interface BlockedEntry {
   t: number;
 }
 
-// 本次会话屏蔽记录（最新在前，上限 300）。
+// 本次会话屏蔽记录（最新在前，上限 BLOCKED_LOG_MAX）。
 export const blockedLog: BlockedEntry[] = [];
 
 // 本次会话计数（live binding；面板与启动汇总读取，清零用 setSessionBlocked）。
@@ -61,7 +62,7 @@ export function logBlocked(reason: string, info: any, src?: string): void {
     reason,
     t: Date.now(),
   });
-  if (blockedLog.length > 300) blockedLog.pop();
+  if (blockedLog.length > BLOCKED_LOG_MAX) blockedLog.pop();
 }
 
 // 命中记账后的监听器（由 UI 注册：更新角标 + 面板打开时刷新计数）。
@@ -83,7 +84,7 @@ function notifyBatched(): void {
     } catch (e) {
       /* UI 监听器异常不能反噬记账链路 */
     }
-    scheduleSave(); // 本身已是 1200ms 防抖，跟着合批一起走即可
+    scheduleSave(); // 本身已是 SAVE_DEBOUNCE_MS 防抖，跟着合批一起走即可
   });
 }
 

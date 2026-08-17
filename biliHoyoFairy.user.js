@@ -68,6 +68,9 @@
   ]);
   var COMMENT_AD_RE = /(bili2233\.cn|b23\.tv)\/(mall-|cm-)|领券|gaoneng\.bilibili\.com/i;
   var UNSAFE_KEYS = /* @__PURE__ */ new Set(["__proto__", "constructor", "prototype"]);
+  var BLOCKED_LOG_MAX = 300;
+  var SAVE_DEBOUNCE_MS = 1200;
+  var STARTUP_SUMMARY_MS = 3500;
   var RISK_CODES = /* @__PURE__ */ new Set([-352, -412, -509, -799]);
 
   // src/config.ts
@@ -215,7 +218,7 @@
   var saveTimer = null;
   function scheduleSave() {
     if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveConfig, 1200);
+    saveTimer = setTimeout(saveConfig, SAVE_DEBOUNCE_MS);
   }
   var NON_PORTABLE = ["blockedCount", "uidNames", "enabled", "debug", "reviewMode", "subscriptions", "ruleStats", "ruleStatsSince"];
   function exportConfig() {
@@ -1058,7 +1061,7 @@
       reason,
       t: Date.now()
     });
-    if (blockedLog.length > 300) blockedLog.pop();
+    if (blockedLog.length > BLOCKED_LOG_MAX) blockedLog.pop();
   }
   var onRecorded = () => {
   };
@@ -4292,7 +4295,7 @@ ${r.line}`,
         if (sessionBlocked <= 0) return;
         const top = Object.entries(tallyLog()).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, v]) => `${k}×${v}`).join("、");
         toast(`🛡 本次加载已拦截 ${sessionBlocked} 个：${top}（点右下角🛡看明细 / 放行）`);
-      }, 3500);
+      }, STARTUP_SUMMARY_MS);
       GM_registerMenuCommand("打开设置面板", openPanel2);
       GM_registerMenuCommand("暂停/启用拦截", () => {
         CONFIG.enabled = !CONFIG.enabled;

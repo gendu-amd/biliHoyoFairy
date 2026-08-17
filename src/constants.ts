@@ -32,5 +32,13 @@ export const COMMENT_AD_RE = /(bili2233\.cn|b23\.tv)\/(mall-|cm-)|领券|gaoneng
 // 会被写进 Object.prototype，污染全局并可能破坏 B 站自身脚本。
 export const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
+// —— 预算与时序 ——
+// 单独成组是因为这几个数要**放在一起**权衡：存盘太频伤磁盘、太疏丢配置；
+// 会话日志留太多吃内存、太少看不到刚才拦了什么；启动汇总弹太早统计还没跑完、太晚用户已经在滑了。
+// 分散在各模块里时没人能一眼看到这份预算（各模块自己的缓存上限仍留在原地，那是实现细节不是预算）。
+export const BLOCKED_LOG_MAX = 300; // 本次会话屏蔽记录条数上限
+export const SAVE_DEBOUNCE_MS = 1200; // 配置存盘防抖
+export const STARTUP_SUMMARY_MS = 3500; // 首屏稳定后弹「本次拦截」汇总 + 跑运行自检的延时
+
 // B 站风控返回码：触发后全局退避保护账号（校验失败/被拦截/请求过频）。
 export const RISK_CODES = new Set<number>([-352, -412, -509, -799]);

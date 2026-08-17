@@ -3,7 +3,7 @@
 // 接线各模块的注入 seam（面板回调 / stats 监听 / 规则变更 / 卡片检测开关），注册菜单命令与 MutationObserver。
 // 业务逻辑全部在各 src 模块；本文件只负责装配。仍保留 @ts-nocheck（事件 glue，渐进类型化），但受 eslint(no-undef) 约束。
 // bootstrap 只依赖各模块的「入口/接线」符号；其余模块经依赖图传递性加载（无需在此直接 import）。
-import { VERSION, BLACKLIST_MANAGE_URL } from './constants';
+import { VERSION, BLACKLIST_MANAGE_URL, STARTUP_SUMMARY_MS } from './constants';
 import { CONFIG, saveConfig } from './config';
 import { safe, logErr, BADGE } from './logging';
 import { healthReport } from './health';
@@ -111,7 +111,7 @@ import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
         .map(([k, v]) => `${k}×${v}`)
         .join('、');
       toast(`🛡 本次加载已拦截 ${sessionBlocked} 个：${top}（点右下角🛡看明细 / 放行）`);
-    }, 3500);
+    }, STARTUP_SUMMARY_MS);
 
     GM_registerMenuCommand('打开设置面板', openPanel);
     GM_registerMenuCommand('暂停/启用拦截', () => {

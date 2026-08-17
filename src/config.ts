@@ -1,5 +1,5 @@
 // 配置：默认值 + 本地存储（GM）+ 载入合并 + 导入/导出。CONFIG 为全局共享单例（对象被各模块就地读写）。
-import { SCHEMA_VERSION, STORE_KEY, UNSAFE_KEYS, VERSION } from './constants';
+import { SAVE_DEBOUNCE_MS, SCHEMA_VERSION, STORE_KEY, UNSAFE_KEYS, VERSION } from './constants';
 
 export interface BlockConfig {
   keywords: string[];
@@ -208,7 +208,7 @@ export function setUidName(uid: unknown, name: string): void {
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 export function scheduleSave(): void {
   if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveConfig, 1200);
+  saveTimer = setTimeout(saveConfig, SAVE_DEBOUNCE_MS);
 }
 
 // 导出：仅含可分享的规则与过滤开关，剔除统计/缓存/个人会话偏好。
