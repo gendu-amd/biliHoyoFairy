@@ -32,7 +32,13 @@ Phase 3：正确性修复 + 失败可见性 + 结构收敛（无用户可见的�
 
 ### 结构
 - **扫描调度拆出 `scanner.ts`**：`dom.ts` 只管扫描**什么**（判定逻辑），`scanner.ts` 只管**何时**（时机策略）。策略部分 `createScanScheduler` 用依赖注入接 raf/timeout，得以脱离真实 DOM 单测（node 环境没有 MutationObserver/rAF）。
-- **面板拆分**：原 `ui/panel.ts`（973 行、单个近千行的 `renderPanel`）拆为 `ui/panel/`——`index.ts` 只管 Tab 骨架与分区注册表，13 个分区各自成文件（`sections/*`），只依赖 `ctx.ts` 这一个接口。加一个面板分区从「在千行函数里找位置」变成「写个文件 + 往数组加一行」。
+- **面板拆分**：原 `ui/panel.ts`（973 行、单个近千行的 `renderPanel`）拆为 `ui/panel/`——`index.ts` 只管 Tab 骨架与分区注册表，14 个分区各自成文件（`sections/*`），只依赖 `ctx.ts` 这一个接口。加一个面板分区从「在千行函数里找位置」变成「写个文件 + 往数组加一行」。
+- **全部 14 个面板分区移除 `@ts-nocheck`**，恢复类型检查。这不是逐处加断言硬压下来的，四处结构性改动解决了绝大多数报错：
+  - 新增取值器 `q<T>(root, sel)`：面板 HTML 是本模块自己用模板串渲染的**静态**结构，取不到某个 id 只可能是「模板与代码不同步」的编程错误，于是直接抛（错误边界会记到控制台），而不是每处写 `if (!el) return` 把 bug 藏起来——约 150 处 `querySelector(...)!` 断言由此消失，且模板漂移从静默半残变成响亮失败。
+  - `CONFIG.block[field]` 原本类型是 `string[] | number`（含 `minDuration` 等阈值字段），取值处只能各自 cast。改为在 `match/engine.ts` 定义 `RuleListField` 联合类型，规则行字段与阈值字段在类型层面分开。
+  - `bindControl` / `chipModel` / `blacklistUp` 的尾参在实践中本就是可选的（`@ts-nocheck` 下无人察觉），改在**定义处**声明默认值，而不是在每个调用点补参。
+  - 每个分区显式标注 `: PanelSection`，注册表与实现之间的契约由编译器守。
+  开启检查当场逮到一个真 bug：`sections/rule-health.ts` 里「✂删死规则」按钮把 `confirmModal` 当成对象参数调用（实际签名是 `(message, opts) => Promise<boolean>`），点下去只会抛异常、永远删不掉——这段代码上一次提交时是「看起来对的」。剩余 7 个未类型化模块（`dom.ts` / `blacklist.ts` / `comments.ts` / `main.ts` / `ui/field.ts` / `ui/menu.ts` / `ui/panel/index.ts`）继续由 lint 的 `no-undef` 兜底漏 import。
 - **选择器登记表 `src/selectors.ts`**：散落在 5 个模块里的 B 站 DOM 选择器字面量集中到一处。B 站改版时只需改这一个文件。
 - **配置结构版本 `schemaVersion`**：存档带版本号 + `migrateConfig` 迁移链，为将来重命名字段/改变量纲留出无损升级路径（纯新增字段不需要升版本，`deepMerge` 会补默认值）。
 - **`net.ts` 移除 `@ts-nocheck`**：拦截层恢复完整类型检查。

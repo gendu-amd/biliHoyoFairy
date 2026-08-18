@@ -1,4 +1,3 @@
-// @ts-nocheck
 // 基础分组：常规开关 + 卡片类型过滤。
 import { CONFIG } from '../../../config';
 import { rescanAfterRuleChange } from '../../../dom';
@@ -6,8 +5,9 @@ import { applyHotSearchStyle } from '../../../hotsearch';
 import { bindControl } from '../../field';
 import { hideHoverBtn } from '../../menu';
 import { updateBadge } from '../../toast';
+import type { PanelSection } from '../ctx';
 
-export const baseSection = {
+export const baseSection: PanelSection = {
   tab: 'base',
   render(host) {
     const sw = document.createElement('div');

@@ -1,4 +1,3 @@
-// @ts-nocheck
 // 批量拉黑当前页：扫描本页所有被屏蔽的卡片并拉黑其 UP。
 import { CONFIG } from '../../../config';
 import { ATTR_BLOCKED } from '../../../constants';
@@ -8,8 +7,28 @@ import { fetchView, cachedUid } from '../../../api';
 import { toast } from '../../toast';
 import { confirmModal } from '../../confirm';
 import { refreshPanelIfOpen } from '../../hooks';
+import { q } from '../ctx';
+import type { PanelSection } from '../ctx';
 
-export const batchBlockSection = {
+// blacklist.ts 尚未类型化（DOM/网络 glue，渐进推进中），这里就地声明它的出入参形状，
+// 至少让本文件内的用法受检；等 blacklist.ts 去掉 @ts-nocheck 后这些可以直接删掉。
+interface BlockTarget {
+  uid: string;
+  name: string;
+}
+interface BlockResult {
+  added: number;
+  already: number;
+  failed: unknown[];
+}
+interface BlockProgress {
+  done: number;
+  total: number;
+  paused?: boolean;
+  wait?: number;
+}
+
+export const batchBlockSection: PanelSection = {
   tab: 'tools',
   render(host) {
     const batch = document.createElement('div');
@@ -19,14 +38,14 @@ export const batchBlockSection = {
       <div class="hint">扫描本页所有被屏蔽的卡片并拉黑其 UP；无法获取 UID 的将通过 BV 号联网解析。此操作写入账号黑名单、不可一键撤销，执行前会二次确认。</div>`;
     host.appendChild(batch);
 
-    batch.querySelector('#bfb-batch-block').onclick = () => {
+    q(batch, '#bfb-batch-block').onclick = () => {
       const blocked = document.querySelectorAll('[' + ATTR_BLOCKED + ']');
       if (!blocked.length) {
         toast('当前页还没有被屏蔽的卡片，先用规则屏蔽再批量拉黑');
         return;
       }
-      const direct = []; // 卡片直接带 UID
-      const toResolve = []; // 只有 BV，需联网反查
+      const direct: BlockTarget[] = []; // 卡片直接带 UID
+      const toResolve: { bvid: string; name: string }[] = []; // 只有 BV，需联网反查
       let noInfo = 0;
       blocked.forEach((card) => {
         const i = extractCardInfo(card); // 实时重抠，避免首屏缓存空值
@@ -44,20 +63,20 @@ export const batchBlockSection = {
       const slowTip = toResolve.length ? `\n其中 ${toResolve.length} 位需联网解析 UID（稍慢）` : '';
       const skipTip = noInfo ? `\n（${noInfo} 张信息不足已跳过）` : '';
 
-      const runBlacklist = (all) => {
-        const btn = batch.querySelector('#bfb-batch-block');
-        const origLabel = btn.textContent;
+      const runBlacklist = (all: BlockTarget[]) => {
+        const btn = q<HTMLButtonElement>(batch, '#bfb-batch-block');
+        const origLabel = btn.textContent || '';
         btn.disabled = true;
         toast(`开始拉黑 ${all.length} 位…`);
         doBlacklistMany(
           all,
-          (r) => {
+          (r: BlockResult) => {
             btn.disabled = false;
             btn.textContent = origLabel;
             toast(`批量拉黑完成：新拉黑 ${r.added}，已在黑名单 ${r.already}${r.failed.length ? `，失败 ${r.failed.length}（多为未登录/风控/已满）` : ''}`);
             refreshPanelIfOpen();
           },
-          (pg) => {
+          (pg: BlockProgress) => {
             btn.textContent = pg.paused ? `⚠ 风控暂停 ${pg.wait}s · ${pg.done}/${pg.total}` : `拉黑中 ${pg.done}/${pg.total}…`;
           }
         );
@@ -69,13 +88,13 @@ export const batchBlockSection = {
           return;
         }
         toast(`正在解析 ${toResolve.length} 个 UID…`);
-        const resolved = [];
+        const resolved: BlockTarget[] = [];
         let pending = toResolve.length;
         toResolve.forEach((t) => {
           fetchView(t.bvid, (d) => {
             if (d && d.owner) resolved.push({ uid: String(d.owner.mid), name: d.owner.name || t.name });
             if (CONFIG.blacklistCollab && d && Array.isArray(d.staff)) {
-              d.staff.forEach((s) => resolved.push({ uid: String(s.mid), name: s.name || '' }));
+              d.staff.forEach((s: { mid: number | string; name?: string }) => resolved.push({ uid: String(s.mid), name: s.name || '' }));
             }
             if (--pending === 0) runBlacklist(direct.concat(resolved));
           });

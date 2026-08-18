@@ -1,4 +1,3 @@
-// @ts-nocheck
 // 规则配置导入 / 导出。
 //
 // ⚠ 安全红线（见 docs/ARCHITECTURE.md §9）：导入的文件可能来自任何人。
@@ -15,8 +14,10 @@ import {
 } from '../../../config';
 import { rescanAfterRuleChange } from '../../../dom';
 import { toast } from '../../toast';
+import { q } from '../ctx';
+import type { PanelSection } from '../ctx';
 
-export const ioSection = {
+export const ioSection: PanelSection = {
   tab: 'tools',
   render(host, ctx) {
     const io = document.createElement('div');
@@ -26,7 +27,7 @@ export const ioSection = {
       <div class="hint">导出你的全部过滤规则与开关（不含统计、缓存、个人偏好）。导入时规则列表取<b>并集</b>（不会丢失现有规则），开关以导入值为准。</div>`;
     host.appendChild(io);
 
-    io.querySelector('#bfb-export').onclick = () => {
+    q(io, '#bfb-export').onclick = () => {
       const blob = new Blob([exportConfig()], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -36,7 +37,7 @@ export const ioSection = {
       toast('已导出规则配置文件');
     };
 
-    io.querySelector('#bfb-import').onclick = () => {
+    q(io, '#bfb-import').onclick = () => {
       const inp = document.createElement('input');
       inp.type = 'file';
       inp.accept = 'application/json,.json';
@@ -46,7 +47,7 @@ export const ioSection = {
         const r = new FileReader();
         r.onload = () => {
           try {
-            const parsed = JSON.parse(r.result);
+            const parsed = JSON.parse(String(r.result || ''));
             const raw = parsed && parsed.config ? parsed.config : parsed;
             if (!raw || typeof raw !== 'object') throw new Error('bad');
             // 先按存档结构版本迁移（可能是老版本导出的文件），再按 DEFAULT_CONFIG 形状清洗：
@@ -57,7 +58,7 @@ export const ioSection = {
             // 先合并到副本并校验结构，避免坏配置原地写坏 CONFIG 并被持久化
             const draft = structuredClone(CONFIG);
             mergeImport(draft, incoming);
-            const okObj = (o) => o && typeof o === 'object' && !Array.isArray(o);
+            const okObj = (o: unknown) => o && typeof o === 'object' && !Array.isArray(o);
             if (!okObj(draft.block) || !okObj(draft.allow)) throw new Error('bad');
             Object.assign(CONFIG, draft);
             saveConfig();

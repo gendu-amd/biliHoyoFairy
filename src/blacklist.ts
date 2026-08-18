@@ -215,7 +215,7 @@ export function doBlacklistMany(targets, cb, onProgress) {
 
 // 入口：info 至少含 up；优先用 uid，没有则用 bvid 反查；都没有才退回按 UP 名本地屏蔽。
 // 传 cardEl 时会先实时重抠一遍 DOM（避免用到首屏未渲染时缓存的空 uid）。
-export function blacklistUp(info, cb, cardEl) {
+export function blacklistUp(info, cb, cardEl = null) {
   let uid = info && info.uid ? String(info.uid) : '';
   let upName = (info && info.up) || '';
   let bvid = (info && info.bvid) || '';

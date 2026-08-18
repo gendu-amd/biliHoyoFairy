@@ -1,8 +1,9 @@
-// @ts-nocheck
 // 正则测试器：纯调试工具，不读也不写任何规则。
 import { escapeRe } from '../../../match/normalize';
+import { q } from '../ctx';
+import type { PanelSection } from '../ctx';
 
-export const regexTesterSection = {
+export const regexTesterSection: PanelSection = {
   tab: 'tools',
   render(host) {
     const retest = document.createElement('div');
@@ -12,9 +13,9 @@ export const regexTesterSection = {
       <div class="addrow" style="margin-top:6px"><input type="text" id="bfb-re-txt" placeholder="样例文本（粘贴一个标题试试）"></div>
       <div class="hint" id="bfb-re-out" style="margin-top:6px">输入正则与样例文本，实时显示是否命中。/.../ 按正则，否则按普通词（包含即命中）。</div>`;
     host.appendChild(retest);
-    const rePat = retest.querySelector('#bfb-re-pat');
-    const reTxt = retest.querySelector('#bfb-re-txt');
-    const reOut = retest.querySelector('#bfb-re-out');
+    const rePat = q<HTMLInputElement>(retest, '#bfb-re-pat');
+    const reTxt = q<HTMLInputElement>(retest, '#bfb-re-txt');
+    const reOut = q(retest, '#bfb-re-out');
     const runReTest = () => {
       const pat = (rePat.value || '').trim();
       const txt = reTxt.value || '';
@@ -28,7 +29,7 @@ export const regexTesterSection = {
       try {
         re = m ? new RegExp(m[1], m[2].includes('i') ? m[2] : m[2] + 'i') : new RegExp(escapeRe(pat), 'i');
       } catch (e) {
-        reOut.textContent = '⚠ 正则语法错误：' + e.message;
+        reOut.textContent = '⚠ 正则语法错误：' + (e as Error).message;
         reOut.style.color = '#e74c3c';
         return;
       }

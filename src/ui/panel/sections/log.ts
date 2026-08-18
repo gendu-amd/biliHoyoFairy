@@ -1,4 +1,3 @@
-// @ts-nocheck
 // 屏蔽记录 + 底部累计计数。命中记账后由 stats 监听器经 ctx.setStatsRefresh 注册的刷新器实时更新，
 // 三处显示（头部条数 / 分类统计 / 底部累计）共用同一个 refreshLog，避免对不上。
 import { CONFIG } from '../../../config';
@@ -11,8 +10,10 @@ import { escapeHtml } from '../../../util';
 import { toast } from '../../toast';
 import { confirmModal } from '../../confirm';
 import { refreshPanelIfOpen } from '../../hooks';
+import { q } from '../ctx';
+import type { PanelSection } from '../ctx';
 
-export const logSection = {
+export const logSection: PanelSection = {
   tab: 'tools',
   render(host, ctx) {
     const logSec = document.createElement('div');
@@ -22,26 +23,26 @@ export const logSection = {
       `<div class="stat" id="bfb-log-tally">分类：暂无</div>` +
       `<div id="bfb-log-list" style="display:none;max-height:240px;overflow:auto;overscroll-behavior:contain;margin-top:6px;font-size:12px"></div>`;
     host.appendChild(logSec);
-    const logList = logSec.querySelector('#bfb-log-list');
-    const logCount = logSec.querySelector('#bfb-log-count');
-    const logTally = logSec.querySelector('#bfb-log-tally');
+    const logList = q(logSec, '#bfb-log-list');
+    const logCount = q(logSec, '#bfb-log-count');
+    const logTally = q(logSec, '#bfb-log-tally');
 
     const foot = document.createElement('div');
     foot.className = 'sec';
     foot.innerHTML = `<a class="manage" href="${BLACKLIST_MANAGE_URL}" target="_blank">→ 打开 B 站官方黑名单管理页（取消拉黑 / 查看人数）</a>
       <div class="stat" style="margin-top:6px">累计拦截 <span id="bfb-foot-total">0</span> 次 · 本次会话 <span id="bfb-foot-session">0</span> 次</div>`;
     host.appendChild(foot);
-    const footTotal = foot.querySelector('#bfb-foot-total');
-    const footSession = foot.querySelector('#bfb-foot-session');
+    const footTotal = q(foot, '#bfb-foot-total');
+    const footSession = q(foot, '#bfb-foot-session');
 
     // 头部计数/分类/列表 三者用同一函数刷新，命中时实时更新，避免对不上
     const refreshLog = () => {
-      logCount.textContent = blockedLog.length;
+      logCount.textContent = String(blockedLog.length);
       const tally = tallyLog();
       logTally.textContent =
         '分类：' + (Object.keys(tally).length ? Object.entries(tally).map(([k, v]) => `${k}×${v}`).join('  ') : '暂无');
-      footTotal.textContent = CONFIG.blockedCount;
-      footSession.textContent = sessionBlocked;
+      footTotal.textContent = String(CONFIG.blockedCount);
+      footSession.textContent = String(sessionBlocked);
       if (logList.style.display === 'none') return;
       logList.innerHTML = '';
       if (!blockedLog.length) {
@@ -70,10 +71,10 @@ export const logSection = {
             : '<span class="log-src dom">隐</span>';
         // 超链接：UP 名 → 空间页（有 UID 才链）；标题/描述 → 视频页（有 BV 用 BV，否则用落地页，仅 http(s)）。
         // 跳转 URL 经 encodeURIComponent / 白名单 http(s) 校验 + escapeHtml 属性转义，杜绝 javascript: 等注入。
-        const safeHttp = (u) => (u && /^https?:\/\//i.test(u) ? u : '');
+        const safeHttp = (u: string) => (u && /^https?:\/\//i.test(u) ? u : '');
         const upHref = b.uid ? 'https://space.bilibili.com/' + encodeURIComponent(b.uid) : '';
         const vidHref = b.bvid ? 'https://www.bilibili.com/video/' + encodeURIComponent(b.bvid) : safeHttp(b.link);
-        const A = (href, inner) => `<a class="log-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${inner}</a>`;
+        const A = (href: string, inner: string) => `<a class="log-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${inner}</a>`;
         const upHtml = b.up ? (upHref ? A(upHref, '<b>' + escapeHtml(b.up) + '</b>') : '<b>' + escapeHtml(b.up) + '</b>') + ' · ' : '';
         const descHtml = vidHref ? A(vidHref, escapeHtml(desc)) : escapeHtml(desc);
         tx.innerHTML = `${srcTag}<span class="log-rs">[${escapeHtml(b.reason)}]</span> ${upHtml}${descHtml}`;
@@ -167,7 +168,7 @@ export const logSection = {
         logList.appendChild(row);
       });
     };
-    logSec.querySelector('#bfb-log-toggle').onclick = () => {
+    q(logSec, '#bfb-log-toggle').onclick = () => {
       logList.style.display = logList.style.display === 'none' ? 'block' : 'none';
       refreshLog();
     };

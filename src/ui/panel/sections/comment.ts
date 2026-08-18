@@ -1,10 +1,11 @@
-// @ts-nocheck
 // 评论区分组：总开关 + 各项判定开关 + 三个关键词列表。与视频规则完全独立。
 import { CONFIG } from '../../../config';
 import { rescanAfterRuleChange } from '../../../dom';
 import { bindControl, chipModel, renderListField } from '../../field';
+import { q } from '../ctx';
+import type { PanelSection } from '../ctx';
 
-export const commentSection = {
+export const commentSection: PanelSection = {
   tab: 'comment',
   render(host) {
     const cmt = document.createElement('div');
@@ -28,7 +29,7 @@ export const commentSection = {
         <div class="switch"><input type="checkbox" id="bfb-cmt-me"> 我自己 / @我 的评论</div>
       </div>`;
     host.appendChild(cmt);
-    const cmtBody = cmt.querySelector('#bfb-cmt-body');
+    const cmtBody = q(cmt, '#bfb-cmt-body');
     const syncCmtBody = () => {
       cmtBody.style.opacity = CONFIG.comment.enabled ? '1' : '.4';
       cmtBody.style.pointerEvents = CONFIG.comment.enabled ? 'auto' : 'none';

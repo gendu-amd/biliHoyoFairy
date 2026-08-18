@@ -1,16 +1,18 @@
-// @ts-nocheck
 // 预置规则库：一键把整组规则并入黑名单。
 import { CONFIG, saveConfig } from '../../../config';
 import { PRESET_LIBRARY } from '../../../presets';
+import type { Preset } from '../../../presets';
 import { rescanAfterRuleChange } from '../../../dom';
 import { pushUnique } from '../../../rules';
 import { toast } from '../../toast';
 import { confirmModal } from '../../confirm';
+import { q } from '../ctx';
+import type { PanelSection } from '../ctx';
 
 // 需联网读取才生效的维度：含这些维度的预置若未开「精确过滤」会静默失效，必须显式引导。
 const API_DIM_KEYS = ['tags', 'dualTags', 'upBio'];
 
-export const presetsSection = {
+export const presetsSection: PanelSection = {
   tab: 'tools',
   render(host, ctx) {
     const preset = document.createElement('div');
@@ -20,15 +22,15 @@ export const presetsSection = {
       '<div class="hint">一键把整组规则加入「黑名单」（之后可在黑名单页增删）。需要持续更新的大名单请用「规则订阅」。</div>' +
       '<div id="bfb-presets"></div>';
     host.appendChild(preset);
-    const presetBox = preset.querySelector('#bfb-presets');
+    const presetBox = q(preset, '#bfb-presets');
 
     // 应用一条预置：各维度去重加进 CONFIG.block，最后统一存盘+重扫（避免逐条重扫）
-    const applyPreset = (p2) => {
+    const applyPreset = (p2: Preset) => {
       let n = 0;
       for (const dim of Object.keys(p2.rules || {})) {
-        const arr = CONFIG.block[dim];
+        const arr = (CONFIG.block as unknown as Record<string, unknown>)[dim];
         if (!Array.isArray(arr)) continue;
-        n += pushUnique(arr, p2.rules[dim].map((v) => String(v).trim()).filter(Boolean));
+        n += pushUnique(arr as string[], p2.rules[dim].map((v: string) => String(v).trim()).filter(Boolean));
       }
       if (n) {
         saveConfig();
@@ -54,7 +56,7 @@ export const presetsSection = {
     };
 
     // 按大类分组渲染
-    const byCat = {};
+    const byCat: Record<string, Preset[]> = {};
     PRESET_LIBRARY.forEach((pp) => (byCat[pp.cat] = byCat[pp.cat] || []).push(pp));
     Object.keys(byCat).forEach((cat) => {
       const cl = document.createElement('div');
@@ -63,7 +65,7 @@ export const presetsSection = {
       presetBox.appendChild(cl);
       const bar = document.createElement('div');
       bar.className = 'toolbar';
-      byCat[cat].forEach((pp) => {
+      byCat[cat].forEach((pp: Preset) => {
         const btn = document.createElement('button');
         btn.className = 'act ghost';
         btn.textContent = '+ ' + pp.name;

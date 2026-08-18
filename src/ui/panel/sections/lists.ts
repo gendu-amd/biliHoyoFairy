@@ -1,7 +1,7 @@
-// @ts-nocheck
 // 纯「列表型字段」分区：黑名单、进阶标签、白名单。
 // 字段描述表即扩展点——新增一类列表过滤只要往对应数组加一行。
 import { renderFields } from '../../field';
+import type { PanelSection } from '../ctx';
 
 const BLACK_FIELDS = [
   { key: 'keywords', label: '🎯 关键词', placeholder: '如：原神 或 /震惊.*竟然/', hint: '匹配标题、UP 主名、分区任一即拦截（纯本地）。普通词为包含匹配，/.../ 为正则。可加前缀限定字段：title: / up: / part:。按视频标签拦截请用下方「视频标签」。' },
@@ -22,18 +22,18 @@ const ALLOW_FIELDS = [
   { scope: 'allow', key: 'uids', label: 'UID', placeholder: '喜欢的 UP 的 UID（纯数字）', hint: '该 UP 的视频永不隐藏（按 UID 精确匹配，最可靠）。' },
 ];
 
-export const blackListsSection = {
+export const blackListsSection: PanelSection = {
   tab: 'black',
   render: (host) => renderFields(host, BLACK_FIELDS),
 };
 
 // 进阶页的标签类字段：排在数值/开关分区之后（注册顺序即渲染顺序）。
-export const apiListsSection = {
+export const apiListsSection: PanelSection = {
   tab: 'api',
   render: (host) => renderFields(host, API_CHIP_FIELDS),
 };
 
-export const allowListsSection = {
+export const allowListsSection: PanelSection = {
   tab: 'allow',
   render: (host) => renderFields(host, ALLOW_FIELDS),
 };

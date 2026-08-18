@@ -216,7 +216,11 @@ export const API_DIMS: ApiDim[] = [
 // ⚠ 必须与上面各 DIM 产出的 `维度:规则` 前缀保持一致——改了原因串就要改这里，
 // tests/explain.test.ts 会核对两侧不漂移。未列出的维度（广告卡/直播卡/播放</ 时长< 等阈值类）
 // 没有「一条可删的规则」，是开关或数值，UI 不给删除入口。
-export const REASON_RULE_FIELD: Record<string, keyof typeof CONFIG.block> = {
+// 只有「字符串列表型」字段才有可定位、可删除的规则行（阈值类是数字，不在此列）。
+// 收窄成这个联合类型后，CONFIG.block[field] 直接就是 string[]，调用方不必再断言。
+export type RuleListField = 'keywords' | 'partitions' | 'upNames' | 'uids' | 'bvids' | 'tags' | 'dualTags' | 'upBio';
+
+export const REASON_RULE_FIELD: Record<string, RuleListField> = {
   关键词: 'keywords',
   分区: 'partitions',
   UP主: 'upNames',
@@ -229,7 +233,7 @@ export const REASON_RULE_FIELD: Record<string, keyof typeof CONFIG.block> = {
 
 // 从一条屏蔽原因反查到用户名单里的**那一行**规则（供 UI 一键删除）。
 // 找不到 = 该规则不在用户自己的名单里，多半来自已启用的订阅——此时不能假装能删。
-export function locateRule(reason: string): { field: keyof typeof CONFIG.block; line: string } | null {
+export function locateRule(reason: string): { field: RuleListField; line: string } | null {
   const i = reason.indexOf(':');
   if (i <= 0) return null;
   const field = REASON_RULE_FIELD[reason.slice(0, i)];
@@ -246,16 +250,16 @@ export function locateRule(reason: string): { field: keyof typeof CONFIG.block; 
 }
 
 // REASON_RULE_FIELD 的反向表（字段 -> 维度名），供 enumerateRules 由规则行推出原因串。
-const FIELD_REASON_DIM: Partial<Record<keyof typeof CONFIG.block, string>> = {};
+const FIELD_REASON_DIM: Partial<Record<RuleListField, string>> = {};
 for (const dim of Object.keys(REASON_RULE_FIELD)) FIELD_REASON_DIM[REASON_RULE_FIELD[dim]] = dim;
 
 // 联网维度的规则在「精确过滤」关闭时根本不会被求值——此时它们零命中是配置使然，不是规则写错。
-const API_FIELDS = new Set<keyof typeof CONFIG.block>(['tags', 'dualTags', 'upBio']);
+const API_FIELDS = new Set<RuleListField>(['tags', 'dualTags', 'upBio']);
 
 export interface RuleRef {
   key: string; // 命中时记账所用的原因串 `维度:规则`
   dim: string;
-  field: keyof typeof CONFIG.block;
+  field: RuleListField;
   line: string; // 名单里的原行（可直接交给 removeFromList）
   own: boolean; // true=用户自己的名单；false=来自已启用的订阅
   active: boolean; // 当前配置下这条规则是否有可能命中
@@ -267,7 +271,7 @@ export interface RuleRef {
 //   - 分区/标签/UP简介：compileLines 内部 trim 后存 plainSrc，原因串是 trim 过的
 //   - UID/BV/双标签：直接拿数组元素原样拼进原因串，不能 trim（trim 了就对不上）
 // tests/rulehealth.test.ts 走真实 matchRule/matchApi 核对两侧不漂移。
-export function ruleKeyOf(field: keyof typeof CONFIG.block, line: string): string | null {
+export function ruleKeyOf(field: RuleListField, line: string): string | null {
   const dim = FIELD_REASON_DIM[field];
   if (!dim) return null;
   if (field === 'uids' || field === 'bvids' || field === 'dualTags') return line ? dim + ':' + line : null;

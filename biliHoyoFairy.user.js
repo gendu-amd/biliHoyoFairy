@@ -2234,7 +2234,7 @@
       }
     };
   }
-  function blacklistUp(info, cb, cardEl) {
+  function blacklistUp(info, cb, cardEl = null) {
     let uid = info && info.uid ? String(info.uid) : "";
     let upName = info && info.up || "";
     let bvid = info && info.bvid || "";
@@ -2636,6 +2636,11 @@
   }
 
   // src/ui/panel/ctx.ts
+  function q(root, sel) {
+    const el = root.querySelector(sel);
+    if (!el) throw new Error("[bfb] 面板模板缺少元素: " + sel);
+    return el;
+  }
   var statsRefresh = null;
   function setStatsRefresh(fn) {
     statsRefresh = fn;
@@ -2959,7 +2964,7 @@
     renderChips();
     host.appendChild(sec);
   }
-  function chipModel(arr, groupMode) {
+  function chipModel(arr, groupMode = false) {
     return {
       count: () => arr.length,
       entries: () => arr.map((v) => ({ key: v, value: v, arr })),
@@ -3032,8 +3037,7 @@
       }
     };
   }
-  function bindControl(root, id, obj, key, opts) {
-    opts = opts || {};
+  function bindControl(root, id, obj, key, opts = {}) {
     const el = root.querySelector("#" + id);
     if (!el) return;
     if (el.type === "checkbox") el.checked = !!obj[key];
@@ -3179,7 +3183,7 @@
         <div class="switch"><input type="checkbox" id="bfb-charging"> 屏蔽充电专属视频</div>
       </div>`;
       host.appendChild(api);
-      const apiBody = api.querySelector("#bfb-api-body");
+      const apiBody = q(api, "#bfb-api-body");
       const syncApiBody = () => {
         apiBody.style.opacity = CONFIG.apiFilters ? "1" : ".4";
         apiBody.style.pointerEvents = CONFIG.apiFilters ? "auto" : "none";
@@ -3220,7 +3224,7 @@
         <div class="switch"><input type="checkbox" id="bfb-cmt-me"> 我自己 / @我 的评论</div>
       </div>`;
       host.appendChild(cmt);
-      const cmtBody = cmt.querySelector("#bfb-cmt-body");
+      const cmtBody = q(cmt, "#bfb-cmt-body");
       const syncCmtBody = () => {
         cmtBody.style.opacity = CONFIG.comment.enabled ? "1" : ".4";
         cmtBody.style.pointerEvents = CONFIG.comment.enabled ? "auto" : "none";
@@ -3286,7 +3290,7 @@
       preset.className = "sec";
       preset.innerHTML = '<label>预置规则库（点击加入对应黑名单，可叠加）</label><div class="hint">一键把整组规则加入「黑名单」（之后可在黑名单页增删）。需要持续更新的大名单请用「规则订阅」。</div><div id="bfb-presets"></div>';
       host.appendChild(preset);
-      const presetBox = preset.querySelector("#bfb-presets");
+      const presetBox = q(preset, "#bfb-presets");
       const applyPreset = (p2) => {
         let n = 0;
         for (const dim of Object.keys(p2.rules || {})) {
@@ -3349,9 +3353,9 @@
       <div class="addrow" style="margin-top:6px"><input type="text" id="bfb-re-txt" placeholder="样例文本（粘贴一个标题试试）"></div>
       <div class="hint" id="bfb-re-out" style="margin-top:6px">输入正则与样例文本，实时显示是否命中。/.../ 按正则，否则按普通词（包含即命中）。</div>`;
       host.appendChild(retest);
-      const rePat = retest.querySelector("#bfb-re-pat");
-      const reTxt = retest.querySelector("#bfb-re-txt");
-      const reOut = retest.querySelector("#bfb-re-out");
+      const rePat = q(retest, "#bfb-re-pat");
+      const reTxt = q(retest, "#bfb-re-txt");
+      const reOut = q(retest, "#bfb-re-out");
       const runReTest = () => {
         const pat = (rePat.value || "").trim();
         const txt = reTxt.value || "";
@@ -3393,7 +3397,7 @@
       <div class="toolbar"><button class="act" id="bfb-export">⬇ 导出为文件</button><button class="act ghost" id="bfb-import">⬆ 从文件导入</button></div>
       <div class="hint">导出你的全部过滤规则与开关（不含统计、缓存、个人偏好）。导入时规则列表取<b>并集</b>（不会丢失现有规则），开关以导入值为准。</div>`;
       host.appendChild(io);
-      io.querySelector("#bfb-export").onclick = () => {
+      q(io, "#bfb-export").onclick = () => {
         const blob = new Blob([exportConfig()], { type: "application/json" });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
@@ -3402,7 +3406,7 @@
         setTimeout(() => URL.revokeObjectURL(a.href), 2e3);
         toast("已导出规则配置文件");
       };
-      io.querySelector("#bfb-import").onclick = () => {
+      q(io, "#bfb-import").onclick = () => {
         const inp = document.createElement("input");
         inp.type = "file";
         inp.accept = "application/json,.json";
@@ -3412,7 +3416,7 @@
           const r = new FileReader();
           r.onload = () => {
             try {
-              const parsed = JSON.parse(r.result);
+              const parsed = JSON.parse(String(r.result || ""));
               const raw = parsed && parsed.config ? parsed.config : parsed;
               if (!raw || typeof raw !== "object") throw new Error("bad");
               const incoming = sanitizeConfigInput(migrateConfig(raw));
@@ -3483,8 +3487,8 @@
       <div class="hint">「仅屏蔽」只在本地隐藏；「拉黑」会写入账号黑名单（限速执行、触发风控自动续传、<b>不可一键撤销</b>、执行前确认）。仅有名称、无 UID 的条目将降级为本地屏蔽。</div>
       <div id="bfb-list-status" class="stat" style="margin-top:6px;min-height:1.2em"></div>`;
       host.appendChild(listSec);
-      const listTa = listSec.querySelector("#bfb-list-input");
-      const listStatus = listSec.querySelector("#bfb-list-status");
+      const listTa = q(listSec, "#bfb-list-input");
+      const listStatus = q(listSec, "#bfb-list-status");
       const parseList = () => parseNameList(listTa.value);
       const addLocalMany = (uids, names) => {
         const n = pushUnique(CONFIG.block.uids, uids) + pushUnique(CONFIG.block.upNames, names);
@@ -3494,7 +3498,7 @@
         }
         return n;
       };
-      listSec.querySelector("#bfb-list-file").onclick = () => {
+      q(listSec, "#bfb-list-file").onclick = () => {
         const inp = document.createElement("input");
         inp.type = "file";
         inp.accept = ".txt,.csv,.json,text/plain,application/json";
@@ -3510,7 +3514,7 @@
         };
         inp.click();
       };
-      listSec.querySelector("#bfb-list-url").onclick = () => {
+      q(listSec, "#bfb-list-url").onclick = () => {
         promptModal("输入名单 URL（纯文本：每行一个 UID 或 UP 名）：", { title: "从 URL 载入", placeholder: "https://…", okText: "载入" }).then((input) => {
           const url = (input || "").trim();
           if (!url) return;
@@ -3532,14 +3536,14 @@
           });
         });
       };
-      listSec.querySelector("#bfb-list-hide").onclick = () => {
+      q(listSec, "#bfb-list-hide").onclick = () => {
         const { uids, names } = parseList();
         if (!uids.length && !names.length) return toast("没解析到有效的 UID / 名称");
         const n = addLocalMany(uids, names);
         toast(`已本地屏蔽：新增 ${n} 条（解析到 UID ${uids.length} / 名称 ${names.length}）`);
         ctx.rerender();
       };
-      listSec.querySelector("#bfb-list-block").onclick = () => {
+      q(listSec, "#bfb-list-block").onclick = () => {
         const { uids, names } = parseList();
         if (!uids.length && !names.length) return toast("没解析到有效的 UID / 名称");
         const est = Math.ceil(uids.length * 1.3);
@@ -3555,8 +3559,8 @@
           }
           toast(`开始拉黑 ${uids.length} 个…执行期间请勿关闭面板`);
           listStatus.textContent = `准备拉黑 ${uids.length} 个…`;
-          const stopBtn = listSec.querySelector("#bfb-list-stop");
-          const blockBtn = listSec.querySelector("#bfb-list-block");
+          const stopBtn = q(listSec, "#bfb-list-stop");
+          const blockBtn = q(listSec, "#bfb-list-block");
           const resetButtons = () => {
             stopBtn.style.display = "none";
             stopBtn.disabled = false;
@@ -3622,7 +3626,7 @@
       <div class="toolbar" style="margin-top:8px"><button class="act ghost" id="bfb-sub-refresh">🔄 全部刷新</button></div>
       <div id="bfb-sub-list" style="margin-top:8px"></div>`;
       host.appendChild(subSec);
-      const subListEl = subSec.querySelector("#bfb-sub-list");
+      const subListEl = q(subSec, "#bfb-sub-list");
       const fmtSubTime = (t) => t ? new Date(t).toLocaleString() : "从未";
       const renderSubList = () => {
         subListEl.innerHTML = "";
@@ -3645,12 +3649,12 @@
           <div class="bfb-sub-url">${escapeHtml(sub.url)}</div>
           <div class="bfb-sub-status">${escapeHtml(status)}</div>
           <div class="chip-bar"><button class="chip-act sub-refresh">刷新</button><button class="chip-act sub-del">删除</button></div>`;
-          row.querySelector(".sub-en").onchange = (ev) => {
+          q(row, ".sub-en").onchange = (ev) => {
             sub.enabled = ev.target.checked;
             saveConfig();
             rescanAfterRuleChange();
           };
-          row.querySelector(".sub-refresh").onclick = () => {
+          q(row, ".sub-refresh").onclick = () => {
             toast("刷新中…");
             syncSubscription(sub.url, (ok) => {
               rescanAfterRuleChange();
@@ -3658,7 +3662,7 @@
               toast(ok ? "已刷新" : "刷新失败");
             });
           };
-          row.querySelector(".sub-del").onclick = () => {
+          q(row, ".sub-del").onclick = () => {
             confirmModal("删除该订阅？其规则将立即移除。", { title: "删除订阅", okText: "删除", danger: true }).then((ok) => {
               if (!ok) return;
               CONFIG.subscriptions.splice(idx, 1);
@@ -3674,9 +3678,9 @@
         });
       };
       renderSubList();
-      subSec.querySelector("#bfb-sub-add").onclick = () => {
-        const urlEl = subSec.querySelector("#bfb-sub-url");
-        const nameEl = subSec.querySelector("#bfb-sub-name");
+      q(subSec, "#bfb-sub-add").onclick = () => {
+        const urlEl = q(subSec, "#bfb-sub-url");
+        const nameEl = q(subSec, "#bfb-sub-name");
         const url = (urlEl.value || "").trim();
         const name = (nameEl.value || "").trim();
         if (!/^https?:\/\//i.test(url)) return toast("请输入有效的 http(s) URL");
@@ -3694,7 +3698,7 @@
           toast(ok ? "订阅已同步" : "拉取失败，请检查 URL");
         });
       };
-      subSec.querySelector("#bfb-sub-refresh").onclick = () => {
+      q(subSec, "#bfb-sub-refresh").onclick = () => {
         toast("刷新全部订阅…");
         refreshSubscriptions(true, (n) => {
           renderSubList();
@@ -3714,7 +3718,7 @@
       <button class="act" id="bfb-batch-block" style="width:100%">⛔ 拉黑当前页所有已屏蔽的 UP</button>
       <div class="hint">扫描本页所有被屏蔽的卡片并拉黑其 UP；无法获取 UID 的将通过 BV 号联网解析。此操作写入账号黑名单、不可一键撤销，执行前会二次确认。</div>`;
       host.appendChild(batch);
-      batch.querySelector("#bfb-batch-block").onclick = () => {
+      q(batch, "#bfb-batch-block").onclick = () => {
         const blocked = document.querySelectorAll("[" + ATTR_BLOCKED + "]");
         if (!blocked.length) {
           toast("当前页还没有被屏蔽的卡片，先用规则屏蔽再批量拉黑");
@@ -3741,8 +3745,8 @@
         const skipTip = noInfo ? `
 （${noInfo} 张信息不足已跳过）` : "";
         const runBlacklist = (all) => {
-          const btn = batch.querySelector("#bfb-batch-block");
-          const origLabel = btn.textContent;
+          const btn = q(batch, "#bfb-batch-block");
+          const origLabel = btn.textContent || "";
           btn.disabled = true;
           toast(`开始拉黑 ${all.length} 位…`);
           doBlacklistMany(
@@ -3797,7 +3801,7 @@
       tool.className = "sec toolbar";
       tool.innerHTML = `<button class="act ghost" id="bfb-clearcount">清空计数 / 记录</button><button class="act ghost" id="bfb-reset">恢复默认</button>`;
       host.appendChild(tool);
-      tool.querySelector("#bfb-clearcount").onclick = () => {
+      q(tool, "#bfb-clearcount").onclick = () => {
         CONFIG.blockedCount = 0;
         setSessionBlocked(0);
         blockedLog.length = 0;
@@ -3806,7 +3810,7 @@
         ctx.rerender();
         toast("已清空计数与本次记录");
       };
-      tool.querySelector("#bfb-reset").onclick = () => {
+      q(tool, "#bfb-reset").onclick = () => {
         confirmModal("确定恢复默认配置？现有规则将全部清空，不可撤销。", { title: "恢复默认", okText: "恢复默认", danger: true }).then((ok) => {
           if (!ok) return;
           Object.assign(CONFIG, structuredClone(DEFAULT_CONFIG));
@@ -3828,8 +3832,8 @@
       <div class="stat" id="bfb-health-sum"></div>
       <div id="bfb-health-warn" style="margin-top:6px"></div>`;
       host.appendChild(sec);
-      const sumEl = sec.querySelector("#bfb-health-sum");
-      const warnEl = sec.querySelector("#bfb-health-warn");
+      const sumEl = q(sec, "#bfb-health-sum");
+      const warnEl = q(sec, "#bfb-health-warn");
       const refresh = () => {
         sumEl.textContent = healthSummary();
         const w = healthReport();
@@ -3840,7 +3844,7 @@
         const notes = healthNotes();
         warnEl.innerHTML = notes.length ? notes.map((x) => `<div class="hint">ℹ ${escapeHtml(x)}</div>`).join("") : '<div class="hint" style="color:#1b7a3d">✅ 拦截层与 DOM 层均工作正常</div>';
       };
-      sec.querySelector("#bfb-health-refresh").onclick = refresh;
+      q(sec, "#bfb-health-refresh").onclick = refresh;
       refresh();
     }
   };
@@ -3892,9 +3896,9 @@
       <div class="stat" id="bfb-rh-hot" style="margin-top:4px"></div>
       <div id="bfb-rh-dead" style="margin-top:6px"></div>`;
       host.appendChild(sec);
-      const sinceEl = sec.querySelector("#bfb-rh-since");
-      const hotEl = sec.querySelector("#bfb-rh-hot");
-      const deadEl = sec.querySelector("#bfb-rh-dead");
+      const sinceEl = q(sec, "#bfb-rh-since");
+      const hotEl = q(sec, "#bfb-rh-hot");
+      const deadEl = q(sec, "#bfb-rh-dead");
       const render = () => {
         pruneRuleStats();
         const h = ruleHealth();
@@ -3942,17 +3946,16 @@
           del.textContent = "✂删";
           del.title = "从名单中删除这条规则";
           del.onclick = () => {
-            confirmModal({
+            confirmModal(`将从「${r.dim}」名单中删除这条规则：
+${r.line}`, {
               title: "删除规则",
-              body: `将从「${r.dim}」名单中删除：
-${r.line}`,
               okText: "删除",
-              danger: true,
-              onOk: () => {
-                removeFromList(CONFIG.block[r.field], r.line);
-                toast(`已删除规则：${r.line}`);
-                ctx.rerender();
-              }
+              danger: true
+            }).then((ok) => {
+              if (!ok) return;
+              removeFromList(CONFIG.block[r.field], r.line);
+              toast(`已删除规则：${r.line}`);
+              ctx.rerender();
             });
           };
           row.appendChild(del);
@@ -3960,7 +3963,7 @@ ${r.line}`,
         });
         deadEl.appendChild(list);
       };
-      sec.querySelector("#bfb-rh-refresh").onclick = render;
+      q(sec, "#bfb-rh-refresh").onclick = render;
       render();
     }
   };
@@ -3973,22 +3976,22 @@ ${r.line}`,
       logSec.className = "sec";
       logSec.innerHTML = `<label>🔎 屏蔽记录（本次会话共 <span id="bfb-log-count">0</span> 条） <button class="act ghost" id="bfb-log-toggle" style="float:right">展开 / 收起</button></label><div class="stat" id="bfb-log-tally">分类：暂无</div><div id="bfb-log-list" style="display:none;max-height:240px;overflow:auto;overscroll-behavior:contain;margin-top:6px;font-size:12px"></div>`;
       host.appendChild(logSec);
-      const logList = logSec.querySelector("#bfb-log-list");
-      const logCount = logSec.querySelector("#bfb-log-count");
-      const logTally = logSec.querySelector("#bfb-log-tally");
+      const logList = q(logSec, "#bfb-log-list");
+      const logCount = q(logSec, "#bfb-log-count");
+      const logTally = q(logSec, "#bfb-log-tally");
       const foot = document.createElement("div");
       foot.className = "sec";
       foot.innerHTML = `<a class="manage" href="${BLACKLIST_MANAGE_URL}" target="_blank">→ 打开 B 站官方黑名单管理页（取消拉黑 / 查看人数）</a>
       <div class="stat" style="margin-top:6px">累计拦截 <span id="bfb-foot-total">0</span> 次 · 本次会话 <span id="bfb-foot-session">0</span> 次</div>`;
       host.appendChild(foot);
-      const footTotal = foot.querySelector("#bfb-foot-total");
-      const footSession = foot.querySelector("#bfb-foot-session");
+      const footTotal = q(foot, "#bfb-foot-total");
+      const footSession = q(foot, "#bfb-foot-session");
       const refreshLog = () => {
-        logCount.textContent = blockedLog.length;
+        logCount.textContent = String(blockedLog.length);
         const tally = tallyLog();
         logTally.textContent = "分类：" + (Object.keys(tally).length ? Object.entries(tally).map(([k, v]) => `${k}×${v}`).join("  ") : "暂无");
-        footTotal.textContent = CONFIG.blockedCount;
-        footSession.textContent = sessionBlocked;
+        footTotal.textContent = String(CONFIG.blockedCount);
+        footSession.textContent = String(sessionBlocked);
         if (logList.style.display === "none") return;
         logList.innerHTML = "";
         if (!blockedLog.length) {
@@ -4084,7 +4087,7 @@ ${r.line}`,
           logList.appendChild(row);
         });
       };
-      logSec.querySelector("#bfb-log-toggle").onclick = () => {
+      q(logSec, "#bfb-log-toggle").onclick = () => {
         logList.style.display = logList.style.display === "none" ? "block" : "none";
         refreshLog();
       };

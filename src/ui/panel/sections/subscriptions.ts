@@ -1,4 +1,3 @@
-// @ts-nocheck
 // 规则订阅：从 URL 自动拉取并合并黑名单。订阅只并入黑名单维度，不碰白名单与开关。
 import { CONFIG, saveConfig } from '../../../config';
 import { rescanAfterRuleChange } from '../../../dom';
@@ -7,8 +6,10 @@ import { refreshSubscriptions, syncSubscription, metaGet } from '../../../subscr
 import { loadSubStore, saveSubStore } from '../../../subscriptions/store';
 import { toast } from '../../toast';
 import { confirmModal } from '../../confirm';
+import { q } from '../ctx';
+import type { PanelSection } from '../ctx';
 
-export const subscriptionsSection = {
+export const subscriptionsSection: PanelSection = {
   tab: 'tools',
   render(host) {
     const subSec = document.createElement('div');
@@ -21,8 +22,8 @@ export const subscriptionsSection = {
       <div id="bfb-sub-list" style="margin-top:8px"></div>`;
     host.appendChild(subSec);
 
-    const subListEl = subSec.querySelector('#bfb-sub-list');
-    const fmtSubTime = (t) => (t ? new Date(t).toLocaleString() : '从未');
+    const subListEl = q(subSec, '#bfb-sub-list');
+    const fmtSubTime = (t?: number) => (t ? new Date(t).toLocaleString() : '从未');
     const renderSubList = () => {
       subListEl.innerHTML = '';
       const store = loadSubStore();
@@ -44,12 +45,12 @@ export const subscriptionsSection = {
           <div class="bfb-sub-url">${escapeHtml(sub.url)}</div>
           <div class="bfb-sub-status">${escapeHtml(status)}</div>
           <div class="chip-bar"><button class="chip-act sub-refresh">刷新</button><button class="chip-act sub-del">删除</button></div>`;
-        row.querySelector('.sub-en').onchange = (ev) => {
-          sub.enabled = ev.target.checked;
+        q<HTMLInputElement>(row, '.sub-en').onchange = (ev) => {
+          sub.enabled = (ev.target as HTMLInputElement).checked;
           saveConfig();
           rescanAfterRuleChange();
         };
-        row.querySelector('.sub-refresh').onclick = () => {
+        q(row, '.sub-refresh').onclick = () => {
           toast('刷新中…');
           syncSubscription(sub.url, (ok) => {
             rescanAfterRuleChange();
@@ -57,7 +58,7 @@ export const subscriptionsSection = {
             toast(ok ? '已刷新' : '刷新失败');
           });
         };
-        row.querySelector('.sub-del').onclick = () => {
+        q(row, '.sub-del').onclick = () => {
           confirmModal('删除该订阅？其规则将立即移除。', { title: '删除订阅', okText: '删除', danger: true }).then((ok) => {
             if (!ok) return;
             CONFIG.subscriptions.splice(idx, 1);
@@ -74,9 +75,9 @@ export const subscriptionsSection = {
     };
     renderSubList();
 
-    subSec.querySelector('#bfb-sub-add').onclick = () => {
-      const urlEl = subSec.querySelector('#bfb-sub-url');
-      const nameEl = subSec.querySelector('#bfb-sub-name');
+    q(subSec, '#bfb-sub-add').onclick = () => {
+      const urlEl = q<HTMLInputElement>(subSec, '#bfb-sub-url');
+      const nameEl = q<HTMLInputElement>(subSec, '#bfb-sub-name');
       const url = (urlEl.value || '').trim();
       const name = (nameEl.value || '').trim();
       if (!/^https?:\/\//i.test(url)) return toast('请输入有效的 http(s) URL');
@@ -94,7 +95,7 @@ export const subscriptionsSection = {
         toast(ok ? '订阅已同步' : '拉取失败，请检查 URL');
       });
     };
-    subSec.querySelector('#bfb-sub-refresh').onclick = () => {
+    q(subSec, '#bfb-sub-refresh').onclick = () => {
       toast('刷新全部订阅…');
       refreshSubscriptions(true, (n) => {
         renderSubList();

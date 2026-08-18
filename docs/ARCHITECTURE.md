@@ -171,8 +171,10 @@ L9        main（bootstrap，装配一切）
 
 ## 7. 类型现状
 
-- **强类型（无 `@ts-nocheck`）**：核心/纯逻辑层全部——`constants/util/page/selectors/events/presets/batch/shadow/config/logging/health/cardinfo/hotsearch/stats/api/rules/net/match·{normalize,engine}/subscriptions·{parse,store,refresh}/ui·{hooks,toast,confirm,panel.styles,panel/ctx}` 等。改这些会受完整类型检查。
-- **`@ts-nocheck`（渐进类型化）**：仅限 DOM/effect/UI 密集层——`dom`、`comments`(.__data)、`blacklist`(GM POST)、`ui/{menu,field}`、`ui/panel/{index,sections/*}`、`main`。这些仍受 `eslint no-undef` 兜底（漏 import = 报错）。
+- **强类型（无 `@ts-nocheck`）**：50 个模块中的 43 个——核心/纯逻辑层全部（`constants/util/page/selectors/events/presets/batch/shadow/config/logging/health/rulehealth/cardinfo/hotsearch/stats/api/rules/net/scanner/match·{normalize,engine}/subscriptions·{parse,store,refresh}`），以及 **`ui/panel/` 全部**（`ctx` + `sections/*` 14 个分区）与 `ui/{hooks,toast,confirm,panel.styles}`。改这些会受完整类型检查。
+- **`@ts-nocheck`（渐进类型化）**：剩 7 个 DOM/effect 密集模块——`dom`、`comments`(.__data)、`blacklist`(GM POST)、`ui/{menu,field}`、`ui/panel/index`、`main`。这些仍受 `eslint no-undef` 兜底（漏 import = 报错）。
+- 分区取元素一律走 `ctx.ts` 的 `q<T>(root, sel)`：面板 HTML 是静态模板，取不到 = 模板与代码不同步的编程错误，直接抛比 `if (!el) return` 更早暴露。它也是 `sections/*` 得以去掉 `@ts-nocheck` 的主要杠杆（省去约 150 处非空断言）。
+- 下一块该啃的是 `blacklist.ts`：`batch-block.ts` / `name-list.ts` 里那几个本地 `BlockResult` / `BlockProgress` 接口是它未类型化的临时替身，等它有了真类型就该删。
 
 ---
 

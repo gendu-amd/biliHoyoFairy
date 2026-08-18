@@ -1,4 +1,3 @@
-// @ts-nocheck
 // 名单批量处理：粘贴 / 文件 / URL 载入一批 UID 或名称 → 仅屏蔽（本地）或 拉黑（写账号黑名单）。
 // 归到「导入/导出」一族，注册顺序紧跟 io section。
 import { CONFIG, saveConfig } from '../../../config';
@@ -9,8 +8,34 @@ import { parseNameList } from '../../../batch';
 import { escapeHtml } from '../../../util';
 import { toast } from '../../toast';
 import { confirmModal, promptModal } from '../../confirm';
+import { q } from '../ctx';
+import type { PanelSection } from '../ctx';
 
-export const nameListSection = {
+// blacklist.ts 尚未类型化（渐进推进中），就地声明其批量接口的出入参形状，
+// 让本文件内的用法先受检；等 blacklist.ts 去掉 @ts-nocheck 后可直接删。
+interface BlockFail {
+  uid: string;
+  code: number | string;
+}
+interface BlockResult {
+  added: number;
+  already: number;
+  total: number;
+  done: number;
+  cancelled?: boolean;
+  failed: BlockFail[];
+}
+interface BlockProgress {
+  done: number;
+  total: number;
+  added: number;
+  already: number;
+  fail: number;
+  paused?: boolean;
+  wait?: number;
+}
+
+export const nameListSection: PanelSection = {
   tab: 'tools',
   render(host, ctx) {
     const listSec = document.createElement('div');
@@ -30,12 +55,12 @@ export const nameListSection = {
       <div id="bfb-list-status" class="stat" style="margin-top:6px;min-height:1.2em"></div>`;
     host.appendChild(listSec);
 
-    const listTa = listSec.querySelector('#bfb-list-input');
-    const listStatus = listSec.querySelector('#bfb-list-status');
+    const listTa = q<HTMLTextAreaElement>(listSec, '#bfb-list-input');
+    const listStatus = q(listSec, '#bfb-list-status');
     // 输入解析的纯逻辑在 ./batch.parseNameList（可单测）
     const parseList = () => parseNameList(listTa.value);
     // 仅屏蔽：UID→block.uids，名称→block.upNames（批量去重，最后统一存盘+重扫，避免逐条重扫）
-    const addLocalMany = (uids, names) => {
+    const addLocalMany = (uids: string[], names: string[]) => {
       const n = pushUnique(CONFIG.block.uids, uids) + pushUnique(CONFIG.block.upNames, names);
       if (n) {
         saveConfig();
@@ -44,7 +69,7 @@ export const nameListSection = {
       return n;
     };
 
-    listSec.querySelector('#bfb-list-file').onclick = () => {
+    q(listSec, '#bfb-list-file').onclick = () => {
       const inp = document.createElement('input');
       inp.type = 'file';
       inp.accept = '.txt,.csv,.json,text/plain,application/json';
@@ -61,7 +86,7 @@ export const nameListSection = {
       inp.click();
     };
 
-    listSec.querySelector('#bfb-list-url').onclick = () => {
+    q(listSec, '#bfb-list-url').onclick = () => {
       promptModal('输入名单 URL（纯文本：每行一个 UID 或 UP 名）：', { title: '从 URL 载入', placeholder: 'https://…', okText: '载入' }).then((input) => {
         const url = (input || '').trim();
         if (!url) return;
@@ -84,7 +109,7 @@ export const nameListSection = {
       });
     };
 
-    listSec.querySelector('#bfb-list-hide').onclick = () => {
+    q(listSec, '#bfb-list-hide').onclick = () => {
       const { uids, names } = parseList();
       if (!uids.length && !names.length) return toast('没解析到有效的 UID / 名称');
       const n = addLocalMany(uids, names);
@@ -92,7 +117,7 @@ export const nameListSection = {
       ctx.rerender();
     };
 
-    listSec.querySelector('#bfb-list-block').onclick = () => {
+    q(listSec, '#bfb-list-block').onclick = () => {
       const { uids, names } = parseList();
       if (!uids.length && !names.length) return toast('没解析到有效的 UID / 名称');
       const est = Math.ceil(uids.length * 1.3); // 约 0.9~1.6s/个
@@ -109,8 +134,8 @@ export const nameListSection = {
         }
         toast(`开始拉黑 ${uids.length} 个…执行期间请勿关闭面板`);
         listStatus.textContent = `准备拉黑 ${uids.length} 个…`;
-        const stopBtn = listSec.querySelector('#bfb-list-stop');
-        const blockBtn = listSec.querySelector('#bfb-list-block');
+        const stopBtn = q<HTMLButtonElement>(listSec, '#bfb-list-stop');
+        const blockBtn = q<HTMLButtonElement>(listSec, '#bfb-list-block');
         const resetButtons = () => {
           stopBtn.style.display = 'none';
           stopBtn.disabled = false;
@@ -118,15 +143,15 @@ export const nameListSection = {
           blockBtn.disabled = false;
         };
         const ctl = doBlacklistMany(
-          uids.map((u) => ({ uid: u, name: '' })),
-          (r) => {
+          uids.map((u: string) => ({ uid: u, name: '' })),
+          (r: BlockResult) => {
             resetButtons();
             // 如实拆分：新拉黑(code0) / 此前已在黑名单(22120) / 失败(各 code)。失败 + 未处理(停止时) 回填输入框便于续传/重试。
             const failUids = r.failed.map((f) => f.uid);
-            const byCode = {};
+            const byCode: Record<string, number> = {};
             r.failed.forEach((f) => (byCode[f.code] = (byCode[f.code] || 0) + 1));
             const failBreak = Object.entries(byCode)
-              .map(([c, n]) => `${REL_ERR[c] || 'code ' + c}×${n}`)
+              .map(([c, n]) => `${(REL_ERR as Record<string, string>)[c] || 'code ' + c}×${n}`)
               .join('、');
             const head = r.cancelled ? `⏹ 已停止（已处理 ${r.done}/${r.total}）：` : `✅ 完成（共 ${r.total}）：`;
             listStatus.innerHTML =
@@ -141,7 +166,7 @@ export const nameListSection = {
             toast(`${r.cancelled ? '已停止' : '完成'}：新拉黑 ${r.added}，已在黑名单 ${r.already}，失败 ${failUids.length}`);
             ctx.refreshStats();
           },
-          (pg) => {
+          (pg: BlockProgress) => {
             listStatus.textContent = pg.paused
               ? `⚠ 触发风控，已暂停约 ${pg.wait}s 后自动继续 · 进度 ${pg.done}/${pg.total}（新拉黑 ${pg.added}，已在 ${pg.already}，失败 ${pg.fail}）`
               : `拉黑中 ${pg.done}/${pg.total} · 新拉黑 ${pg.added}${pg.already ? `，已在 ${pg.already}` : ''}${pg.fail ? `，失败 ${pg.fail}` : ''}…`;

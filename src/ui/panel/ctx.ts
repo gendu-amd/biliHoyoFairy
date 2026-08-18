@@ -23,6 +23,19 @@ export interface PanelSection {
   render: (host: HTMLElement, ctx: PanelCtx) => void;
 }
 
+// 面板内部的元素取值器。面板的 HTML 是本模块自己用模板字符串渲染出来的**静态**结构，
+// 取不到某个 id 只可能是「模板与代码不同步」这种编程错误，不是运行时的可恢复情况——
+// 因此直接抛（错误边界会记到控制台），而不是每处都写 if (!el) return 把 bug 藏起来。
+// 有了它，各分区不必再为「Element 可能为 null / Element 上没有 .value」到处写断言，
+// 这正是 sections/* 曾经需要 @ts-nocheck 的主要原因。
+// 形参写成三者的并集而不是 ParentNode：ParentNode 只是接口，浏览器里并不存在同名全局，
+// 而 lint 的 no-undef（仍在为未类型化模块兜底）只认真实全局名。
+export function q<T extends HTMLElement = HTMLElement>(root: Element | Document | DocumentFragment, sel: string): T {
+  const el = root.querySelector(sel);
+  if (!el) throw new Error('[bfb] 面板模板缺少元素: ' + sel);
+  return el as T;
+}
+
 // 「屏蔽记录」刷新器：renderPanel 每次重建时清空，由 log section 重新注册。
 // stats 监听器经 refreshStatsIfOpen() 读取它，实现命中即时更新计数。
 let statsRefresh: (() => void) | null = null;

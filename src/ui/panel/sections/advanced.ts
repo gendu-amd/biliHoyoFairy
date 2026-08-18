@@ -1,10 +1,11 @@
-// @ts-nocheck
 // 进阶分组：数值阈值（播放量/时长/营销号）、信息流加载、精确过滤总开关。
 import { CONFIG } from '../../../config';
 import { rescanAfterRuleChange } from '../../../dom';
 import { bindControl } from '../../field';
+import { q } from '../ctx';
+import type { PanelSection } from '../ctx';
 
-export const advancedSection = {
+export const advancedSection: PanelSection = {
   tab: 'api',
   render(host) {
     const num = document.createElement('div');
@@ -39,7 +40,7 @@ export const advancedSection = {
         <div class="switch"><input type="checkbox" id="bfb-charging"> 屏蔽充电专属视频</div>
       </div>`;
     host.appendChild(api);
-    const apiBody = api.querySelector('#bfb-api-body');
+    const apiBody = q(api, '#bfb-api-body');
     // 未启用精确过滤时把子项置灰禁用：这些开关不联网就不会生效，直接可点会造成「设了没用」的误解
     const syncApiBody = () => {
       apiBody.style.opacity = CONFIG.apiFilters ? '1' : '.4';

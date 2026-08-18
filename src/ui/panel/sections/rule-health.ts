@@ -1,4 +1,3 @@
-// @ts-nocheck
 // 规则体检：让「我的规则集」本身可被审视。
 //
 // 用户的规则是一年年攒下来的，攒的过程没有反馈——加了就再也不知道它有没有用。
@@ -11,10 +10,12 @@ import { removeFromList } from '../../../rules';
 import { escapeHtml } from '../../../util';
 import { toast } from '../../toast';
 import { confirmModal } from '../../confirm';
+import { q } from '../ctx';
+import type { PanelSection } from '../ctx';
 
 const HOT_N = 5;
 
-export const ruleHealthSection = {
+export const ruleHealthSection: PanelSection = {
   tab: 'tools',
   render(host, ctx) {
     const sec = document.createElement('div');
@@ -24,9 +25,9 @@ export const ruleHealthSection = {
       <div class="stat" id="bfb-rh-hot" style="margin-top:4px"></div>
       <div id="bfb-rh-dead" style="margin-top:6px"></div>`;
     host.appendChild(sec);
-    const sinceEl = sec.querySelector('#bfb-rh-since');
-    const hotEl = sec.querySelector('#bfb-rh-hot');
-    const deadEl = sec.querySelector('#bfb-rh-dead');
+    const sinceEl = q(sec, '#bfb-rh-since');
+    const hotEl = q(sec, '#bfb-rh-hot');
+    const deadEl = q(sec, '#bfb-rh-dead');
 
     const render = () => {
       pruneRuleStats(); // 顺手清掉已删规则的遗留计数（否则存档随「加了又删」无界膨胀）
@@ -90,16 +91,15 @@ export const ruleHealthSection = {
         del.textContent = '✂删';
         del.title = '从名单中删除这条规则';
         del.onclick = () => {
-          confirmModal({
+          confirmModal(`将从「${r.dim}」名单中删除这条规则：\n${r.line}`, {
             title: '删除规则',
-            body: `将从「${r.dim}」名单中删除：\n${r.line}`,
             okText: '删除',
             danger: true,
-            onOk: () => {
-              removeFromList(CONFIG.block[r.field], r.line);
-              toast(`已删除规则：${r.line}`);
-              ctx.rerender();
-            },
+          }).then((ok) => {
+            if (!ok) return;
+            removeFromList(CONFIG.block[r.field], r.line);
+            toast(`已删除规则：${r.line}`);
+            ctx.rerender();
           });
         };
         row.appendChild(del);
@@ -108,7 +108,7 @@ export const ruleHealthSection = {
       deadEl.appendChild(list);
     };
 
-    sec.querySelector('#bfb-rh-refresh').onclick = render;
+    q(sec, '#bfb-rh-refresh').onclick = render;
     render();
   },
 };

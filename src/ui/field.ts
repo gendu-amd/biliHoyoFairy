@@ -163,7 +163,7 @@ export function renderListField(host, o) {
 }
 
 // 普通 chip 列表（关键词 / BV / 标签 / 白名单…）；groupMode=组合标签。
-export function chipModel(arr, groupMode) {
+export function chipModel(arr, groupMode = false) {
   return {
     count: () => arr.length,
     entries: () => arr.map((v) => ({ key: v, value: v, arr })),
@@ -244,8 +244,7 @@ export function upModel(names, uids) {
 
 // 通用控件绑定器：把「读配置 → 回填控件」与「控件变更 → 存盘 + 回调」收敛到一处。
 // 支持 checkbox / select / number。obj 为目标对象（CONFIG 或 CONFIG.block）。
-export function bindControl(root, id, obj, key, opts) {
-  opts = opts || {};
+export function bindControl(root, id, obj, key, opts = {}) {
   const el = root.querySelector('#' + id);
   if (!el) return;
   if (el.type === 'checkbox') el.checked = !!obj[key];
