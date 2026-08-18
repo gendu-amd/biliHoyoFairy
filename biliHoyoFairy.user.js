@@ -71,6 +71,7 @@
   var BLOCKED_LOG_MAX = 300;
   var SAVE_DEBOUNCE_MS = 1200;
   var STARTUP_SUMMARY_MS = 3500;
+  var LIST_SEARCH_MIN = 8;
   var RISK_CODES = /* @__PURE__ */ new Set([-352, -412, -509, -799]);
 
   // src/config.ts
@@ -2734,6 +2735,11 @@
     #bfb-panel .field-head:hover{background:#fff0f5}
     #bfb-panel .field-head .caret{color:#fb7299;font-size:14px;width:14px;flex:0 0 auto;transition:transform .12s}
     #bfb-panel .chip-bar{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+    #bfb-panel .chip-search{display:none;gap:6px;margin-top:8px;align-items:center}
+    #bfb-panel .chip-search input{flex:1;min-width:0;padding:5px 8px;border:1px solid #e3e3e3;border-radius:8px;font-size:12px;background:#fafafa}
+    #bfb-panel .chip-search input:focus{outline:none;border-color:#fb7299;background:#fff;box-shadow:0 0 0 2px rgba(251,114,153,.18)}
+    #bfb-panel .chip-search-x{border:none;background:transparent;color:#999;cursor:pointer;font-size:12px;padding:2px 4px}
+    #bfb-panel .chip-search-x:hover{color:#fb7299}
     #bfb-panel .chip-act{border:1px solid #ffd5e2;background:#fff;color:#fb7299;border-radius:8px;padding:3px 10px;font-size:12px;cursor:pointer}
     #bfb-panel .chip-act:hover{background:#fff0f5}
     #bfb-panel .chip-act.primary{background:#fb7299;color:#fff;border-color:#fb7299}
@@ -2791,6 +2797,8 @@
       .bfb-modal-input{background:#26262b;color:#e6e6e9;border-color:#44444c}
       #bfb-panel .empty{color:#9a9aa2}
       #bfb-panel .addrow input,#bfb-panel input[type=number]{background:#26262b;border-color:#44444c;color:#e6e6e9}
+      #bfb-panel .chip-search input{background:#232328;border-color:#3a3a42;color:#e6e6e9}
+      #bfb-panel .chip-search input:focus{background:#26262b}
       #bfb-panel button.ghost{background:#2e2e34}
       #bfb-panel .switch input[type=checkbox]{background:#45454d}
       #bfb-panel .chip{background:rgba(251,114,153,.16);color:#ff9ebc;border-color:rgba(251,114,153,.35)}
@@ -2812,6 +2820,26 @@
       .bfb-ctx-item:hover{background:rgba(251,114,153,.16)}
     }
   `);
+
+  // src/ui/listfilter.ts
+  function makeMatcher(query) {
+    const q2 = (query || "").trim();
+    if (!q2) return null;
+    if (q2.length > 2 && q2.startsWith("/") && q2.endsWith("/")) {
+      try {
+        const re = new RegExp(q2.slice(1, -1), "i");
+        return (t) => re.test(t);
+      } catch (e) {
+      }
+    }
+    const lc2 = q2.toLowerCase();
+    return (t) => t.toLowerCase().indexOf(lc2) >= 0;
+  }
+  function filterBy(items, query, textsOf) {
+    const m = makeMatcher(query);
+    if (!m) return items;
+    return items.filter((it) => textsOf(it).some((t) => !!t && m(t)));
+  }
 
   // src/ui/field.ts
   var collapseState = {};
@@ -2852,12 +2880,25 @@
       h.textContent = o.hint;
       body.appendChild(h);
     }
+    const search = el("div", "chip-search");
+    const sInput = document.createElement("input");
+    sInput.type = "text";
+    sInput.placeholder = "搜索本列表（支持 /正则/）";
+    const sClear = el("button", "chip-search-x");
+    sClear.textContent = "✕";
+    sClear.title = "清除搜索";
+    search.appendChild(sInput);
+    search.appendChild(sClear);
+    body.appendChild(search);
     const bar = el("div", "chip-bar");
     body.appendChild(bar);
     const chips = el("div", "chips");
     body.appendChild(chips);
     let manage = false;
+    let query = "";
     const selected = /* @__PURE__ */ new Set();
+    const visible = () => filterBy(model.entries(), query, (e) => model.texts ? model.texts(e) : [String(e.value)]);
+    const filtering = () => !!query.trim();
     const renderBar = () => {
       bar.innerHTML = "";
       if (!model.count()) {
@@ -2878,12 +2919,12 @@
         });
         return;
       }
-      mk("全选", () => {
-        model.entries().forEach((e) => selected.add(e.key));
+      mk(filtering() ? "全选匹配" : "全选", () => {
+        visible().forEach((e) => selected.add(e.key));
         renderChips();
       });
       mk("反选", () => {
-        model.entries().forEach((e) => selected.has(e.key) ? selected.delete(e.key) : selected.add(e.key));
+        visible().forEach((e) => selected.has(e.key) ? selected.delete(e.key) : selected.add(e.key));
         renderChips();
       });
       mk(`删除所选(${selected.size})`, () => {
@@ -2899,8 +2940,20 @@
         renderChips();
         toast(`已删除 ${n} 条`);
       }, true);
-      mk("清空", () => {
+      const vis = visible();
+      mk(filtering() ? `删除匹配(${vis.length})` : "清空", () => {
         if (!model.count()) return;
+        if (filtering()) {
+          if (!vis.length) return;
+          confirmModal(`确定删除匹配「${query.trim()}」的 ${vis.length} 条？此操作不可撤销（其余 ${model.count() - vis.length} 条保留）。`, { title: "删除匹配项", okText: "删除", danger: true }).then((ok) => {
+            if (!ok) return;
+            vis.forEach((e) => removeFromList(e.arr, e.value));
+            selected.clear();
+            renderChips();
+            toast(`已删除 ${vis.length} 条`);
+          });
+          return;
+        }
         confirmModal(`确定清空该列表全部 ${model.count()} 条？此操作不可撤销。`, { title: "清空列表", okText: "清空", danger: true }).then((ok) => {
           if (!ok) return;
           model.clear();
@@ -2916,15 +2969,25 @@
     };
     const renderChips = () => {
       chips.innerHTML = "";
-      lab.querySelector(".cnt").textContent = model.count() || "";
-      if (!model.count()) {
+      const total = model.count();
+      const list = visible();
+      lab.querySelector(".cnt").textContent = filtering() && total ? `${list.length}/${total}` : total || "";
+      search.style.display = total > LIST_SEARCH_MIN || filtering() ? "flex" : "none";
+      if (!total) {
         const e = el("div", "empty");
         e.textContent = "（暂无，添加后会显示在这里）";
         chips.appendChild(e);
         renderBar();
         return;
       }
-      model.entries().forEach((entry) => {
+      if (!list.length) {
+        const e = el("div", "empty");
+        e.textContent = `（${total} 条里没有匹配「${query.trim()}」的项）`;
+        chips.appendChild(e);
+        renderBar();
+        return;
+      }
+      list.forEach((entry) => {
         const chip = el("span", "chip" + (manage && selected.has(entry.key) ? " sel" : ""));
         const txt = document.createElement("span");
         model.decorate(entry, chip, txt, renderChips);
@@ -2951,9 +3014,23 @@
       });
       renderBar();
     };
+    const setQuery = (v) => {
+      if (query === v) return;
+      query = v;
+      selected.clear();
+      renderChips();
+    };
+    sInput.addEventListener("input", () => setQuery(sInput.value));
+    sClear.onclick = () => {
+      sInput.value = "";
+      setQuery("");
+      sInput.focus();
+    };
     const doAdd = () => {
       if (model.add(input.value)) {
         input.value = "";
+        sInput.value = "";
+        setQuery("");
         renderChips();
       }
     };
@@ -2996,7 +3073,9 @@
       decorate: (entry, chip, txt) => {
         if (groupMode) chip.classList.add("group");
         txt.textContent = groupMode ? String(entry.value).split("+").join(" & ") : entry.value;
-      }
+      },
+      // 可搜文本 = 存的值 + 显示的值（组合标签存 `a+b`、显示 `a & b`，两种写法都得搜得到）。
+      texts: (entry) => groupMode ? [String(entry.value), String(entry.value).split("+").join(" & ")] : [String(entry.value)]
     };
   }
   function upModel(names, uids) {
@@ -3015,6 +3094,8 @@
         toast(added ? `已添加 ${added} 条` : "均已存在，未重复添加");
         return true;
       },
+      // UID 条目按数字和解析出的 UP 名都能搜到——用户记得住的是名字，不是一串数字。
+      texts: (entry) => entry.uid ? [String(entry.value), CONFIG.uidNames[String(entry.value)] || ""] : [String(entry.value)],
       decorate: (entry, chip, txt, rerender) => {
         if (!entry.uid) {
           txt.textContent = entry.value;

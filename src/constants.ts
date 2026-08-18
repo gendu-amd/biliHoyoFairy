@@ -39,6 +39,7 @@ export const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 export const BLOCKED_LOG_MAX = 300; // 本次会话屏蔽记录条数上限
 export const SAVE_DEBOUNCE_MS = 1200; // 配置存盘防抖
 export const STARTUP_SUMMARY_MS = 3500; // 首屏稳定后弹「本次拦截」汇总 + 跑运行自检的延时
+export const LIST_SEARCH_MIN = 8; // 名单超过这么多条才显示搜索框（三五条时肉眼就够，多一个框只是噪音）
 
 // B 站风控返回码：触发后全局退避保护账号（校验失败/被拦截/请求过频）。
 export const RISK_CODES = new Set<number>([-352, -412, -509, -799]);

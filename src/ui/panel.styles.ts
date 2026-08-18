@@ -80,6 +80,11 @@
     #bfb-panel .field-head:hover{background:#fff0f5}
     #bfb-panel .field-head .caret{color:#fb7299;font-size:14px;width:14px;flex:0 0 auto;transition:transform .12s}
     #bfb-panel .chip-bar{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+    #bfb-panel .chip-search{display:none;gap:6px;margin-top:8px;align-items:center}
+    #bfb-panel .chip-search input{flex:1;min-width:0;padding:5px 8px;border:1px solid #e3e3e3;border-radius:8px;font-size:12px;background:#fafafa}
+    #bfb-panel .chip-search input:focus{outline:none;border-color:#fb7299;background:#fff;box-shadow:0 0 0 2px rgba(251,114,153,.18)}
+    #bfb-panel .chip-search-x{border:none;background:transparent;color:#999;cursor:pointer;font-size:12px;padding:2px 4px}
+    #bfb-panel .chip-search-x:hover{color:#fb7299}
     #bfb-panel .chip-act{border:1px solid #ffd5e2;background:#fff;color:#fb7299;border-radius:8px;padding:3px 10px;font-size:12px;cursor:pointer}
     #bfb-panel .chip-act:hover{background:#fff0f5}
     #bfb-panel .chip-act.primary{background:#fb7299;color:#fff;border-color:#fb7299}
@@ -137,6 +142,8 @@
       .bfb-modal-input{background:#26262b;color:#e6e6e9;border-color:#44444c}
       #bfb-panel .empty{color:#9a9aa2}
       #bfb-panel .addrow input,#bfb-panel input[type=number]{background:#26262b;border-color:#44444c;color:#e6e6e9}
+      #bfb-panel .chip-search input{background:#232328;border-color:#3a3a42;color:#e6e6e9}
+      #bfb-panel .chip-search input:focus{background:#26262b}
       #bfb-panel button.ghost{background:#2e2e34}
       #bfb-panel .switch input[type=checkbox]{background:#45454d}
       #bfb-panel .chip{background:rgba(251,114,153,.16);color:#ff9ebc;border-color:rgba(251,114,153,.35)}

@@ -7,6 +7,8 @@ import { splitRuleInput } from '../match/normalize';
 import { fetchCard } from '../api';
 import { toast } from './toast';
 import { confirmModal } from './confirm';
+import { filterBy } from './listfilter';
+import { LIST_SEARCH_MIN } from '../constants';
 
 // 记住每个字段的折叠状态（renderPanel 重建时保留）。
 const collapseState = {};
@@ -48,13 +50,32 @@ export function renderListField(host, o) {
     h.textContent = o.hint;
     body.appendChild(h);
   }
+  // 搜索行：名单攒到几十上百条后，「这个词我是不是加过」「把那条打错字的删掉」全靠肉眼在
+  // chip 堆里找。少量条目时不显示——三五条时一个空搜索框只是噪音。
+  const search = el('div', 'chip-search');
+  const sInput = document.createElement('input');
+  sInput.type = 'text';
+  sInput.placeholder = '搜索本列表（支持 /正则/）';
+  const sClear = el('button', 'chip-search-x');
+  sClear.textContent = '✕';
+  sClear.title = '清除搜索';
+  search.appendChild(sInput);
+  search.appendChild(sClear);
+  body.appendChild(search);
+
   const bar = el('div', 'chip-bar');
   body.appendChild(bar);
   const chips = el('div', 'chips');
   body.appendChild(chips);
 
   let manage = false;
+  let query = '';
   const selected = new Set();
+  // 当前可见条目。**所有**批量操作都走它，不走 model.entries()：搜「原神」筛出 3 条后点
+  // 「全选 → 删除所选」，删掉的必须是这 3 条而不是整个名单——按搜索结果操作是这个功能的
+  // 全部意义，也是它唯一能酿成大祸的地方。
+  const visible = () => filterBy(model.entries(), query, (e) => (model.texts ? model.texts(e) : [String(e.value)]));
+  const filtering = () => !!query.trim();
   const renderBar = () => {
     bar.innerHTML = '';
     if (!model.count()) {
@@ -75,12 +96,12 @@ export function renderListField(host, o) {
       });
       return;
     }
-    mk('全选', () => {
-      model.entries().forEach((e) => selected.add(e.key));
+    mk(filtering() ? '全选匹配' : '全选', () => {
+      visible().forEach((e) => selected.add(e.key));
       renderChips();
     });
     mk('反选', () => {
-      model.entries().forEach((e) => (selected.has(e.key) ? selected.delete(e.key) : selected.add(e.key)));
+      visible().forEach((e) => (selected.has(e.key) ? selected.delete(e.key) : selected.add(e.key)));
       renderChips();
     });
     mk(`删除所选(${selected.size})`, () => {
@@ -96,8 +117,22 @@ export function renderListField(host, o) {
       renderChips();
       toast(`已删除 ${n} 条`);
     }, true);
-    mk('清空', () => {
+    // 搜索生效时「清空」只清筛出来的这些——按钮旁边就是筛选结果，清掉屏幕外看不见的东西
+    // 是背刺。文案里把范围和条件都念出来，不让用户靠猜。
+    const vis = visible();
+    mk(filtering() ? `删除匹配(${vis.length})` : '清空', () => {
       if (!model.count()) return;
+      if (filtering()) {
+        if (!vis.length) return;
+        confirmModal(`确定删除匹配「${query.trim()}」的 ${vis.length} 条？此操作不可撤销（其余 ${model.count() - vis.length} 条保留）。`, { title: '删除匹配项', okText: '删除', danger: true }).then((ok) => {
+          if (!ok) return;
+          vis.forEach((e) => removeFromList(e.arr, e.value));
+          selected.clear();
+          renderChips();
+          toast(`已删除 ${vis.length} 条`);
+        });
+        return;
+      }
       confirmModal(`确定清空该列表全部 ${model.count()} 条？此操作不可撤销。`, { title: '清空列表', okText: '清空', danger: true }).then((ok) => {
         if (!ok) return;
         model.clear();
@@ -113,15 +148,27 @@ export function renderListField(host, o) {
   };
   const renderChips = () => {
     chips.innerHTML = '';
-    lab.querySelector('.cnt').textContent = model.count() || '';
-    if (!model.count()) {
+    const total = model.count();
+    const list = visible();
+    // 搜索时角标显示「匹配/总数」：只显示匹配数会让人以为名单被删空了。
+    lab.querySelector('.cnt').textContent = filtering() && total ? `${list.length}/${total}` : total || '';
+    // 搜索框只在名单长到「找不着」时出现；已经在搜的时候不能因为筛剩几条就把框收走。
+    search.style.display = total > LIST_SEARCH_MIN || filtering() ? 'flex' : 'none';
+    if (!total) {
       const e = el('div', 'empty');
       e.textContent = '（暂无，添加后会显示在这里）';
       chips.appendChild(e);
       renderBar();
       return;
     }
-    model.entries().forEach((entry) => {
+    if (!list.length) {
+      const e = el('div', 'empty');
+      e.textContent = `（${total} 条里没有匹配「${query.trim()}」的项）`;
+      chips.appendChild(e);
+      renderBar();
+      return;
+    }
+    list.forEach((entry) => {
       const chip = el('span', 'chip' + (manage && selected.has(entry.key) ? ' sel' : ''));
       const txt = document.createElement('span');
       model.decorate(entry, chip, txt, renderChips);
@@ -148,9 +195,27 @@ export function renderListField(host, o) {
     });
     renderBar();
   };
+  // 改搜索词就清空勾选，保证「勾选集 ⊆ 屏幕上看得见的」这条不变式。否则用户搜 A 勾三条、
+  // 再搜 B 勾两条，「删除所选(5)」会连屏幕外那三条一起删——数字对得上，人却对不上。
+  const setQuery = (v) => {
+    if (query === v) return;
+    query = v;
+    selected.clear();
+    renderChips();
+  };
+  sInput.addEventListener('input', () => setQuery(sInput.value));
+  sClear.onclick = () => {
+    sInput.value = '';
+    setQuery('');
+    sInput.focus();
+  };
+
   const doAdd = () => {
     if (model.add(input.value)) {
       input.value = '';
+      // 新增的条目多半不匹配当前搜索词，留着筛选等于「加完就不见了」。加 = 换意图，撤掉筛选。
+      sInput.value = '';
+      setQuery('');
       renderChips();
     }
   };
@@ -196,6 +261,8 @@ export function chipModel(arr, groupMode = false) {
       if (groupMode) chip.classList.add('group');
       txt.textContent = groupMode ? String(entry.value).split('+').join(' & ') : entry.value;
     },
+    // 可搜文本 = 存的值 + 显示的值（组合标签存 `a+b`、显示 `a & b`，两种写法都得搜得到）。
+    texts: (entry) => (groupMode ? [String(entry.value), String(entry.value).split('+').join(' & ')] : [String(entry.value)]),
   };
 }
 
@@ -219,6 +286,8 @@ export function upModel(names, uids) {
       toast(added ? `已添加 ${added} 条` : '均已存在，未重复添加');
       return true;
     },
+    // UID 条目按数字和解析出的 UP 名都能搜到——用户记得住的是名字，不是一串数字。
+    texts: (entry) => (entry.uid ? [String(entry.value), CONFIG.uidNames[String(entry.value)] || ''] : [String(entry.value)]),
     decorate: (entry, chip, txt, rerender) => {
       if (!entry.uid) {
         txt.textContent = entry.value;

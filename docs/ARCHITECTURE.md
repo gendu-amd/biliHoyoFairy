@@ -63,7 +63,8 @@ src/
 │
 │  ── L6+ UI ──
 ├─ ui/toast.ts          角标 updateBadge + 轻提示 toast
-├─ ui/field.ts          通用列表字段组件（折叠/添加/批量管理/chip）+ chipModel/upModel
+├─ ui/field.ts          通用列表字段组件（折叠/添加/搜索/批量管理/chip）+ chipModel/upModel
+├─ ui/listfilter.ts     名单搜索的判定部分（纯函数：普通词=包含、/.../ =正则；与渲染分开以便单测）
 ├─ ui/menu.ts           右键菜单 + 悬停拉黑浮层
 └─ ui/panel/            设置面板
    ├─ index.ts          面板外壳：Tab 骨架 + 分区注册表 SECTIONS（数组顺序=显示顺序）+ 开关/重渲
@@ -166,6 +167,7 @@ L9        main（bootstrap，装配一切）
 | 什么时候扫描（首屏不闪 / 滚动节流） | `scanner.ts`（策略 `createScanScheduler` 可单测；扫描**内容**在 `dom.ts`） |
 | 规则→原因串 / 原因串→规则 | `match/engine.ts` 的 `ruleKeyOf` / `locateRule`（两侧必须字节一致，`tests/rulehealth.test.ts` 守着） |
 | 哪条规则过宽 / 从没命中 | `rulehealth.ts`（读 `CONFIG.ruleStats` × `enumerateRules()`） |
+| 名单里搜某条规则 | `ui/listfilter.ts`（匹配语义）+ `ui/field.ts`（渲染；批量操作一律作用于筛出的集合） |
 
 ---
 
