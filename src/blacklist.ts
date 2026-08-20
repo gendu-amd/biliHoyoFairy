@@ -1,19 +1,69 @@
-// @ts-nocheck
 // 一键拉黑：调官方 relation/modify (act=5) 写入账号黑名单，刷新后不再被推荐（未登录则仅本地屏蔽）。
 // 复用接口层的 view 缓存/限速队列与风控熔断；支持联合投稿连带拉黑与顺序批量拉黑。
-// 注：GM POST 详情与多态回调暂以 any 处理，保留 @ts-nocheck（渐进类型化）。
+//
+// 本模块的返回值形状是**跨层契约**（面板的批量拉黑 / 名单批量处理都按它渲染进度与结果），
+// 所以下面的 interface 是导出的：调用方不该再各自猜一遍形状——猜错了不报错，只是进度条数字不对。
 import { fetchView, riskGuard } from './api';
 import { getCookie } from './util';
+import { gmRequest } from './gm';
 import { CONFIG, saveConfig, setUidName } from './config';
 import { addToList, pushUnique, removeFromList } from './rules';
 import { emitRulesChanged } from './events';
 import { toast } from './ui/toast';
 import { extractCardInfo } from './cardinfo';
+import type { CardInfo } from './cardinfo';
 import { logBlocked } from './stats';
 import { log } from './logging';
 
+/** 待拉黑目标。uid 允许数字：联合投稿名单里的 mid 就是数字。 */
+export interface BlockTarget {
+  uid: string | number;
+  name?: string;
+}
+
+/** 没拉成的一条。code 为 null 表示网络层就失败了（压根没拿到业务码）。 */
+export interface BlockFail {
+  uid: string;
+  code: number | null;
+}
+
+/** 批量拉黑的最终结果。added/already/failed 三者互斥，如实分类——不把失败算进成功。 */
+export interface BlockResult {
+  added: number; // code 0：本次新写入账号黑名单
+  already: number; // 22120：此前已在黑名单
+  failed: BlockFail[];
+  total: number;
+  done: number;
+  cancelled: boolean;
+}
+
+/** 批量拉黑的实时进度。paused=风控退避中，wait=预计还要等的秒数。 */
+export interface BlockProgress {
+  done: number;
+  added: number;
+  already: number;
+  ok: number;
+  fail: number;
+  total: number;
+  paused: boolean;
+  wait: number;
+  cancelled: boolean;
+}
+
+/** 批量拉黑的控制器：cancel() 中断后续（在途请求会先正常收尾）。 */
+export interface BlockController {
+  cancel(): void;
+}
+
+/** 拉黑入口的入参。只要 up/uid/bvid 三样里的任意一样——调用方常常只拿得到其中一两个，
+ *  「哪样都没有时怎么退化」正是 blacklistUp 的主要职责。 */
+export type BlockSource = Partial<CardInfo>;
+
+/** 单次拉黑/撤销的回调：(是否成功, 业务码)。code 为 null 表示网络错误。 */
+export type BlockCb = (ok: boolean, code: number | null) => void;
+
 // 用 BV 号反查 UP 的 uid/name（页面取不到 UID 时的兜底，走视频详情接口）。复用接口层 view 缓存。
-function resolveUidByBvid(bvid, cb) {
+function resolveUidByBvid(bvid: string, cb: (uid: string, name: string) => void): void {
   fetchView(bvid, (d) => {
     if (d && d.owner) cb(String(d.owner.mid), d.owner.name || '');
     else cb('', '');
@@ -21,15 +71,18 @@ function resolveUidByBvid(bvid, cb) {
 }
 
 // relation/modify 常见错误码 → 友好文案。
-export const REL_ERR = {
+export const REL_ERR: Record<string, string> = {
   '-101': '未登录或登录已过期',
   '-111': 'CSRF 校验失败，请刷新页面重试',
   '-352': '触发 B 站风控，请稍后再试',
   22120: '该用户已在你的黑名单中',
 };
 
+// 业务码 → 文案。code 可能是 null（网络错误），查表统一走这里，省得每处都判一次空。
+const relErr = (code: number | null): string => (code == null ? '' : REL_ERR[String(code)] || '');
+
 // 真正调接口拉黑（已确定 uid）。quiet=true 时不弹单条提示（批量/联合投稿场景由调用方汇总）。
-function doBlacklist(uid, upName, cb, quiet) {
+function doBlacklist(uid: string, upName: string, cb?: BlockCb, quiet?: boolean): void {
   const label = upName || uid;
   const addLocal = () => {
     if (upName) setUidName(uid, upName);
@@ -44,7 +97,7 @@ function doBlacklist(uid, upName, cb, quiet) {
     cb && cb(false, -101);
     return;
   }
-  GM_xmlhttpRequest({
+  gmRequest({
     method: 'POST',
     url: 'https://api.bilibili.com/x/relation/modify',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -52,7 +105,7 @@ function doBlacklist(uid, upName, cb, quiet) {
     data: `fid=${encodeURIComponent(uid)}&act=5&re_src=11&gaia_source=web_main&csrf=${encodeURIComponent(csrf)}`,
     withCredentials: true,
     onload: (res) => {
-      let code = null;
+      let code: number | null = null;
       let msg = '';
       try {
         const j = JSON.parse(res.responseText);
@@ -69,7 +122,7 @@ function doBlacklist(uid, upName, cb, quiet) {
         // 仅对「本次新拉黑(code 0)」提供撤销：22120 是此前就已在黑名单，撤销它可能误删用户早先的设置，故不提供。
         if (code === 0) toast(`已拉黑并同步账号黑名单：${label}（刷新后不再推荐）`, 'success', { label: '撤销', onClick: () => unblockUp(String(uid), upName) });
         else if (code === 22120) toast(`「${label}」此前已在账号黑名单，已本地同步`, 'success');
-        else toast(`账号侧拉黑失败（${REL_ERR[code] || msg || 'code ' + code}），已本地屏蔽：${label}`, 'warn');
+        else toast(`账号侧拉黑失败（${relErr(code) || msg || 'code ' + code}），已本地屏蔽：${label}`, 'warn');
       }
       cb && cb(ok, code);
     },
@@ -83,7 +136,7 @@ function doBlacklist(uid, upName, cb, quiet) {
 
 // 撤销拉黑（relation/modify act=6 取消拉黑）：账号侧移出黑名单 + 本地移出 block.uids（刷新后该 UP 恢复推荐）。
 // 给「不可逆账号写操作」一个可恢复路径：单条拉黑成功后的撤销 toast、面板屏蔽记录的撤销按钮共用。
-export function unblockUp(uid, upName, cb) {
+export function unblockUp(uid: string, upName?: string, cb?: BlockCb): void {
   const label = upName || uid;
   const csrf = getCookie('bili_jct');
   if (!csrf) {
@@ -92,7 +145,7 @@ export function unblockUp(uid, upName, cb) {
     cb && cb(false, -101);
     return;
   }
-  GM_xmlhttpRequest({
+  gmRequest({
     method: 'POST',
     url: 'https://api.bilibili.com/x/relation/modify',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -109,7 +162,7 @@ export function unblockUp(uid, upName, cb) {
       riskGuard.note(code);
       removeFromList(CONFIG.block.uids, String(uid)); // 无论账号侧成败都移出本地屏蔽，避免界面与意图不一致
       const ok = code === 0;
-      toast(ok ? `已撤销拉黑：${label}（刷新后恢复推荐）` : `账号侧撤销失败（${REL_ERR[code] || msg || 'code ' + code}），已移出本地屏蔽：${label}`, ok ? 'success' : 'warn');
+      toast(ok ? `已撤销拉黑：${label}（刷新后恢复推荐）` : `账号侧撤销失败（${relErr(code) || msg || 'code ' + code}），已移出本地屏蔽：${label}`, ok ? 'success' : 'warn');
       cb && cb(ok, code);
     },
     onerror: () => {
@@ -126,8 +179,8 @@ export function unblockUp(uid, upName, cb) {
 // 限速 + 抖动：批量比单发更保守，降低被风控概率；触发风控由 riskGuard 自动指数退避并在此暂停等待。
 const BL_DELAY = 900; // 每次之间基础间隔(ms)
 const BL_JITTER = 700; // 叠加随机抖动(ms)，降低规律性
-export function doBlacklistMany(targets, cb, onProgress) {
-  const list = [];
+export function doBlacklistMany(targets: BlockTarget[], cb?: (r: BlockResult) => void, onProgress?: (p: BlockProgress) => void): BlockController {
+  const list: { uid: string; name: string }[] = [];
   const seen = new Set();
   for (const t of targets) {
     const uid = String((t && t.uid) || '');
@@ -140,12 +193,12 @@ export function doBlacklistMany(targets, cb, onProgress) {
   let already = 0; // 22120：此前已在黑名单
   let done = 0;
   let i = 0;
-  const failed = []; // { uid, code }：真正没拉成的
+  const failed: BlockFail[] = []; // 真正没拉成的
   let cancelled = false; // 用户点「停止」
   let finished = false; // 防止「取消」与在途回调重复收尾
-  let timer = null; // 当前等待中的定时器（限速/退避），取消时清掉
+  let timer: ReturnType<typeof setTimeout> | null = null; // 当前等待中的定时器（限速/退避），取消时清掉
   const noCsrf = !getCookie('bili_jct'); // 未登录：每条都只走本地降级、不发请求，无需限速空转
-  const snapshot = (paused) => ({
+  const snapshot = (paused: boolean): BlockProgress => ({
     done,
     added,
     already,
@@ -156,7 +209,7 @@ export function doBlacklistMany(targets, cb, onProgress) {
     wait: paused ? Math.ceil(riskGuard.remaining() / 1000) : 0,
     cancelled,
   });
-  const report = (paused) => onProgress && onProgress(snapshot(paused));
+  const report = (paused: boolean) => onProgress && onProgress(snapshot(paused));
   const finish = () => {
     if (finished) return;
     finished = true;
@@ -165,8 +218,8 @@ export function doBlacklistMany(targets, cb, onProgress) {
       timer = null;
     }
     if (CONFIG.debug && failed.length) {
-      const byCode = {};
-      failed.forEach((f) => (byCode[f.code] = (byCode[f.code] || 0) + 1));
+      const byCode: Record<string, number> = {};
+      failed.forEach((f) => (byCode[String(f.code)] = (byCode[String(f.code)] || 0) + 1));
       log('批量拉黑失败按 code 分布：', byCode, failed);
     }
     // 批量本地屏蔽（含失败降级项）已逐条 pushUnique 进 block.uids，这里统一一次存盘 + 重扫（避免逐条 N 次重扫）。
@@ -215,7 +268,7 @@ export function doBlacklistMany(targets, cb, onProgress) {
 
 // 入口：info 至少含 up；优先用 uid，没有则用 bvid 反查；都没有才退回按 UP 名本地屏蔽。
 // 传 cardEl 时会先实时重抠一遍 DOM（避免用到首屏未渲染时缓存的空 uid）。
-export function blacklistUp(info, cb, cardEl = null) {
+export function blacklistUp(info: BlockSource, cb?: (ok: boolean) => void, cardEl: Element | null = null): void {
   let uid = info && info.uid ? String(info.uid) : '';
   let upName = (info && info.up) || '';
   let bvid = (info && info.bvid) || '';
@@ -229,9 +282,9 @@ export function blacklistUp(info, cb, cardEl = null) {
   if (CONFIG.blacklistCollab && bvid) {
     toast('正在读取联合投稿名单…');
     fetchView(bvid, (d) => {
-      const targets = [];
+      const targets: BlockTarget[] = [];
       if (d && d.owner) targets.push({ uid: d.owner.mid, name: d.owner.name || '' });
-      if (d && Array.isArray(d.staff)) d.staff.forEach((s) => targets.push({ uid: s.mid, name: s.name || '' }));
+      if (d && Array.isArray(d.staff)) d.staff.forEach((s: any) => targets.push({ uid: s.mid, name: s.name || '' }));
       if (!targets.length && uid) targets.push({ uid, name: upName });
       if (!targets.length) {
         if (upName) {

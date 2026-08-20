@@ -1,6 +1,5 @@
-// @ts-nocheck
 // 通用列表字段组件：折叠头 / 添加行 / 批量管理 / chip 渲染共一套；不同字段（关键词、UP名+UID、组合标签…）
-// 只需提供一个轻量 model 适配器。供设置面板复用。本层 DOM 操作密集，暂保留 @ts-nocheck（渐进类型化）。
+// 只需提供一个轻量 model 适配器。供设置面板复用。
 import { CONFIG, saveConfig, setUidName } from '../config';
 import { addToList, removeFromList } from '../rules';
 import { splitRuleInput } from '../match/normalize';
@@ -10,12 +9,41 @@ import { confirmModal } from './confirm';
 import { filterBy } from './listfilter';
 import { LIST_SEARCH_MIN } from '../constants';
 
-// 记住每个字段的折叠状态（renderPanel 重建时保留）。
-const collapseState = {};
+/** 名单里的一条。key 是勾选集的身份（UP 字段把名称与 UID 放在同一列，故加 n:/u: 前缀区分）。 */
+export interface FieldEntry {
+  key: string;
+  value: string;
+  arr: string[]; // 该条所属的底层数组（删除时直接操作它）
+  uid?: boolean;
+}
 
-export function renderListField(host, o) {
+/** 列表字段的数据适配器。组件只认这个接口——新增一类名单 = 写一个 model，不动组件。 */
+export interface FieldModel {
+  count(): number;
+  entries(): FieldEntry[];
+  clear(): void;
+  /** 返回 false 表示没添加成功（输入为空/校验不过），调用方据此不清空输入框。 */
+  add(raw: string): boolean;
+  decorate(entry: FieldEntry, chip: HTMLElement, txt: HTMLElement, rerender: () => void): void;
+  /** 可搜文本，缺省取 value。见 listfilter.ts。 */
+  texts?(entry: FieldEntry): string[];
+}
+
+export interface ListFieldOpts {
+  label: string;
+  model: FieldModel;
+  hint?: string;
+  placeholder?: string;
+  inputTitle?: string;
+  isAllow?: boolean;
+}
+
+// 记住每个字段的折叠状态（renderPanel 重建时保留）。
+const collapseState: Record<string, boolean> = {};
+
+export function renderListField(host: HTMLElement, o: ListFieldOpts): void {
   const model = o.model;
-  const el = (t, c) => {
+  const el = <K extends keyof HTMLElementTagNameMap>(t: K, c?: string): HTMLElementTagNameMap[K] => {
     const e = document.createElement(t);
     if (c) e.className = c;
     return e;
@@ -23,7 +51,15 @@ export function renderListField(host, o) {
   const sec = el('div', 'sec field' + (o.isAllow ? ' allow' : ''));
   const lab = el('label', 'field-head');
   const collapsed = !!collapseState[o.label];
-  lab.innerHTML = `<span class="caret">${collapsed ? '▸' : '▾'}</span> <span class="lt">${o.label}</span> <span class="cnt">${model.count() || ''}</span>`;
+  // 三个子元素直接持引用，不走 innerHTML 再 querySelector 反查：查的是自己刚拼的字符串，
+  // 绕一圈只是把「拼错类名」从编译期错误变成运行期静默失效。顺带免去 o.label 的转义问题。
+  const caret = el('span', 'caret');
+  caret.textContent = collapsed ? '▸' : '▾';
+  const lt = el('span', 'lt');
+  lt.textContent = o.label;
+  const cnt = el('span', 'cnt');
+  cnt.textContent = String(model.count() || '');
+  lab.append(caret, ' ', lt, ' ', cnt);
   sec.appendChild(lab);
   const body = el('div', 'field-body');
   body.style.display = collapsed ? 'none' : 'block';
@@ -32,7 +68,7 @@ export function renderListField(host, o) {
     const now = body.style.display === 'none';
     body.style.display = now ? 'block' : 'none';
     collapseState[o.label] = !now;
-    lab.querySelector('.caret').textContent = now ? '▾' : '▸';
+    caret.textContent = now ? '▾' : '▸';
   };
   const addrow = el('div', 'addrow');
   const input = document.createElement('input');
@@ -70,11 +106,11 @@ export function renderListField(host, o) {
 
   let manage = false;
   let query = '';
-  const selected = new Set();
+  const selected = new Set<string>();
   // 当前可见条目。**所有**批量操作都走它，不走 model.entries()：搜「原神」筛出 3 条后点
   // 「全选 → 删除所选」，删掉的必须是这 3 条而不是整个名单——按搜索结果操作是这个功能的
   // 全部意义，也是它唯一能酿成大祸的地方。
-  const visible = () => filterBy(model.entries(), query, (e) => (model.texts ? model.texts(e) : [String(e.value)]));
+  const visible = (): FieldEntry[] => filterBy(model.entries(), query, (e) => (model.texts ? model.texts(e) : [String(e.value)]));
   const filtering = () => !!query.trim();
   const renderBar = () => {
     bar.innerHTML = '';
@@ -82,7 +118,7 @@ export function renderListField(host, o) {
       manage = false;
       return;
     }
-    const mk = (text, fn, primary) => {
+    const mk = (text: string, fn: () => void, primary?: boolean) => {
       const b = el('button', 'chip-act' + (primary ? ' primary' : ''));
       b.textContent = text;
       b.onclick = fn;
@@ -110,7 +146,7 @@ export function renderListField(host, o) {
         return;
       }
       const n = selected.size;
-      const byKey = {};
+      const byKey: Record<string, FieldEntry> = {};
       model.entries().forEach((e) => (byKey[e.key] = e));
       selected.forEach((k) => byKey[k] && removeFromList(byKey[k].arr, byKey[k].value));
       selected.clear();
@@ -151,7 +187,7 @@ export function renderListField(host, o) {
     const total = model.count();
     const list = visible();
     // 搜索时角标显示「匹配/总数」：只显示匹配数会让人以为名单被删空了。
-    lab.querySelector('.cnt').textContent = filtering() && total ? `${list.length}/${total}` : total || '';
+    cnt.textContent = filtering() && total ? `${list.length}/${total}` : String(total || '');
     // 搜索框只在名单长到「找不着」时出现；已经在搜的时候不能因为筛剩几条就把框收走。
     search.style.display = total > LIST_SEARCH_MIN || filtering() ? 'flex' : 'none';
     if (!total) {
@@ -197,7 +233,7 @@ export function renderListField(host, o) {
   };
   // 改搜索词就清空勾选，保证「勾选集 ⊆ 屏幕上看得见的」这条不变式。否则用户搜 A 勾三条、
   // 再搜 B 勾两条，「删除所选(5)」会连屏幕外那三条一起删——数字对得上，人却对不上。
-  const setQuery = (v) => {
+  const setQuery = (v: string) => {
     if (query === v) return;
     query = v;
     selected.clear();
@@ -228,16 +264,16 @@ export function renderListField(host, o) {
 }
 
 // 普通 chip 列表（关键词 / BV / 标签 / 白名单…）；groupMode=组合标签。
-export function chipModel(arr, groupMode = false) {
+export function chipModel(arr: string[], groupMode = false): FieldModel {
   return {
     count: () => arr.length,
     entries: () => arr.map((v) => ({ key: v, value: v, arr })),
     clear: () => {
       arr.length = 0;
     },
-    add: (raw) => {
+    add: (raw: string) => {
       if (groupMode) {
-        const parts = raw.split(/[+,，、\s]+/).map((s) => s.trim()).filter(Boolean);
+        const parts = raw.split(/[+,，、\s]+/).map((s: string) => s.trim()).filter(Boolean);
         if (parts.length < 2) {
           toast('组合标签至少要 2 个，如：原神 鸣潮');
           return false;
@@ -267,7 +303,7 @@ export function chipModel(arr, groupMode = false) {
 }
 
 // 「UP 名 + UID」合一：纯数字→uids，否则→names；UID chip 异步解析显示名。
-export function upModel(names, uids) {
+export function upModel(names: string[], uids: string[]): FieldModel {
   return {
     count: () => names.length + uids.length,
     entries: () =>
@@ -312,25 +348,54 @@ export function upModel(names, uids) {
 }
 
 // 通用控件绑定器：把「读配置 → 回填控件」与「控件变更 → 存盘 + 回调」收敛到一处。
-// 支持 checkbox / select / number。obj 为目标对象（CONFIG 或 CONFIG.block）。
-export function bindControl(root, id, obj, key, opts = {}) {
-  const el = root.querySelector('#' + id);
-  if (!el) return;
-  if (el.type === 'checkbox') el.checked = !!obj[key];
-  else el.value = obj[key] != null ? obj[key] : opts.number ? 0 : '';
+// 支持 checkbox / select / number。obj 为目标对象（CONFIG / CONFIG.block / CONFIG.comment）。
+export interface BindOpts {
+  number?: boolean; // 按数字读写
+  int?: boolean; // 配合 number：取整
+  after?: () => void; // 存盘后的副作用（多为重扫）
+}
+
+// 泛型绑定：key 必须是 obj 上真实存在的字段名——写错字段名过去只是「开关点了没反应」，现在编译期就报。
+export function bindControl<T extends object, K extends keyof T & string>(root: Element | Document, id: string, obj: T, key: K, opts: BindOpts = {}): void {
+  const el = root.querySelector<HTMLInputElement | HTMLSelectElement>('#' + id);
+  if (!el) return; // 该控件不在本次渲染的分区里（分区可按开关裁剪），静默跳过
+  const isCheck = el instanceof HTMLInputElement && el.type === 'checkbox';
+  if (isCheck) el.checked = !!obj[key];
+  else el.value = obj[key] != null ? String(obj[key]) : opts.number ? '0' : '';
   el.onchange = () => {
-    let v;
-    if (el.type === 'checkbox') v = el.checked;
+    let v: unknown;
+    if (isCheck) v = (el as HTMLInputElement).checked;
     else if (opts.number) v = (opts.int ? parseInt(el.value, 10) : parseFloat(el.value)) || 0;
     else v = el.value;
-    obj[key] = v;
+    // 唯一的断言点：控件类型由调用方按字段类型选定（数字字段配 number:true、布尔字段配 checkbox），
+    // 类型系统跟不到这层对应关系。收敛在这一处，好过每个调用点各写一次。
+    obj[key] = v as T[K];
     saveConfig();
     if (opts.after) opts.after();
   };
 }
 
+// 列表型字段的描述表条目。kind:'up' 是唯一的特例（UP 名与 UID 合成一个字段）。
+export interface FieldDef {
+  label: string;
+  kind?: 'up';
+  scope?: 'allow';
+  key?: string; // CONFIG.block / CONFIG.allow 下的名单数组字段名
+  placeholder?: string;
+  hint?: string;
+  groupMode?: boolean;
+}
+
+// 描述表里的 key 取出对应的名单数组。取不到（写错字段名 / 指到了阈值字段）是编程错误：
+// 直接抛，而不是渲染出一个空列表让用户以为「我的词都没了」。
+function listOf(obj: object, key: string | undefined): string[] {
+  const v = key ? (obj as unknown as Record<string, unknown>)[key] : undefined;
+  if (!Array.isArray(v)) throw new Error('[bfb] 字段描述表的 key 不是名单数组: ' + key);
+  return v as string[];
+}
+
 // 按描述表渲染一组「列表型」字段（黑/白名单等），新增过滤项 = 表里加一行。
-export function renderFields(host, defs) {
+export function renderFields(host: HTMLElement, defs: FieldDef[]): void {
   defs.forEach((f) => {
     if (f.kind === 'up') {
       renderListField(host, {
@@ -342,7 +407,7 @@ export function renderFields(host, defs) {
       });
       return;
     }
-    const arr = (f.scope === 'allow' ? CONFIG.allow : CONFIG.block)[f.key];
+    const arr = listOf(f.scope === 'allow' ? CONFIG.allow : CONFIG.block, f.key);
     renderListField(host, {
       label: f.label,
       hint: f.hint,

@@ -51,6 +51,21 @@ function pickText(card: Element, selectors: string[]): string {
 }
 
 // deepUid: 是否为缺 UID 的卡做昂贵的 innerHTML 兜底解析（扫描热路径按需，拉黑场景强制 true）。
+// 卡片上缓存的抽取结果。DOM 层判定时已经抠过一遍，悬停浮层/右键菜单再抠一遍既浪费、又可能
+// 在首屏抠到还没渲染完的空 UID。用一对带类型的存取函数封住这个 expando，
+// 好过各处写 (card as any)._bfbInfo —— 键名打错在那种写法下是不报错的。
+interface CardWithInfo extends Element {
+  _bfbInfo?: CardInfo;
+}
+
+export function cacheCardInfo(card: Element, info: CardInfo): void {
+  (card as CardWithInfo)._bfbInfo = info;
+}
+
+export function cachedCardInfo(card: Element): CardInfo | null {
+  return (card as CardWithInfo)._bfbInfo || null;
+}
+
 export function extractCardInfo(card: Element, deepUid = true): CardInfo {
   const info: CardInfo = { title: '', up: '', uid: '', partition: '', bvid: '', duration: null, views: null, likes: null, isLive: false, isAd: false };
 

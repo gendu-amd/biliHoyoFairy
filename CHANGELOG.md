@@ -40,7 +40,15 @@ Phase 3：正确性修复 + 失败可见性 + 结构收敛（无用户可见的�
   - `CONFIG.block[field]` 原本类型是 `string[] | number`（含 `minDuration` 等阈值字段），取值处只能各自 cast。改为在 `match/engine.ts` 定义 `RuleListField` 联合类型，规则行字段与阈值字段在类型层面分开。
   - `bindControl` / `chipModel` / `blacklistUp` 的尾参在实践中本就是可选的（`@ts-nocheck` 下无人察觉），改在**定义处**声明默认值，而不是在每个调用点补参。
   - 每个分区显式标注 `: PanelSection`，注册表与实现之间的契约由编译器守。
-  开启检查当场逮到一个真 bug：`sections/rule-health.ts` 里「✂删死规则」按钮把 `confirmModal` 当成对象参数调用（实际签名是 `(message, opts) => Promise<boolean>`），点下去只会抛异常、永远删不掉——这段代码上一次提交时是「看起来对的」。剩余 7 个未类型化模块（`dom.ts` / `blacklist.ts` / `comments.ts` / `main.ts` / `ui/field.ts` / `ui/menu.ts` / `ui/panel/index.ts`）继续由 lint 的 `no-undef` 兜底漏 import。
+  开启检查当场逮到一个真 bug：`sections/rule-health.ts` 里「✂删死规则」按钮把 `confirmModal` 当成对象参数调用（实际签名是 `(message, opts) => Promise<boolean>`），点下去只会抛异常、永远删不掉——这段代码上一次提交时是「看起来对的」。（另 7 个模块见下条，至此 `src/` 全量类型化。）
+- **`@ts-nocheck` 清零**：剩下的 7 个模块（`dom.ts` / `blacklist.ts` / `comments.ts` / `main.ts` / `ui/field.ts` / `ui/menu.ts` / `ui/panel/index.ts`）也已摘掉。同样不是逐处加断言压下来的，每一类报错都当成「这个契约该写在哪」来解：
+  - **`src/gm.ts`（新）**：`GM_xmlhttpRequest` 的类型垫片。`@types/tampermonkey` 的 `Request` 里没有 `withCredentials`，而拉黑与视频详情**必须**带 Cookie；过去在调用点写 `} as any)`，代价是把整个请求对象的检查一并丢掉（`onload` 打错名字、`data` 拼错字段都不报错，而这些是发出去才知道的错）。现在 4 个 GM 调用点恢复受检，且环境里没有 `GM_xmlhttpRequest` 时返回 `false` 让调用方显式降级。
+  - **拉黑的跨层契约由 `blacklist.ts` 导出**（`BlockTarget` / `BlockResult` / `BlockProgress` / `BlockController`），`batch-block.ts`、`name-list.ts` 里那几个本地「替身接口」删除。接上真类型当场暴露一处漂移：本地替身把失败码写成 `number | string`，实际是 `number | null`，于是批量拉黑的失败分类会把网络错误显示成 `code null×3`——现在如实显示为「网络错误×3」。
+  - **元素上的附加字段集中声明**：卡片的 `_bfbInfo` 收进 `cacheCardInfo/cachedCardInfo`；评论宿主的 `__data` / `__upMid` / `__bfbCmt*` 收进 `CommentHost` 接口，并把 `Element → CommentHost` 的收窄集中到 `asCommentHost()` 一处（右键菜单不再自己拼断言）。顺带把「我们依赖了 B 站哪些字段」写成了一份可查的清单。
+  - `COMMENT_TAGS` 的值域改为 `boolean | undefined`（查表用的是任意 `tagName`，「查不到」是常态而非异常），新增 `isCommentTag()` 供三个调用点共用，`comments.ts` 里的 `CMT_TAGS` 转发别名删除。
+  - `ui/menu.ts` 的两个浮层按钮由两个可空模块变量改为一个整体（要么都没建、要么都建好，位置/显隐操作不必再各自判空）；事件 target 的收窄改用运行期 `instanceof Element`，而不是散落的 `as Element`。
+  - `ui/panel/index.ts` 的 `buildPanel()` 改为返回面板根节点，调用方不必再 `getElementById` 一遍去应付「理论上的 null」——顺带去掉了首次打开时白渲染一遍的重复调用。
+  至此 lint 里为未类型化模块兜底的 `no-undef` 与 `UNTYPED_FILES` 名单一并删除，`ban-ts-comment` 对 `ts-nocheck` 的豁免也收回：再想整文件关掉类型检查得先过这条规则，防止「加个 nocheck 先跑起来」重新变成常态。
 - **选择器登记表 `src/selectors.ts`**：散落在 5 个模块里的 B 站 DOM 选择器字面量集中到一处。B 站改版时只需改这一个文件。
 - **配置结构版本 `schemaVersion`**：存档带版本号 + `migrateConfig` 迁移链，为将来重命名字段/改变量纲留出无损升级路径（纯新增字段不需要升版本，`deepMerge` 会补默认值）。
 - **`net.ts` 移除 `@ts-nocheck`**：拦截层恢复完整类型检查。
@@ -54,6 +62,7 @@ Phase 3：正确性修复 + 失败可见性 + 结构收敛（无用户可见的�
 - **可解释性闭环测试** `tests/explain.test.ts`：逐维度走真实的 `matchRule`/`matchApi`（不手写原因串），核对产出的原因都能被 `locateRule` 反查回名单里的那一行。维度产出与 `REASON_RULE_FIELD` 一旦漂移，「删规则」按钮会静默消失或指向错字段，而这种失效不报任何错。
 - **共享 DOM 替身 `tests/helpers/dom.ts`**：`page.ts` / `cardinfo.ts` 的**全部逻辑就是选择器逻辑**，不喂真元素树等于没测，而仓库刻意不引入 jsdom（依赖只保留 esbuild + vitest + eslint + typescript）。于是把原先散在 `page.test.ts` 里的手写替身抽成共享件并补全：支持 `tag/.cls/#id/[attr*=v]` 复合与后代选择器，且严格照规范语义（`closest` 取**最近祖先**、`querySelector` 取**文档序**首个）——这两条正是这类代码最容易踩的坑，替身放宽就测不出来。
   据此新增 `isUnsafeHideTarget`（隐藏护栏：大容器 / 多卡元素判危险，隐错会连带删掉无限滚动的加载哨兵 → 整页空白且加载不出新内容）与 `extractCardInfo`（选择器优先级、UID 三级降级、`deepUid=false` 不做 innerHTML 兜底、广告角标必须精确等于「广告/赞助/推广」而非包含）的用例。
+- **评论判定测试** `tests/comments.test.ts`（22 例）：评论过滤有十几条规则、四条白名单，此前一条测试都没有——因为逻辑与 DOM 操作缠在一个模块里，而仓库没有 jsdom。现在把「判定」那一半（`readCmt` / `matchComment`，纯函数）导出单测：白名单优先级（UP 本人 / 置顶 / 自己，含 mid 跨类型判等）、楼中楼前缀与 @提及不参与匹配（否则会被「被 @ 者的昵称」误伤）、等级缺失不误伤、默认头像非会员、召唤 AI、带货、纯 @ / 纯表情，以及 `__data` 缺字段时不抛错的安全默认值。
 - **版本号检查**：CI 新增 job——PR 里改了 `src/` 却没升 `src/meta.js` 的 `@version` 时失败（否则已安装脚本的用户收不到更新）。
 
 ## [0.0.7] - 未发布

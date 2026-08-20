@@ -1,5 +1,6 @@
 // 订阅刷新（运行时，联网）：按 expires 拉取远程订阅文本 → 解析 → 写缓存；有变更则通过 events 触发重建+重扫。
 import { CONFIG } from '../config';
+import { gmRequest } from '../gm';
 import { VERSION } from '../constants';
 import { toast } from '../ui/toast';
 import { emitRulesChanged } from '../events';
@@ -36,8 +37,7 @@ export function parseExpires(s: unknown): number {
 const SUB_MAX_LEN = 2 * 1024 * 1024; // 订阅文本硬上限 2MB：超大/恶意内容在解析前就拒，避免内存峰值/卡顿
 
 function fetchSubText(url: string, cb: (text: string | null, err: string | null) => void): void {
-  if (typeof GM_xmlhttpRequest !== 'function') return cb(null, '无 GM_xmlhttpRequest');
-  GM_xmlhttpRequest({
+  const sent = gmRequest({
     method: 'GET',
     url,
     timeout: 15000,
@@ -49,6 +49,7 @@ function fetchSubText(url: string, cb: (text: string | null, err: string | null)
     onerror: () => cb(null, '网络错误'),
     ontimeout: () => cb(null, '超时'),
   });
+  if (!sent) cb(null, '无 GM_xmlhttpRequest');
 }
 
 // 拉取并解析一条订阅，写入缓存；cb(ok)。

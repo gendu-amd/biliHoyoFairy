@@ -370,6 +370,9 @@
     "BILI-COMMENT-THREAD-RENDERER": false,
     "BILI-COMMENT-REPLY-RENDERER": true
   };
+  function isCommentTag(tagName) {
+    return COMMENT_TAGS[tagName] !== void 0;
+  }
 
   // src/page.ts
   var IS_SEARCH = location.host === "search.bilibili.com";
@@ -498,6 +501,12 @@
       }
     }
     return "";
+  }
+  function cacheCardInfo(card, info) {
+    card._bfbInfo = info;
+  }
+  function cachedCardInfo(card) {
+    return card._bfbInfo || null;
   }
   function extractCardInfo(card, deepUid = true) {
     const info = { title: "", up: "", uid: "", partition: "", bvid: "", duration: null, views: null, likes: null, isLive: false, isAd: false };
@@ -1375,6 +1384,13 @@
     toastContainer().appendChild(t);
   }
 
+  // src/gm.ts
+  function gmRequest(opts) {
+    if (typeof GM_xmlhttpRequest !== "function") return false;
+    GM_xmlhttpRequest(opts);
+    return true;
+  }
+
   // src/events.ts
   var handler = () => {
   };
@@ -1411,8 +1427,7 @@
   }
   var SUB_MAX_LEN = 2 * 1024 * 1024;
   function fetchSubText(url, cb) {
-    if (typeof GM_xmlhttpRequest !== "function") return cb(null, "无 GM_xmlhttpRequest");
-    GM_xmlhttpRequest({
+    const sent = gmRequest({
       method: "GET",
       url,
       timeout: 15e3,
@@ -1424,6 +1439,7 @@
       onerror: () => cb(null, "网络错误"),
       ontimeout: () => cb(null, "超时")
     });
+    if (!sent) cb(null, "无 GM_xmlhttpRequest");
   }
   function syncSubscription(url, cb) {
     fetchSubText(url, (text, err) => {
@@ -1485,7 +1501,12 @@
   }
 
   // src/comments.ts
-  var CMT_TAGS = COMMENT_TAGS;
+  function hostOf(root) {
+    return root.host;
+  }
+  function asCommentHost(el) {
+    return el && el.tagName && isCommentTag(el.tagName) ? el : null;
+  }
   function cmtCleanMsg(msg, isSub) {
     let s = (msg || "").toString();
     if (isSub) s = s.replace(/^回复\s?@[^@\s:：]+\s?[:：]/, "");
@@ -1506,9 +1527,9 @@
       message: (content.message || "") + "",
       members: Array.isArray(content.members) ? content.members : [],
       isUpTop: !!(d.reply_control && d.reply_control.is_up_top),
-      upMid: host.__upMid,
+      upMid: host ? host.__upMid : void 0,
       // B 站组件挂的视频 UP mid（可能缺，缺则 isUp 白名单不生效）
-      me: host.__user && host.__user.uname
+      me: host && host.__user ? host.__user.uname : void 0
       // 当前登录用户名（可能缺）
     };
   }
@@ -1524,7 +1545,7 @@
     if (cc.minLevel > 0 && c.level != null && c.level < cc.minLevel) return `评论等级<${cc.minLevel}`;
     if (cc.hideNoFace && c.noface) return "默认头像非会员";
     if (cc.hideBot && c.uname && COMMENT_BOTS.has(c.uname)) return "AI机器人";
-    if (cc.hideCallBot && c.members.some((m) => m && COMMENT_BOTS.has(m.uname))) return "召唤AI";
+    if (cc.hideCallBot && c.members.some((m) => !!(m && m.uname && COMMENT_BOTS.has(m.uname)))) return "召唤AI";
     if (cc.hideAd && COMMENT_AD_RE.test(c.message)) return "带货评论";
     if (cc.hideCallOnly && c.message.replace(/@[^@\s]+/g, " ").trim() === "") return "纯@评论";
     if (cc.hideEmojiOnly && clean.replace(EMOJI_RE, "").trim() === "") return "纯表情评论";
@@ -1600,8 +1621,8 @@
   });
   function revertComments() {
     for (const root of shadowRoots) {
-      const host = root && root.host;
-      if (!host || CMT_TAGS[host.tagName] === void 0) continue;
+      const host = hostOf(root);
+      if (!host || COMMENT_TAGS[host.tagName] === void 0) continue;
       if (host.__bfbCmtHit || host.__bfbCmtPh || host.style.display === "none" || host.style.outline) {
         removeCmtPlaceholder(host);
         host.style.removeProperty("display");
@@ -1621,13 +1642,13 @@
     }
     let cmtHosts = 0;
     for (const root of shadowRoots) {
-      const host = root && root.host;
+      const host = hostOf(root);
       if (!host) continue;
       if (!host.isConnected) {
         shadowRoots.delete(root);
         continue;
       }
-      const isSub = CMT_TAGS[host.tagName];
+      const isSub = COMMENT_TAGS[host.tagName];
       if (isSub === void 0) continue;
       cmtHosts++;
       processComment(host, isSub);
@@ -1736,11 +1757,7 @@
     apiPump();
   }
   function gmGet(url, cb) {
-    if (typeof GM_xmlhttpRequest !== "function") {
-      cb(null);
-      return;
-    }
-    GM_xmlhttpRequest({
+    const sent = gmRequest({
       method: "GET",
       url,
       withCredentials: true,
@@ -1757,6 +1774,7 @@
       onerror: () => cb(null),
       ontimeout: () => cb(null)
     });
+    if (!sent) cb(null);
   }
   function fetchView(bvid, cb) {
     if (!bvid) return cb(null);
@@ -1891,7 +1909,7 @@
     const info = extractCardInfo(card, M.needUid);
     if (!info.title && !info.up && !info.isLive) return;
     card.setAttribute(PROCESSED, "1");
-    card._bfbInfo = info;
+    cacheCardInfo(card, info);
     const hit = matchRule(info);
     if (!hit) log(() => `放行✅ | 标题:${info.title || "(无)"} | UP:${info.up || "(无)"} | 标签:${info.partition || "(无)"}`);
     if (hit) {
@@ -2065,6 +2083,7 @@
     "-352": "触发 B 站风控，请稍后再试",
     22120: "该用户已在你的黑名单中"
   };
+  var relErr = (code) => code == null ? "" : REL_ERR[String(code)] || "";
   function doBlacklist(uid, upName, cb, quiet) {
     const label = upName || uid;
     const addLocal = () => {
@@ -2079,7 +2098,7 @@
       cb && cb(false, -101);
       return;
     }
-    GM_xmlhttpRequest({
+    gmRequest({
       method: "POST",
       url: "https://api.bilibili.com/x/relation/modify",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -2102,7 +2121,7 @@
         if (!quiet) {
           if (code === 0) toast(`已拉黑并同步账号黑名单：${label}（刷新后不再推荐）`, "success", { label: "撤销", onClick: () => unblockUp(String(uid), upName) });
           else if (code === 22120) toast(`「${label}」此前已在账号黑名单，已本地同步`, "success");
-          else toast(`账号侧拉黑失败（${REL_ERR[code] || msg || "code " + code}），已本地屏蔽：${label}`, "warn");
+          else toast(`账号侧拉黑失败（${relErr(code) || msg || "code " + code}），已本地屏蔽：${label}`, "warn");
         }
         cb && cb(ok, code);
       },
@@ -2122,7 +2141,7 @@
       cb && cb(false, -101);
       return;
     }
-    GM_xmlhttpRequest({
+    gmRequest({
       method: "POST",
       url: "https://api.bilibili.com/x/relation/modify",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -2140,7 +2159,7 @@
         riskGuard.note(code);
         removeFromList(CONFIG.block.uids, String(uid));
         const ok = code === 0;
-        toast(ok ? `已撤销拉黑：${label}（刷新后恢复推荐）` : `账号侧撤销失败（${REL_ERR[code] || msg || "code " + code}），已移出本地屏蔽：${label}`, ok ? "success" : "warn");
+        toast(ok ? `已撤销拉黑：${label}（刷新后恢复推荐）` : `账号侧撤销失败（${relErr(code) || msg || "code " + code}），已移出本地屏蔽：${label}`, ok ? "success" : "warn");
         cb && cb(ok, code);
       },
       onerror: () => {
@@ -2192,7 +2211,7 @@
       }
       if (CONFIG.debug && failed.length) {
         const byCode = {};
-        failed.forEach((f) => byCode[f.code] = (byCode[f.code] || 0) + 1);
+        failed.forEach((f) => byCode[String(f.code)] = (byCode[String(f.code)] || 0) + 1);
         log("批量拉黑失败按 code 分布：", byCode, failed);
       }
       if (list.length) {
@@ -2396,6 +2415,9 @@
   }
 
   // src/ui/menu.ts
+  function elementOf(t) {
+    return t instanceof Element ? t : null;
+  }
   function confirmBlacklist(name) {
     return confirmModal(`确定拉黑「${name}」并写入账号黑名单？
 刷新后不再推荐、不可一键撤销（未登录则仅本地屏蔽）。`, {
@@ -2411,6 +2433,11 @@
       ctxMenuEl = null;
     }
   }
+  function selectedText() {
+    const s = window.getSelection && window.getSelection();
+    const t = s && s.toString().trim() || "";
+    return t.length <= 30 ? t : "";
+  }
   function onContextMenu(e) {
     if (!CONFIG.enabled || !CONFIG.rightClickBlock) return;
     if (CONFIG.comment.enabled) {
@@ -2418,8 +2445,8 @@
       if (cmtHost) {
         const c = readCmt(cmtHost);
         const citems = [];
-        const csel = window.getSelection && window.getSelection().toString().trim() || "";
-        if (csel && csel.length <= 30) {
+        const csel = selectedText();
+        if (csel) {
           citems.push({
             label: `🚫 评论含「${csel}」关键词`,
             act: () => {
@@ -2448,7 +2475,8 @@
         }
       }
     }
-    const card = e.target.closest(VIDEO_CARD_SELECTOR);
+    const target = elementOf(e.target);
+    const card = target && target.closest(VIDEO_CARD_SELECTOR);
     if (!card) return;
     const info = extractCardInfo(card, true);
     if (!info.up && !info.bvid) return;
@@ -2456,8 +2484,8 @@
     e.stopPropagation();
     closeCtxMenu();
     const items = [];
-    const sel = window.getSelection && window.getSelection().toString().trim() || "";
-    if (sel && sel.length <= 30) {
+    const sel = selectedText();
+    if (sel) {
       items.push({
         label: `🚫 屏蔽含「${sel}」关键词`,
         act: () => {
@@ -2468,19 +2496,20 @@
       });
     }
     if (info.up) {
+      const up = info.up;
       items.push({
-        label: `🚫 屏蔽 UP「${info.up}」`,
+        label: `🚫 屏蔽 UP「${up}」`,
         act: () => {
           if (info.uid) addToList(CONFIG.block.uids, info.uid);
-          else addToList(CONFIG.block.upNames, info.up);
-          toast(`已屏蔽 UP：${info.up}`);
+          else addToList(CONFIG.block.upNames, up);
+          toast(`已屏蔽 UP：${up}`);
           refreshPanelIfOpen();
         }
       });
       items.push({
-        label: `⛔ 拉黑 UP「${info.up}」（同步账号黑名单）`,
+        label: `⛔ 拉黑 UP「${up}」（同步账号黑名单）`,
         act: () => {
-          confirmBlacklist(info.up).then((ok) => {
+          confirmBlacklist(up).then((ok) => {
             if (ok) blacklistUp(info, refreshPanelIfOpen, card);
           });
         }
@@ -2488,18 +2517,19 @@
       items.push({
         label: `⭐ 加入白名单（永不屏蔽此 UP）`,
         act: () => {
-          addToList(CONFIG.allow.upNames, info.up);
-          toast(`已加入白名单：${info.up}`);
+          addToList(CONFIG.allow.upNames, up);
+          toast(`已加入白名单：${up}`);
           refreshPanelIfOpen();
         }
       });
     }
     if (info.bvid) {
+      const bvid = info.bvid;
       items.push({
-        label: `🚫 屏蔽此视频（${info.bvid}）`,
+        label: `🚫 屏蔽此视频（${bvid}）`,
         act: () => {
-          addToList(CONFIG.block.bvids, info.bvid);
-          toast(`已屏蔽视频：${info.bvid}`);
+          addToList(CONFIG.block.bvids, bvid);
+          toast(`已屏蔽视频：${bvid}`);
           refreshPanelIfOpen();
         }
       });
@@ -2534,8 +2564,9 @@
   }
   function findCommentHost(e) {
     const path = e.composedPath && e.composedPath() || [];
-    for (const el of path) {
-      if (el && el.tagName && CMT_TAGS[el.tagName] !== void 0) return el;
+    for (const node of path) {
+      const host = asCommentHost(elementOf(node));
+      if (host) return host;
     }
     return null;
   }
@@ -2545,56 +2576,62 @@
   var overlayRoot = null;
   function getOverlayRoot() {
     if (overlayRoot) return overlayRoot;
-    overlayHost = document.createElement("div");
-    overlayHost.id = "bfb-overlay-host";
-    overlayHost.style.cssText = "position:fixed;inset:0;z-index:100002;pointer-events:none;contain:layout style";
-    overlayRoot = overlayHost.attachShadow({ mode: "open" });
+    const host = document.createElement("div");
+    host.id = "bfb-overlay-host";
+    host.style.cssText = "position:fixed;inset:0;z-index:100002;pointer-events:none;contain:layout style";
+    const root = host.attachShadow({ mode: "open" });
     const st = document.createElement("style");
     st.textContent = ".blk{position:fixed;pointer-events:auto;background:rgba(251,114,153,.95);color:#fff;border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.28);font-family:system-ui,Arial;user-select:none;display:none}.blk:hover{background:#fb7299}.hidev{position:fixed;pointer-events:auto;background:rgba(45,45,52,.92);color:#fff;border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.28);font-family:system-ui,Arial;user-select:none;display:none}.hidev:hover{background:#2d2d34}";
-    overlayRoot.appendChild(st);
-    (document.documentElement || document.body).appendChild(overlayHost);
-    return overlayRoot;
+    root.appendChild(st);
+    (document.documentElement || document.body).appendChild(host);
+    overlayHost = host;
+    overlayRoot = root;
+    return root;
   }
-  var hoverBtn = null;
-  var hideVidBtn = null;
+  var hoverBtns = null;
   var hoverCard = null;
+  function hoverInfo(card) {
+    return cachedCardInfo(card) || extractCardInfo(card);
+  }
   function ensureHoverBtns() {
-    if (hoverBtn) return;
+    if (hoverBtns) return hoverBtns;
     const root = getOverlayRoot();
-    hoverBtn = document.createElement("div");
-    hoverBtn.className = "blk";
-    hoverBtn.textContent = "⛔ 拉黑";
-    hoverBtn.title = "拉黑该 UP（同步账号黑名单）";
-    hoverBtn.onclick = (e) => {
+    const blk = document.createElement("div");
+    blk.className = "blk";
+    blk.textContent = "⛔ 拉黑";
+    blk.title = "拉黑该 UP（同步账号黑名单）";
+    blk.onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      if (!hoverCard) return;
-      const info = hoverCard._bfbInfo || extractCardInfo(hoverCard);
-      if (!info.up && !info.bvid) {
+      const card = hoverCard;
+      if (!card) return;
+      const info = hoverInfo(card);
+      const label = info.up || info.bvid;
+      if (!label) {
         toast("该卡片信息不足，无法拉黑");
         return;
       }
-      confirmBlacklist(info.up || info.bvid).then((ok) => {
+      confirmBlacklist(label).then((ok) => {
         if (!ok) return;
-        blacklistUp(info, refreshPanelIfOpen, hoverCard);
+        blacklistUp(info, refreshPanelIfOpen, card);
         hideHoverBtn();
       });
     };
-    root.appendChild(hoverBtn);
-    hideVidBtn = document.createElement("div");
-    hideVidBtn.className = "hidev";
-    hideVidBtn.textContent = "🚫 不看这个";
-    hideVidBtn.title = "不再显示这个视频（按 BV 号屏蔽，刷新后仍隐藏，可在黑名单撤销）";
-    hideVidBtn.onclick = (e) => {
+    root.appendChild(blk);
+    const hidev = document.createElement("div");
+    hidev.className = "hidev";
+    hidev.textContent = "🚫 不看这个";
+    hidev.title = "不再显示这个视频（按 BV 号屏蔽，刷新后仍隐藏，可在黑名单撤销）";
+    hidev.onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();
       if (!hoverCard) return;
-      const info = hoverCard._bfbInfo || extractCardInfo(hoverCard);
-      if (!info.bvid) {
+      const info = hoverInfo(hoverCard);
+      const bvid = info.bvid;
+      if (!bvid) {
         toast("该卡片没有 BV 号，无法按视频隐藏", "warn");
         return;
       }
-      const bvid = info.bvid;
       if (addToList(CONFIG.block.bvids, bvid)) {
         toast(`已隐藏这个视频：${info.title || bvid}`, "success", { label: "撤销", onClick: () => removeFromList(CONFIG.block.bvids, bvid) });
       } else {
@@ -2603,32 +2640,36 @@
       refreshPanelIfOpen();
       hideHoverBtn();
     };
-    root.appendChild(hideVidBtn);
+    root.appendChild(hidev);
+    hoverBtns = { blk, hidev };
+    return hoverBtns;
   }
   function hideHoverBtn() {
-    if (hoverBtn) hoverBtn.style.display = "none";
-    if (hideVidBtn) hideVidBtn.style.display = "none";
+    if (hoverBtns) {
+      hoverBtns.blk.style.display = "none";
+      hoverBtns.hidev.style.display = "none";
+    }
     hoverCard = null;
   }
   function positionHoverBtn(card) {
     const r = card.getBoundingClientRect();
     if (r.width < 80 || r.height < 60) return hideHoverBtn();
-    ensureHoverBtns();
+    const { blk, hidev } = ensureHoverBtns();
     const left = Math.max(8, r.left + 8);
     const top = Math.max(8, r.top + 8);
-    hoverBtn.style.left = left + "px";
-    hoverBtn.style.top = top + "px";
-    hoverBtn.style.display = "block";
-    hideVidBtn.style.left = left + "px";
-    hideVidBtn.style.top = top + 30 + "px";
-    hideVidBtn.style.display = "block";
+    blk.style.left = left + "px";
+    blk.style.top = top + "px";
+    blk.style.display = "block";
+    hidev.style.left = left + "px";
+    hidev.style.top = top + 30 + "px";
+    hidev.style.display = "block";
     hoverCard = card;
   }
   function onCardHover(e) {
     if (!CONFIG.enabled || !CONFIG.cardHoverBtn) return;
-    const t = e.target;
-    if (t === overlayHost) return;
-    const card = t.closest && t.closest(VIDEO_CARD_SELECTOR);
+    const t = elementOf(e.target);
+    if (t && t === overlayHost) return;
+    const card = t && t.closest(VIDEO_CARD_SELECTOR);
     if (card) {
       if (card !== hoverCard) positionHoverBtn(card);
     } else {
@@ -2853,7 +2894,13 @@
     const sec = el("div", "sec field" + (o.isAllow ? " allow" : ""));
     const lab = el("label", "field-head");
     const collapsed = !!collapseState[o.label];
-    lab.innerHTML = `<span class="caret">${collapsed ? "▸" : "▾"}</span> <span class="lt">${o.label}</span> <span class="cnt">${model.count() || ""}</span>`;
+    const caret = el("span", "caret");
+    caret.textContent = collapsed ? "▸" : "▾";
+    const lt = el("span", "lt");
+    lt.textContent = o.label;
+    const cnt = el("span", "cnt");
+    cnt.textContent = String(model.count() || "");
+    lab.append(caret, " ", lt, " ", cnt);
     sec.appendChild(lab);
     const body = el("div", "field-body");
     body.style.display = collapsed ? "none" : "block";
@@ -2862,7 +2909,7 @@
       const now = body.style.display === "none";
       body.style.display = now ? "block" : "none";
       collapseState[o.label] = !now;
-      lab.querySelector(".caret").textContent = now ? "▾" : "▸";
+      caret.textContent = now ? "▾" : "▸";
     };
     const addrow = el("div", "addrow");
     const input = document.createElement("input");
@@ -2971,7 +3018,7 @@
       chips.innerHTML = "";
       const total = model.count();
       const list = visible();
-      lab.querySelector(".cnt").textContent = filtering() && total ? `${list.length}/${total}` : total || "";
+      cnt.textContent = filtering() && total ? `${list.length}/${total}` : String(total || "");
       search.style.display = total > LIST_SEARCH_MIN || filtering() ? "flex" : "none";
       if (!total) {
         const e = el("div", "empty");
@@ -3121,17 +3168,23 @@
   function bindControl(root, id, obj, key, opts = {}) {
     const el = root.querySelector("#" + id);
     if (!el) return;
-    if (el.type === "checkbox") el.checked = !!obj[key];
-    else el.value = obj[key] != null ? obj[key] : opts.number ? 0 : "";
+    const isCheck = el instanceof HTMLInputElement && el.type === "checkbox";
+    if (isCheck) el.checked = !!obj[key];
+    else el.value = obj[key] != null ? String(obj[key]) : opts.number ? "0" : "";
     el.onchange = () => {
       let v;
-      if (el.type === "checkbox") v = el.checked;
+      if (isCheck) v = el.checked;
       else if (opts.number) v = (opts.int ? parseInt(el.value, 10) : parseFloat(el.value)) || 0;
       else v = el.value;
       obj[key] = v;
       saveConfig();
       if (opts.after) opts.after();
     };
+  }
+  function listOf(obj, key) {
+    const v = key ? obj[key] : void 0;
+    if (!Array.isArray(v)) throw new Error("[bfb] 字段描述表的 key 不是名单数组: " + key);
+    return v;
   }
   function renderFields(host, defs) {
     defs.forEach((f) => {
@@ -3145,7 +3198,7 @@
         });
         return;
       }
-      const arr = (f.scope === "allow" ? CONFIG.allow : CONFIG.block)[f.key];
+      const arr = listOf(f.scope === "allow" ? CONFIG.allow : CONFIG.block, f.key);
       renderListField(host, {
         label: f.label,
         hint: f.hint,
@@ -3600,9 +3653,8 @@
           const url = (input || "").trim();
           if (!url) return;
           if (!/^https?:\/\//i.test(url)) return toast("请输入有效的 http(s) URL", "warn");
-          if (typeof GM_xmlhttpRequest !== "function") return toast("当前环境不支持联网载入", "warn");
           toast("载入中…");
-          GM_xmlhttpRequest({
+          const sent = gmRequest({
             method: "GET",
             url,
             timeout: 15e3,
@@ -3615,6 +3667,7 @@
             onerror: () => toast("网络错误，载入失败", "error"),
             ontimeout: () => toast("载入超时", "error")
           });
+          if (!sent) toast("当前环境不支持联网载入", "warn");
         });
       };
       q(listSec, "#bfb-list-hide").onclick = () => {
@@ -3654,8 +3707,11 @@
               resetButtons();
               const failUids = r.failed.map((f) => f.uid);
               const byCode = {};
-              r.failed.forEach((f) => byCode[f.code] = (byCode[f.code] || 0) + 1);
-              const failBreak = Object.entries(byCode).map(([c, n]) => `${REL_ERR[c] || "code " + c}×${n}`).join("、");
+              r.failed.forEach((f) => {
+                const k = f.code == null ? "网络错误" : String(f.code);
+                byCode[k] = (byCode[k] || 0) + 1;
+              });
+              const failBreak = Object.entries(byCode).map(([c, n]) => `${REL_ERR[c] || (c === "网络错误" ? c : "code " + c)}×${n}`).join("、");
               const head = r.cancelled ? `⏹ 已停止（已处理 ${r.done}/${r.total}）：` : `✅ 完成（共 ${r.total}）：`;
               listStatus.innerHTML = `${head}<b>新拉黑 ${r.added}</b>` + (r.already ? ` · 此前已在黑名单 ${r.already}` : "") + (failUids.length ? ` · <b style="color:#e74c3c">失败 ${failUids.length}</b>（${escapeHtml(failBreak)}；已回填可重试）` : "") + (nLocal ? ` · 另本地屏蔽 ${nLocal} 名称` : "") + `<br><span style="color:#888">官方黑名单本次新增 = 新拉黑 ${r.added} 个（“已在黑名单”的不会再叠加；如仍对不上，多为风控/已满，开调试模式看控制台 code 明细）</span>`;
               const remain = r.cancelled ? uids.slice(r.done) : [];
@@ -4214,7 +4270,8 @@ ${r.line}`, {
     return !!(p && p.classList.contains("open"));
   }
   function buildPanel() {
-    if (panelEl()) return;
+    const exist = panelEl();
+    if (exist) return exist;
     const p = document.createElement("div");
     p.id = "bfb-panel";
     p.tabIndex = -1;
@@ -4222,7 +4279,8 @@ ${r.line}`, {
     p.setAttribute("aria-label", "biliHoyoFairy 设置");
     ["keydown", "keypress", "keyup", "input"].forEach((ev) => {
       p.addEventListener(ev, (e) => {
-        if (e.target && e.target.matches && e.target.matches("input, textarea, select")) e.stopPropagation();
+        const t = e.target;
+        if (t instanceof Element && t.matches("input, textarea, select")) e.stopPropagation();
       });
     });
     document.addEventListener(
@@ -4235,7 +4293,7 @@ ${r.line}`, {
       true
     );
     document.body.appendChild(p);
-    renderPanel(p);
+    return p;
   }
   function renderPanel(p) {
     p.innerHTML = "";
@@ -4243,7 +4301,7 @@ ${r.line}`, {
     const h2 = document.createElement("h2");
     h2.innerHTML = `🛡 biliHoyoFairy · 抗击黑潮 <small style="font-weight:normal;opacity:.6;font-size:12px">v${VERSION} · ${pageType()}</small> <span class="x" role="button" tabindex="0" aria-label="关闭设置面板">✕</span>`;
     p.appendChild(h2);
-    const xBtn = h2.querySelector(".x");
+    const xBtn = q(h2, ".x");
     xBtn.onclick = closePanel;
     xBtn.onkeydown = (e) => {
       if (e.key === "Enter" || e.key === " ") {
@@ -4296,9 +4354,8 @@ ${r.line}`, {
     }
   }
   function openPanel2() {
-    lastFocus = document.activeElement;
-    buildPanel();
-    const p = panelEl();
+    lastFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const p = buildPanel();
     renderPanel(p);
     p.classList.add("open");
     try {
@@ -4309,7 +4366,7 @@ ${r.line}`, {
   function closePanel() {
     const p = panelEl();
     if (p) p.classList.remove("open");
-    if (lastFocus && lastFocus.focus) {
+    if (lastFocus) {
       try {
         lastFocus.focus();
       } catch (e) {
@@ -4318,8 +4375,9 @@ ${r.line}`, {
     lastFocus = null;
   }
   function refreshPanelIfOpen2() {
-    if (!isPanelOpen()) return;
-    renderPanel(panelEl());
+    const p = panelEl();
+    if (!p || !p.classList.contains("open")) return;
+    renderPanel(p);
   }
   function refreshStatsIfOpen() {
     if (hasStatsRefresh() && isPanelOpen()) runStatsRefresh();
@@ -4339,13 +4397,13 @@ ${r.line}`, {
     });
     setRulesChangedHandler(() => rescanAfterRuleChange());
     function installShadowHook() {
-      if (Element.prototype.attachShadow.__bfb) return;
       const orig = Element.prototype.attachShadow;
+      if (orig.__bfb) return;
       const wrapped = function(init) {
         const root = orig.call(this, init);
         try {
           shadowRoots.add(root);
-          if (CMT_TAGS[this.tagName] !== void 0) scheduleCommentScan();
+          if (isCommentTag(this.tagName)) scheduleCommentScan();
         } catch (e) {
           logErr("attachShadow.hook", e);
         }

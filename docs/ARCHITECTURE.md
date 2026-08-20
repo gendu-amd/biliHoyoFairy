@@ -33,6 +33,7 @@ src/
 ├─ events.ts            规则变更事件 seam（onRulesChanged）——打断 dom↔rules 环
 ├─ presets.ts           预置规则库数据（PRESET_LIBRARY）
 ├─ shadow.ts            开放 shadowRoot 注册表（评论/卡片穿透用）
+├─ gm.ts                GM_xmlhttpRequest 的唯一出口（补 withCredentials 类型；环境不支持时返回 false）
 ├─ batch.ts             名单批量解析 parseNameList（粘贴的 UID/UP名 → 两组）
 ├─ match/normalize.ts   文本归一 + 规则行编译 + 作用域关键词 + splitRuleInput（fuzzy 注入）
 ├─ subscriptions/parse.ts  订阅文本解析（JSON / uBlock 文本双格式）
@@ -55,7 +56,7 @@ src/
 │  ── L4~L5 领域 / DOM ──
 ├─ rules.ts             规则增删统一入口 addToList/removeFromList/pushUnique（改完发 events）
 ├─ subscriptions/refresh.ts  订阅刷新（联网拉取→解析→写缓存→发 events）
-├─ comments.ts          评论区过滤（读评论组件 .__data，折叠/隐藏）
+├─ comments.ts          评论区过滤：readCmt/matchComment（纯判定，可单测）+ 折叠/隐藏（DOM）
 ├─ dom.ts               DOM 兜底层：扫描/隐藏/审查标记/按需联网评估 + rescanAfterRuleChange（扫描**什么**）
 ├─ scanner.ts           ★扫描调度：document-start 起观察器 + 分阶段合批策略（扫描**何时**）
 ├─ rulehealth.ts        规则体检：规则集 × 持久化命中计数 → 过宽的 / 从没命中的（判死规则的三条自我约束见文件头）
@@ -82,7 +83,7 @@ src/
 每条 import 都指向**更低层**；UI 永远不被低层直接 import（靠注入 seam 回调）。
 
 ```
-L0 叶子   constants · util · page · selectors · events · presets · shadow · batch
+L0 叶子   constants · util · page · selectors · events · presets · shadow · batch · gm
           match/normalize · subscriptions/parse · ui/hooks · ui/panel.styles · ui/confirm
 L1        config
 L2        logging · health · cardinfo · hotsearch
@@ -96,7 +97,7 @@ L8        ui/panel/（index → sections/* → ctx）
 L9        main（bootstrap，装配一切）
 ```
 
-**为什么无环**：原本 `dom↔rules`、`stats→面板`、`toast→面板`、`cardinfo→config`、`normalize→config` 都会成环。统统用「注入 seam」断开（见 §4）。`eslint` 的 `no-undef` 是安全网：抽模块时漏 import 会变成 lint 报错而非运行时崩。
+**为什么无环**：原本 `dom↔rules`、`stats→面板`、`toast→面板`、`cardinfo→config`、`normalize→config` 都会成环。统统用「注入 seam」断开（见 §4）。安全网是 `tsc --noEmit`（`src/` 全量类型化后，抽模块时漏 import 会变成编译错误而非运行时崩）。
 
 ---
 
@@ -173,10 +174,14 @@ L9        main（bootstrap，装配一切）
 
 ## 7. 类型现状
 
-- **强类型（无 `@ts-nocheck`）**：50 个模块中的 43 个——核心/纯逻辑层全部（`constants/util/page/selectors/events/presets/batch/shadow/config/logging/health/rulehealth/cardinfo/hotsearch/stats/api/rules/net/scanner/match·{normalize,engine}/subscriptions·{parse,store,refresh}`），以及 **`ui/panel/` 全部**（`ctx` + `sections/*` 14 个分区）与 `ui/{hooks,toast,confirm,panel.styles}`。改这些会受完整类型检查。
-- **`@ts-nocheck`（渐进类型化）**：剩 7 个 DOM/effect 密集模块——`dom`、`comments`(.__data)、`blacklist`(GM POST)、`ui/{menu,field}`、`ui/panel/index`、`main`。这些仍受 `eslint no-undef` 兜底（漏 import = 报错）。
-- 分区取元素一律走 `ctx.ts` 的 `q<T>(root, sel)`：面板 HTML 是静态模板，取不到 = 模板与代码不同步的编程错误，直接抛比 `if (!el) return` 更早暴露。它也是 `sections/*` 得以去掉 `@ts-nocheck` 的主要杠杆（省去约 150 处非空断言）。
-- 下一块该啃的是 `blacklist.ts`：`batch-block.ts` / `name-list.ts` 里那几个本地 `BlockResult` / `BlockProgress` 接口是它未类型化的临时替身，等它有了真类型就该删。
+- **`src/` 已全量类型化**：`@ts-nocheck` 为 0，`tsconfig` 开 `strict`。新文件默认受检；`ban-ts-comment` 现在会拦住新增的 `@ts-nocheck`（想整文件关检查得先改 lint 配置，这是有意的摩擦）。
+- 与之对应，eslint 里那条给未类型化模块兜底的 `no-undef`（以及 `UNTYPED_FILES` 名单）已删除：同一类错误由 tsc 覆盖，而 `no-undef` 不区分类型位置与值位置，会把 `ParentNode` / `HTMLElementTagNameMap` / `Tampermonkey` 这些只存在于类型世界的名字误报成未定义。
+- 几个「一次性收敛」的点，新增代码请沿用而不是各写各的断言：
+  - `ui/panel/ctx.ts` 的 `q<T>(root, sel)`：面板 HTML 是静态模板，取不到 = 模板与代码不同步的编程错误，直接抛比 `if (!el) return` 更早暴露（省去约 150 处非空断言，也是 `sections/*` 去掉 `@ts-nocheck` 的主要杠杆）。
+  - `gm.ts` 的 `gmRequest()`：唯一的 `GM_xmlhttpRequest` 出口，补上 `withCredentials`（`@types/tampermonkey` 缺）并在环境不支持时返回 `false`——不要再在调用点写 `as any`，那会把整个请求对象的检查一起丢掉。
+  - 元素上的附加字段集中声明：卡片走 `cardinfo.ts` 的 `cacheCardInfo/cachedCardInfo`，评论宿主走 `comments.ts` 的 `CommentHost` 接口 + `asCommentHost()`（`Element → CommentHost` 的唯一收窄点）。
+  - 事件 target 的收窄用运行期 `instanceof Element`（`ui/menu.ts` 的 `elementOf`），不要 `as Element`。
+- 判定与呈现分开导出：`comments.ts` 的 `readCmt` / `matchComment` 是纯函数，可在无 jsdom 的 node 环境单测（`tests/comments.test.ts`）；折叠/隐藏那半不测。新写规则类逻辑请照此切分。
 
 ---
 
@@ -186,7 +191,7 @@ L9        main（bootstrap，装配一切）
 npm install
 npm run build      # esbuild 打包 src/ → 仓库根 biliHoyoFairy.user.js（产物，勿手改）
 npm run typecheck  # tsc --noEmit
-npm run lint       # eslint（含 no-undef 安全网）
+npm run lint       # eslint
 npm test           # vitest 纯逻辑单测
 ```
 

@@ -1,11 +1,11 @@
-// @ts-nocheck
 // 设置面板：外壳（Tab 条 + 分组容器 + 打开/关闭/重渲）+ 分区注册表。
 //
 // 这里只负责「骨架」与「顺序」，每个分区的内容都在 ./sections/*。想加一个新分区，
 // 写一个 { tab, render(host, ctx) } 模块并加进下面的 SECTIONS 数组即可，不必再动这个文件的其它部分。
 import { VERSION } from '../../constants';
 import { pageType } from '../../page';
-import { setStatsRefresh, runStatsRefresh, hasStatsRefresh } from './ctx';
+import { setStatsRefresh, runStatsRefresh, hasStatsRefresh, q } from './ctx';
+import type { PanelCtx, PanelGroups, PanelSection } from './ctx';
 import '../panel.styles';
 
 import { baseSection } from './sections/base';
@@ -24,7 +24,7 @@ import { ruleHealthSection } from './sections/rule-health';
 import { logSection } from './sections/log';
 
 // 顶部分组 Tab：把杂乱的长列表归类成「基础 / 黑名单 / 进阶 / 评论 / 白名单 / 工具」
-const PANEL_TABS = [
+const PANEL_TABS: [id: string, label: string, tip: string][] = [
   ['base', '⚙ 基础', '常规开关与卡片类型过滤'],
   ['black', '🚫 黑名单', '按标题、UP 主、分区屏蔽，即时生效；以 /.../ 包裹表示正则（如 /震惊.*竟然/），否则为关键词包含匹配（不区分大小写）'],
   ['api', '🛰 进阶', '按播放量、时长，以及标签、数据等维度精细过滤（标签类维度需开启下方「精确过滤」）'],
@@ -34,7 +34,7 @@ const PANEL_TABS = [
 ];
 
 // 分区注册表：**数组顺序即面板内的显示顺序**（按 tab 分流后依次 render）。
-const SECTIONS = [
+const SECTIONS: PanelSection[] = [
   baseSection,
   blackListsSection,
   advancedSection,
@@ -54,18 +54,20 @@ const SECTIONS = [
 ];
 
 let activeTab = 'base'; // 记住当前激活的 Tab（重渲时保留）
-let lastFocus = null; // 打开面板前的焦点，关闭时归还（键盘可达性）
+let lastFocus: HTMLElement | null = null; // 打开面板前的焦点，关闭时归还（键盘可达性）
 
-function panelEl() {
+function panelEl(): HTMLElement | null {
   return document.getElementById('bfb-panel');
 }
-function isPanelOpen() {
+function isPanelOpen(): boolean {
   const p = panelEl();
   return !!(p && p.classList.contains('open'));
 }
 
-function buildPanel() {
-  if (panelEl()) return;
+// 建壳（只建一次，不渲内容）。返回面板根节点，让调用方不必再 getElementById 一遍去处理「理论上的 null」。
+function buildPanel(): HTMLElement {
+  const exist = panelEl();
+  if (exist) return exist;
   const p = document.createElement('div');
   p.id = 'bfb-panel';
   p.tabIndex = -1; // 可编程聚焦：打开时把焦点移入面板，便于键盘操作
@@ -73,8 +75,9 @@ function buildPanel() {
   p.setAttribute('aria-label', 'biliHoyoFairy 设置');
   // 拦住面板输入框的键盘事件，别冒泡到 B 站全局「按键即搜索」快捷键
   ['keydown', 'keypress', 'keyup', 'input'].forEach((ev) => {
-    p.addEventListener(ev, (e) => {
-      if (e.target && e.target.matches && e.target.matches('input, textarea, select')) e.stopPropagation();
+    p.addEventListener(ev, (e: Event) => {
+      const t = e.target;
+      if (t instanceof Element && t.matches('input, textarea, select')) e.stopPropagation();
     });
   });
   // Esc 关闭面板；若此刻有确认弹窗，则让弹窗先吃掉 Esc（弹窗自带 Esc=取消）。
@@ -88,18 +91,18 @@ function buildPanel() {
     true
   );
   document.body.appendChild(p);
-  renderPanel(p);
+  return p;
 }
 
-function renderPanel(p) {
+function renderPanel(p: HTMLElement) {
   p.innerHTML = '';
   setStatsRefresh(null); // 旧的刷新器指向已销毁的节点，log section 会在下面重新注册
   const h2 = document.createElement('h2');
   h2.innerHTML = `🛡 biliHoyoFairy · 抗击黑潮 <small style="font-weight:normal;opacity:.6;font-size:12px">v${VERSION} · ${pageType()}</small> <span class="x" role="button" tabindex="0" aria-label="关闭设置面板">✕</span>`;
   p.appendChild(h2);
-  const xBtn = h2.querySelector('.x');
+  const xBtn = q(h2, '.x');
   xBtn.onclick = closePanel;
-  xBtn.onkeydown = (e) => {
+  xBtn.onkeydown = (e: KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       closePanel();
@@ -111,7 +114,7 @@ function renderPanel(p) {
   tabBar.className = 'tabs';
   p.appendChild(tabBar);
   if (!PANEL_TABS.some(([id]) => id === activeTab)) activeTab = 'base';
-  const groups = {};
+  const groups: PanelGroups = {};
   PANEL_TABS.forEach(([id, label, tip]) => {
     const tb = document.createElement('button');
     tb.className = 'tab' + (id === activeTab ? ' active' : '');
@@ -135,7 +138,7 @@ function renderPanel(p) {
     };
   });
 
-  const ctx = {
+  const ctx: PanelCtx = {
     panel: p,
     groups,
     // 重渲整个面板并保持打开状态（分区改了会影响别处展示时用）
@@ -154,10 +157,10 @@ function renderPanel(p) {
   }
 }
 
-export function openPanel() {
-  lastFocus = document.activeElement;
-  buildPanel();
-  const p = panelEl();
+export function openPanel(): void {
+  // 只记住真正能收回焦点的元素（activeElement 静态类型只到 Element，SVG/自定义元素上没有 focus）
+  lastFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const p = buildPanel();
   renderPanel(p);
   p.classList.add('open');
   try {
@@ -167,18 +170,19 @@ export function openPanel() {
 function closePanel() {
   const p = panelEl();
   if (p) p.classList.remove('open');
-  if (lastFocus && lastFocus.focus) {
+  if (lastFocus) {
     try {
       lastFocus.focus();
     } catch (e) {}
   }
   lastFocus = null;
 }
-export function refreshPanelIfOpen() {
-  if (!isPanelOpen()) return;
-  renderPanel(panelEl());
+export function refreshPanelIfOpen(): void {
+  const p = panelEl();
+  if (!p || !p.classList.contains('open')) return;
+  renderPanel(p);
 }
 // 命中记账后由 stats 监听器调用：面板打开时刷新「屏蔽记录」计数（角标更新在 main 里另做）。
-export function refreshStatsIfOpen() {
+export function refreshStatsIfOpen(): void {
   if (hasStatsRefresh() && isPanelOpen()) runStatsRefresh();
 }

@@ -2,38 +2,16 @@
 // 归到「导入/导出」一族，注册顺序紧跟 io section。
 import { CONFIG, saveConfig } from '../../../config';
 import { doBlacklistMany, REL_ERR } from '../../../blacklist';
+import type { BlockResult, BlockProgress } from '../../../blacklist';
 import { rescanAfterRuleChange } from '../../../dom';
 import { pushUnique } from '../../../rules';
 import { parseNameList } from '../../../batch';
 import { escapeHtml } from '../../../util';
 import { toast } from '../../toast';
 import { confirmModal, promptModal } from '../../confirm';
+import { gmRequest } from '../../../gm';
 import { q } from '../ctx';
 import type { PanelSection } from '../ctx';
-
-// blacklist.ts 尚未类型化（渐进推进中），就地声明其批量接口的出入参形状，
-// 让本文件内的用法先受检；等 blacklist.ts 去掉 @ts-nocheck 后可直接删。
-interface BlockFail {
-  uid: string;
-  code: number | string;
-}
-interface BlockResult {
-  added: number;
-  already: number;
-  total: number;
-  done: number;
-  cancelled?: boolean;
-  failed: BlockFail[];
-}
-interface BlockProgress {
-  done: number;
-  total: number;
-  added: number;
-  already: number;
-  fail: number;
-  paused?: boolean;
-  wait?: number;
-}
 
 export const nameListSection: PanelSection = {
   tab: 'tools',
@@ -91,9 +69,8 @@ export const nameListSection: PanelSection = {
         const url = (input || '').trim();
         if (!url) return;
         if (!/^https?:\/\//i.test(url)) return toast('请输入有效的 http(s) URL', 'warn');
-        if (typeof GM_xmlhttpRequest !== 'function') return toast('当前环境不支持联网载入', 'warn');
         toast('载入中…');
-        GM_xmlhttpRequest({
+        const sent = gmRequest({
           method: 'GET',
           url,
           timeout: 15000,
@@ -106,6 +83,7 @@ export const nameListSection: PanelSection = {
           onerror: () => toast('网络错误，载入失败', 'error'),
           ontimeout: () => toast('载入超时', 'error'),
         });
+        if (!sent) toast('当前环境不支持联网载入', 'warn');
       });
     };
 
@@ -149,9 +127,14 @@ export const nameListSection: PanelSection = {
             // 如实拆分：新拉黑(code0) / 此前已在黑名单(22120) / 失败(各 code)。失败 + 未处理(停止时) 回填输入框便于续传/重试。
             const failUids = r.failed.map((f) => f.uid);
             const byCode: Record<string, number> = {};
-            r.failed.forEach((f) => (byCode[f.code] = (byCode[f.code] || 0) + 1));
+            // code 为 null = 网络层就没发出去/没回来（拿不到业务码）。类型化后才发现这条分支
+            // 原来会渲染成「code null×3」——对用户毫无信息量。
+            r.failed.forEach((f) => {
+              const k = f.code == null ? '网络错误' : String(f.code);
+              byCode[k] = (byCode[k] || 0) + 1;
+            });
             const failBreak = Object.entries(byCode)
-              .map(([c, n]) => `${(REL_ERR as Record<string, string>)[c] || 'code ' + c}×${n}`)
+              .map(([c, n]) => `${REL_ERR[c] || (c === '网络错误' ? c : 'code ' + c)}×${n}`)
               .join('、');
             const head = r.cancelled ? `⏹ 已停止（已处理 ${r.done}/${r.total}）：` : `✅ 完成（共 ${r.total}）：`;
             listStatus.innerHTML =

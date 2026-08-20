@@ -25,7 +25,7 @@ Fork → 新建分支(feat/xxx 或 fix/xxx) → 改 src/ → npm run build/typec
 1. 克隆你的 fork：`git clone git@github.com:<you>/biliHoyoFairy.git`，然后 `npm install`。
 2. **改 `src/` 下的模块**（不要手改根目录的 `biliHoyoFairy.user.js`，它是构建产物）。不知道改哪个文件？查 [ARCHITECTURE](docs/ARCHITECTURE.md) §6「我要改 X 去哪」。
 3. 本地校验（CI 同款）：
-   - `npm run build` 打包到根产物 · `npm run typecheck` · `npm run lint`（含 no-undef 安全网）· `npm test`（vitest 纯逻辑单测）
+   - `npm run build` 打包到根产物 · `npm run typecheck`（漏 import / 类型错在此拦下）· `npm run lint`· `npm test`（vitest 纯逻辑单测）
 4. 把构建出的 `biliHoyoFairy.user.js` 粘进 Tampermonkey 测试（步骤见 [docs/review/SMOKE-TEST.md](docs/review/SMOKE-TEST.md)）；开「调试模式」对照控制台 `[biliHoyoFairy]` 日志，确认**无破版、无黑洞空位、无报错**。
 
 ### 代码约定

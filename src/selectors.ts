@@ -87,7 +87,14 @@ export const HOTSEARCH_SELECTORS = [
 ];
 
 // —— 评论区 Web Component 标签名 —— 值 = 是否为楼中楼（影响“回复 @x:”前缀的剥离）。
-export const COMMENT_TAGS: Record<string, boolean> = {
+// 值域写成 boolean | undefined 而非 boolean：查表用的是任意元素的 tagName，「查不到」是常态而非异常，
+// 调用方正是靠 undefined 区分「不是评论宿主」与「是一级评论(false)」。
+export const COMMENT_TAGS: Record<string, boolean | undefined> = {
   'BILI-COMMENT-THREAD-RENDERER': false,
   'BILI-COMMENT-REPLY-RENDERER': true,
 };
+
+/** 该标签是评论宿主吗（含一级与楼中楼）。tagName 是大写的。 */
+export function isCommentTag(tagName: string): boolean {
+  return COMMENT_TAGS[tagName] !== undefined;
+}

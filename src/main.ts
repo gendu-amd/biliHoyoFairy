@@ -1,7 +1,6 @@
-// @ts-nocheck
 // 入口 bootstrap：在 document-start 安装拦截层 + shadow 钩子，文档就绪后启动 DOM 兜底/评论扫描，
 // 接线各模块的注入 seam（面板回调 / stats 监听 / 规则变更 / 卡片检测开关），注册菜单命令与 MutationObserver。
-// 业务逻辑全部在各 src 模块；本文件只负责装配。仍保留 @ts-nocheck（事件 glue，渐进类型化），但受 eslint(no-undef) 约束。
+// 业务逻辑全部在各 src 模块；本文件只负责装配。
 // bootstrap 只依赖各模块的「入口/接线」符号；其余模块经依赖图传递性加载（无需在此直接 import）。
 import { VERSION, BLACKLIST_MANAGE_URL, STARTUP_SUMMARY_MS } from './constants';
 import { CONFIG, saveConfig } from './config';
@@ -16,7 +15,8 @@ import { updateBadge, toast } from './ui/toast';
 import { setPanelHooks } from './ui/hooks';
 import { refreshSubscriptions } from './subscriptions/refresh';
 import { setRulesChangedHandler } from './events';
-import { CMT_TAGS, scanComments, scheduleCommentScan } from './comments';
+import { scanComments, scheduleCommentScan } from './comments';
+import { isCommentTag } from './selectors';
 import { applyHotSearchStyle } from './hotsearch';
 import { scanAll, rescanAfterRuleChange } from './dom';
 import { startScanner } from './scanner';
@@ -55,14 +55,17 @@ import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
   /* ===================== 2. shadow 钩子（依赖 comments/shadow，故留在 bootstrap） ===================== */
   // hook Element.prototype.attachShadow：把页面创建的每个开放 shadowRoot 收进注册表（评论组件定位、卡片穿透共用）。
   // 必须在 document-start 安装，先于 B 站构建评论 Web Component。借鉴 bilibili-cleaner Shadow.hook。
+  // 打过的补丁带个标记：脚本被装两遍（TM 与油猴脚本管理器共存、SPA 重入）时不会把自己套娃 hook。
+  type AttachShadow = (this: Element, init: ShadowRootInit) => ShadowRoot;
+  type MarkedAttachShadow = AttachShadow & { __bfb?: boolean };
   function installShadowHook() {
-    if (Element.prototype.attachShadow.__bfb) return;
-    const orig = Element.prototype.attachShadow;
-    const wrapped = function (init) {
+    const orig = Element.prototype.attachShadow as MarkedAttachShadow;
+    if (orig.__bfb) return;
+    const wrapped: MarkedAttachShadow = function (this: Element, init: ShadowRootInit): ShadowRoot {
       const root = orig.call(this, init);
       try {
         shadowRoots.add(root);
-        if (CMT_TAGS[this.tagName] !== undefined) scheduleCommentScan();
+        if (isCommentTag(this.tagName)) scheduleCommentScan();
       } catch (e) {
         logErr('attachShadow.hook', e); // 记录但不吞掉原生行为：下面照常返回 root
       }

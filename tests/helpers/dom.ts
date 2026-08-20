@@ -89,6 +89,11 @@ export class El {
     return c;
   }
 
+  /** 真 DOM 里 HTML 元素的 tagName 是大写的；按标签名查表的代码（评论宿主判定）依赖这一点。 */
+  get tagName(): string {
+    return this.tag.toUpperCase();
+  }
+
   getAttribute(n: string): string | null {
     return n in this.attrs ? this.attrs[n] : null;
   }

@@ -1,5 +1,6 @@
 // 接口层：缓存 + 小并发限速队列 + 风控熔断。API 取数与批量拉黑共用。
 import { RISK_CODES } from './constants';
+import { gmRequest } from './gm';
 import { CONFIG, scheduleSave, setUidName } from './config';
 import { capMapSet } from './util';
 import { logErr } from './logging';
@@ -81,13 +82,8 @@ function apiEnqueue(task: (done: () => void) => void): void {
 }
 
 function gmGet(url: string, cb: ApiCb): void {
-  if (typeof GM_xmlhttpRequest !== 'function') {
-    cb(null);
-    return;
-  }
-  // withCredentials 不在 @types/tampermonkey 的 Request 类型里，但运行期 TM 接受（携带 Cookie）；
-  // 为保持与 v0.0.5 完全一致，保留该字段并对详情对象做一次宽松断言。
-  GM_xmlhttpRequest({
+  // withCredentials（携带 Cookie）由 gm.ts 的类型垫片补上；环境没有 GM_xmlhttpRequest 时它返回 false。
+  const sent = gmRequest({
     method: 'GET',
     url,
     withCredentials: true,
@@ -103,7 +99,8 @@ function gmGet(url: string, cb: ApiCb): void {
     },
     onerror: () => cb(null),
     ontimeout: () => cb(null),
-  } as any);
+  });
+  if (!sent) cb(null);
 }
 
 export function fetchView(bvid: string, cb: ApiCb): void {

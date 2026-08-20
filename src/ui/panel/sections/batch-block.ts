@@ -2,6 +2,7 @@
 import { CONFIG } from '../../../config';
 import { ATTR_BLOCKED } from '../../../constants';
 import { doBlacklistMany } from '../../../blacklist';
+import type { BlockTarget, BlockResult, BlockProgress } from '../../../blacklist';
 import { extractCardInfo } from '../../../cardinfo';
 import { fetchView, cachedUid } from '../../../api';
 import { toast } from '../../toast';
@@ -9,24 +10,6 @@ import { confirmModal } from '../../confirm';
 import { refreshPanelIfOpen } from '../../hooks';
 import { q } from '../ctx';
 import type { PanelSection } from '../ctx';
-
-// blacklist.ts 尚未类型化（DOM/网络 glue，渐进推进中），这里就地声明它的出入参形状，
-// 至少让本文件内的用法受检；等 blacklist.ts 去掉 @ts-nocheck 后这些可以直接删掉。
-interface BlockTarget {
-  uid: string;
-  name: string;
-}
-interface BlockResult {
-  added: number;
-  already: number;
-  failed: unknown[];
-}
-interface BlockProgress {
-  done: number;
-  total: number;
-  paused?: boolean;
-  wait?: number;
-}
 
 export const batchBlockSection: PanelSection = {
   tab: 'tools',
