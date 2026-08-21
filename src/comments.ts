@@ -74,6 +74,9 @@ function cmtCleanMsg(msg: unknown, isSub: boolean): string {
   return s.replace(/@[^@\s]+/g, ' ').replace(/(\[[^[\]]+\])+/g, ' ').trim();
 }
 // 去表情后是否为空（纯表情/纯 @）
+// 这里就是要按**码点**逐个剔除表情的组成部分（ZWJ、肤色/变体选择符、keycap），
+// 组合出来的整串（如 👨‍👩‍👦）被拆成零件删掉正是想要的效果，故定点豁免该规则。
+// eslint-disable-next-line no-misleading-character-class
 const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{1F1E6}-\u{1F1FF}\u200d\u{20E3}]/gu;
 
 export function readCmt(host: CommentHost | null | undefined): CmtInfo {
@@ -157,7 +160,9 @@ function removeCmtPlaceholder(host: CommentHost) {
   if (host.__bfbCmtPh) {
     try {
       host.__bfbCmtPh.remove();
-    } catch (e) {}
+    } catch (e) {
+      /* 占位条已被 B 站的重渲染摘走：引用置空即可，下次命中会重新插一个 */
+    }
     host.__bfbCmtPh = null;
   }
 }

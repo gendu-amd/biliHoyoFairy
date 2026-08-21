@@ -195,7 +195,9 @@ export function installNetworkHooks(): void {
     const origOpen = XHR.prototype.open;
     const dText = Object.getOwnPropertyDescriptor(XHR.prototype, 'responseText');
     const dResp = Object.getOwnPropertyDescriptor(XHR.prototype, 'response');
-    XHR.prototype.open = function (this: any, method: string, url: string) {
+    // async/user/password 照原样透传：签名写全，既不必再摸 arguments，也让「透传」这件事看得见。
+    XHR.prototype.open = function (this: any, method: string, url: string, async = true, user?: string | null, password?: string | null) {
+      // eslint-disable-next-line @typescript-eslint/no-this-alias -- 下面 defineProperty 的 getter 有自己的 this，必须在这里捕获实例
       const self = this;
       // ⚠ XHR 实例是可复用的（同一个对象可以连续 open 多次）。上一轮装的惰性 getter 与文本 memo
       // 若不清理，第二次请求会读到第一次的过滤结果；第二次若是非 feed URL（不再进入下面的分支），
@@ -259,7 +261,7 @@ export function installNetworkHooks(): void {
         }
       }
       // 用改写后的 url2 调原始 open（保留 async/user/password 透传）
-      return origOpen.call(this, method, url2, arguments.length > 2 ? arguments[2] : true, arguments[3], arguments[4]);
+      return origOpen.call(this, method, url2, async, user, password);
     };
     XHR.prototype.__bfb = true;
   }

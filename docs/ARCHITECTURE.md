@@ -182,6 +182,8 @@ L9        main（bootstrap，装配一切）
   - 元素上的附加字段集中声明：卡片走 `cardinfo.ts` 的 `cacheCardInfo/cachedCardInfo`，评论宿主走 `comments.ts` 的 `CommentHost` 接口 + `asCommentHost()`（`Element → CommentHost` 的唯一收窄点）。
   - 事件 target 的收窄用运行期 `instanceof Element`（`ui/menu.ts` 的 `elementOf`），不要 `as Element`。
 - 判定与呈现分开导出：`comments.ts` 的 `readCmt` / `matchComment` 是纯函数，可在无 jsdom 的 node 环境单测（`tests/comments.test.ts`）；折叠/隐藏那半不测。新写规则类逻辑请照此切分。
+- **lint 不再有整条关掉的规则**（`no-explicit-any` 除外，见下）。迁移期那组「等类型化完再收紧」的关停项已到期兑现。合理的例外一律写成**定点** `eslint-disable-next-line <rule> -- 理由`：关整条规则等于对所有人静默放行，定点豁免只放行这一行且逼你写下理由。目前全仓 3 处。
+  - 仍关着的只有 `@typescript-eslint/no-explicit-any`：拦截层要处理 B 站任意形状的 JSON，`any` 是刻意选择，不是欠债。
 
 ---
 

@@ -165,7 +165,9 @@ export function openPanel(): void {
   p.classList.add('open');
   try {
     p.focus();
-  } catch (e) {}
+  } catch (e) {
+    /* 焦点是可达性增强，拿不到不影响面板可用 */
+  }
 }
 function closePanel() {
   const p = panelEl();
@@ -173,7 +175,9 @@ function closePanel() {
   if (lastFocus) {
     try {
       lastFocus.focus();
-    } catch (e) {}
+    } catch (e) {
+      /* 原焦点元素可能已被页面移除，归还失败无所谓 */
+    }
   }
   lastFocus = null;
 }

@@ -49,6 +49,7 @@ Phase 3：正确性修复 + 失败可见性 + 结构收敛（无用户可见的�
   - `ui/menu.ts` 的两个浮层按钮由两个可空模块变量改为一个整体（要么都没建、要么都建好，位置/显隐操作不必再各自判空）；事件 target 的收窄改用运行期 `instanceof Element`，而不是散落的 `as Element`。
   - `ui/panel/index.ts` 的 `buildPanel()` 改为返回面板根节点，调用方不必再 `getElementById` 一遍去应付「理论上的 null」——顺带去掉了首次打开时白渲染一遍的重复调用。
   至此 lint 里为未类型化模块兜底的 `no-undef` 与 `UNTYPED_FILES` 名单一并删除，`ban-ts-comment` 对 `ts-nocheck` 的豁免也收回：再想整文件关掉类型检查得先过这条规则，防止「加个 nocheck 先跑起来」重新变成常态。
+- **迁移期的 lint 豁免全部收回**：`eslint.config.js` 里那组「等类型化完再收紧」的关停规则（空 `catch`、`arguments`、`x && x()`、`this` 别名、正则字符类）到期兑现，一并把对应的 29 处代码改了而不是把规则继续关着：回调统一写 `cb?.(…)`；5 个空 `catch` 补上「为什么可以吞」的说明（吞异常的理由必须写下来，否则下一个人无法判断该不该改）；`XHR.open` 的 `async/user/password` 从 `arguments[2..4]` 转正为具名可选参数，「原样透传」这件事从此看得见。真正的例外只剩 3 处，改用**定点** `eslint-disable-next-line` + 理由注释（表情正则要的就是按码点拆掉组合表情；两处 `this` 别名分别是给 `defineProperty` 的 getter 和 `closest` 的起点用的），这样同类问题在新代码里仍会被拦下——而不是像整条规则关掉那样对所有人静默放行。全角空格改为只在模板串与注释里允许（中文文案的排版是有意的，代码里的则是误输入）。
 - **选择器登记表 `src/selectors.ts`**：散落在 5 个模块里的 B 站 DOM 选择器字面量集中到一处。B 站改版时只需改这一个文件。
 - **配置结构版本 `schemaVersion`**：存档带版本号 + `migrateConfig` 迁移链，为将来重命名字段/改变量纲留出无损升级路径（纯新增字段不需要升版本，`deepMerge` 会补默认值）。
 - **`net.ts` 移除 `@ts-nocheck`**：拦截层恢复完整类型检查。

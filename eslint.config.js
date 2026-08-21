@@ -30,15 +30,10 @@ export default tseslint.config(
       // src/ 已全量类型化：同一类错误（用了未定义的名字）由 tsc 覆盖，而 no-undef 不区分类型位置与值位置，
       // 会把 ParentNode / HTMLElementTagNameMap / Tampermonkey 这些「只存在于类型世界」的名字误报成未定义。
       'no-undef': 'off',
-      // 迁移期遗留代码的风格性规则关掉（非正确性问题：空 catch、arguments、x&&x()、正则字符类、全角空格等）；
-      // 待逐模块类型化后再逐步收紧。
-      'no-empty': 'off',
-      'no-cond-assign': 'off',
-      'no-misleading-character-class': 'off',
-      'no-irregular-whitespace': 'off',
-      'prefer-rest-params': 'off',
-      '@typescript-eslint/no-this-alias': 'off',
-      '@typescript-eslint/no-unused-expressions': 'off',
+      // 迁移期为遗留代码关掉的风格性规则已全部收回（空 catch、arguments、x&&x()、this 别名、正则字符类）。
+      // 剩下的少数合理例外用**定点** eslint-disable + 理由注释，这样新写的同类问题仍会被拦下。
+      // 例外一条：中文文案里的全角空格（U+3000）是有意的排版，模板串与注释里不报。
+      'no-irregular-whitespace': ['error', { skipTemplates: true, skipComments: true }],
     },
   },
 );

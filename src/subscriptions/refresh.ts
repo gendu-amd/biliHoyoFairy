@@ -69,7 +69,7 @@ export function syncSubscription(url: string, cb?: (ok: boolean) => void): void 
         store[url] = Object.assign(prev, patch); // 本就无可用规则：照常标记失败
       }
       saveSubStore(store);
-      cb && cb(ok);
+      cb?.(ok);
     };
     if (err || !text) return finish({ lastSync: Date.now(), ok: false, error: err || '空内容' }, false);
     try {
@@ -104,7 +104,7 @@ export function refreshSubscriptions(force: boolean, done?: (n: number) => void)
     if (!e || !e.ok) return true;
     return Date.now() - (e.lastSync || 0) >= parseExpires(metaGet(e.meta, 'expires'));
   });
-  if (!due.length) return done && done(0);
+  if (!due.length) return done?.(0);
   let pending = due.length;
   let changed = 0;
   due.forEach((s) =>
@@ -112,7 +112,7 @@ export function refreshSubscriptions(force: boolean, done?: (n: number) => void)
       if (ok) changed++;
       if (--pending === 0) {
         if (changed) emitRulesChanged();
-        done && done(changed);
+        done?.(changed);
       }
     })
   );

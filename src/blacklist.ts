@@ -94,7 +94,7 @@ function doBlacklist(uid: string, upName: string, cb?: BlockCb, quiet?: boolean)
   if (!csrf) {
     addLocal();
     if (!quiet) toast(`未登录，已本地屏蔽「${label}」(未同步账号黑名单)`, 'warn');
-    cb && cb(false, -101);
+    cb?.(false, -101);
     return;
   }
   gmRequest({
@@ -111,7 +111,9 @@ function doBlacklist(uid: string, upName: string, cb?: BlockCb, quiet?: boolean)
         const j = JSON.parse(res.responseText);
         code = j.code;
         msg = j.message || '';
-      } catch (e) {}
+      } catch (e) {
+        /* 响应不是 JSON（风控页/网关错误）：code 保持 null，下面按「未知失败」处理 */
+      }
       riskGuard.note(code); // 拉黑响应也喂给熔断器（批量拉黑触发风控时全局退避）
       addLocal();
       // 22120 = 已在黑名单，视作成功（幂等）
@@ -124,12 +126,12 @@ function doBlacklist(uid: string, upName: string, cb?: BlockCb, quiet?: boolean)
         else if (code === 22120) toast(`「${label}」此前已在账号黑名单，已本地同步`, 'success');
         else toast(`账号侧拉黑失败（${relErr(code) || msg || 'code ' + code}），已本地屏蔽：${label}`, 'warn');
       }
-      cb && cb(ok, code);
+      cb?.(ok, code);
     },
     onerror: () => {
       addLocal();
       if (!quiet) toast(`网络错误，已本地屏蔽：${label}`, 'error');
-      cb && cb(false, null);
+      cb?.(false, null);
     },
   });
 }
@@ -142,7 +144,7 @@ export function unblockUp(uid: string, upName?: string, cb?: BlockCb): void {
   if (!csrf) {
     removeFromList(CONFIG.block.uids, String(uid)); // 未登录：仅能撤销本地屏蔽
     toast(`已移出本地屏蔽：${label}（未登录，账号黑名单未变动）`, 'warn');
-    cb && cb(false, -101);
+    cb?.(false, -101);
     return;
   }
   gmRequest({
@@ -158,17 +160,19 @@ export function unblockUp(uid: string, upName?: string, cb?: BlockCb): void {
         const j = JSON.parse(res.responseText);
         code = j.code;
         msg = j.message || '';
-      } catch (e) {}
+      } catch (e) {
+        /* 响应不是 JSON（风控页/网关错误）：code 保持 null，下面按「未知失败」处理 */
+      }
       riskGuard.note(code);
       removeFromList(CONFIG.block.uids, String(uid)); // 无论账号侧成败都移出本地屏蔽，避免界面与意图不一致
       const ok = code === 0;
       toast(ok ? `已撤销拉黑：${label}（刷新后恢复推荐）` : `账号侧撤销失败（${relErr(code) || msg || 'code ' + code}），已移出本地屏蔽：${label}`, ok ? 'success' : 'warn');
-      cb && cb(ok, code);
+      cb?.(ok, code);
     },
     onerror: () => {
       removeFromList(CONFIG.block.uids, String(uid));
       toast(`网络错误，已移出本地屏蔽：${label}`, 'error');
-      cb && cb(false, null);
+      cb?.(false, null);
     },
   });
 }
@@ -209,7 +213,7 @@ export function doBlacklistMany(targets: BlockTarget[], cb?: (r: BlockResult) =>
     wait: paused ? Math.ceil(riskGuard.remaining() / 1000) : 0,
     cancelled,
   });
-  const report = (paused: boolean) => onProgress && onProgress(snapshot(paused));
+  const report = (paused: boolean) => onProgress?.(snapshot(paused));
   const finish = () => {
     if (finished) return;
     finished = true;
@@ -227,7 +231,7 @@ export function doBlacklistMany(targets: BlockTarget[], cb?: (r: BlockResult) =>
       saveConfig();
       emitRulesChanged();
     }
-    cb && cb({ added, already, failed, total: list.length, done, cancelled });
+    cb?.({ added, already, failed, total: list.length, done, cancelled });
   };
   const next = () => {
     if (cancelled || i >= list.length) return finish();
@@ -293,14 +297,14 @@ export function blacklistUp(info: BlockSource, cb?: (ok: boolean) => void, cardE
         } else {
           toast('该卡片信息不足，无法拉黑');
         }
-        cb && cb(false);
+        cb?.(false);
         return;
       }
       doBlacklistMany(targets, (r) => {
         // 修正：doBlacklistMany 回调的是结果对象 {added,already,failed,total}，旧代码误按 (n,total) 取参导致文案/cb 恒错。
         const ok = r.added + r.already;
         toast(targets.length > 1 ? `联合投稿：已拉黑 ${ok}/${r.total} 位作者${r.failed.length ? `（失败 ${r.failed.length}）` : ''}` : `已拉黑：${targets[0].name || targets[0].uid}`);
-        cb && cb(ok > 0);
+        cb?.(ok > 0);
       });
     });
     return;
@@ -317,10 +321,10 @@ export function blacklistUp(info: BlockSource, cb?: (ok: boolean) => void, cardE
       } else if (upName) {
         addToList(CONFIG.block.upNames, upName);
         toast(`未能解析 UID，已按 UP 名本地屏蔽：${upName}`);
-        cb && cb(false);
+        cb?.(false);
       } else {
         toast('未能解析该 UP，已跳过');
-        cb && cb(false);
+        cb?.(false);
       }
     });
     return;
@@ -331,5 +335,5 @@ export function blacklistUp(info: BlockSource, cb?: (ok: boolean) => void, cardE
   } else {
     toast('该卡片信息不足，无法拉黑');
   }
-  cb && cb(false);
+  cb?.(false);
 }

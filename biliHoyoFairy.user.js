@@ -1247,7 +1247,7 @@
       const origOpen = XHR.prototype.open;
       const dText = Object.getOwnPropertyDescriptor(XHR.prototype, "responseText");
       const dResp = Object.getOwnPropertyDescriptor(XHR.prototype, "response");
-      XHR.prototype.open = function(method, url) {
+      XHR.prototype.open = function(method, url, async = true, user, password) {
         const self = this;
         if (self.__bfbHooked) {
           delete self.responseText;
@@ -1302,7 +1302,7 @@
             self.__bfbHooked = true;
           }
         }
-        return origOpen.call(this, method, url2, arguments.length > 2 ? arguments[2] : true, arguments[3], arguments[4]);
+        return origOpen.call(this, method, url2, async, user, password);
       };
       XHR.prototype.__bfb = true;
     }
@@ -1454,7 +1454,7 @@
           store[url] = Object.assign(prev, patch);
         }
         saveSubStore(store);
-        cb && cb(ok);
+        cb?.(ok);
       };
       if (err || !text) return finish({ lastSync: Date.now(), ok: false, error: err || "空内容" }, false);
       try {
@@ -1486,7 +1486,7 @@
       if (!e || !e.ok) return true;
       return Date.now() - (e.lastSync || 0) >= parseExpires(metaGet(e.meta, "expires"));
     });
-    if (!due.length) return done && done(0);
+    if (!due.length) return done?.(0);
     let pending = due.length;
     let changed = 0;
     due.forEach(
@@ -1494,7 +1494,7 @@
         if (ok) changed++;
         if (--pending === 0) {
           if (changed) emitRulesChanged();
-          done && done(changed);
+          done?.(changed);
         }
       })
     );
@@ -2095,7 +2095,7 @@
     if (!csrf) {
       addLocal();
       if (!quiet) toast(`未登录，已本地屏蔽「${label}」(未同步账号黑名单)`, "warn");
-      cb && cb(false, -101);
+      cb?.(false, -101);
       return;
     }
     gmRequest({
@@ -2123,12 +2123,12 @@
           else if (code === 22120) toast(`「${label}」此前已在账号黑名单，已本地同步`, "success");
           else toast(`账号侧拉黑失败（${relErr(code) || msg || "code " + code}），已本地屏蔽：${label}`, "warn");
         }
-        cb && cb(ok, code);
+        cb?.(ok, code);
       },
       onerror: () => {
         addLocal();
         if (!quiet) toast(`网络错误，已本地屏蔽：${label}`, "error");
-        cb && cb(false, null);
+        cb?.(false, null);
       }
     });
   }
@@ -2138,7 +2138,7 @@
     if (!csrf) {
       removeFromList(CONFIG.block.uids, String(uid));
       toast(`已移出本地屏蔽：${label}（未登录，账号黑名单未变动）`, "warn");
-      cb && cb(false, -101);
+      cb?.(false, -101);
       return;
     }
     gmRequest({
@@ -2160,12 +2160,12 @@
         removeFromList(CONFIG.block.uids, String(uid));
         const ok = code === 0;
         toast(ok ? `已撤销拉黑：${label}（刷新后恢复推荐）` : `账号侧撤销失败（${relErr(code) || msg || "code " + code}），已移出本地屏蔽：${label}`, ok ? "success" : "warn");
-        cb && cb(ok, code);
+        cb?.(ok, code);
       },
       onerror: () => {
         removeFromList(CONFIG.block.uids, String(uid));
         toast(`网络错误，已移出本地屏蔽：${label}`, "error");
-        cb && cb(false, null);
+        cb?.(false, null);
       }
     });
   }
@@ -2201,7 +2201,7 @@
       wait: paused ? Math.ceil(riskGuard.remaining() / 1e3) : 0,
       cancelled
     });
-    const report = (paused) => onProgress && onProgress(snapshot(paused));
+    const report = (paused) => onProgress?.(snapshot(paused));
     const finish = () => {
       if (finished) return;
       finished = true;
@@ -2218,7 +2218,7 @@
         saveConfig();
         emitRulesChanged();
       }
-      cb && cb({ added, already, failed, total: list.length, done, cancelled });
+      cb?.({ added, already, failed, total: list.length, done, cancelled });
     };
     const next = () => {
       if (cancelled || i >= list.length) return finish();
@@ -2278,13 +2278,13 @@
           } else {
             toast("该卡片信息不足，无法拉黑");
           }
-          cb && cb(false);
+          cb?.(false);
           return;
         }
         doBlacklistMany(targets, (r) => {
           const ok = r.added + r.already;
           toast(targets.length > 1 ? `联合投稿：已拉黑 ${ok}/${r.total} 位作者${r.failed.length ? `（失败 ${r.failed.length}）` : ""}` : `已拉黑：${targets[0].name || targets[0].uid}`);
-          cb && cb(ok > 0);
+          cb?.(ok > 0);
         });
       });
       return;
@@ -2301,10 +2301,10 @@
         } else if (upName) {
           addToList(CONFIG.block.upNames, upName);
           toast(`未能解析 UID，已按 UP 名本地屏蔽：${upName}`);
-          cb && cb(false);
+          cb?.(false);
         } else {
           toast("未能解析该 UP，已跳过");
-          cb && cb(false);
+          cb?.(false);
         }
       });
       return;
@@ -2315,7 +2315,7 @@
     } else {
       toast("该卡片信息不足，无法拉黑");
     }
-    cb && cb(false);
+    cb?.(false);
   }
 
   // src/ui/confirm.ts

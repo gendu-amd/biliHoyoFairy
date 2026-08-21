@@ -149,6 +149,7 @@ export class El {
   }
 
   closest(sel: string): El | null {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- closest 从自身开始向上找，起点就是 this
     let p: El | null = this;
     while (p) {
       if (p.matches(sel)) return p;
