@@ -6,6 +6,7 @@ import { blockedLog, tallyLog, sessionBlocked } from '../../../stats';
 import { blacklistUp, unblockUp } from '../../../blacklist';
 import { addToList, removeFromList } from '../../../rules';
 import { locateRule, REASON_RULE_FIELD } from '../../../match/engine';
+import { ruleLines } from '../../../match/normalize';
 import { escapeHtml } from '../../../util';
 import { toast } from '../../toast';
 import { confirmModal } from '../../confirm';
@@ -104,7 +105,8 @@ export const logSection: PanelSection = {
         // 上面的「放行」只赦免这一个 UP，规则本身还会继续误伤别人——关键词类误伤的病灶
         // 通常是规则写得太宽（比如一个两字词），治标不治本。
         // 已写入账号黑名单（BL 来源且该 UID 仍在 block.uids）→ 下面会给「撤销拉黑」。
-        const isBlacklisted = b.uid && CONFIG.block.uids.map(String).includes(String(b.uid));
+        // 走 ruleLines 而不是 .map(String)：名单字段被写成非数组时 .map 会直接抛，把整个屏蔽记录面板打空。
+        const isBlacklisted = b.uid && ruleLines(CONFIG.block.uids).includes(String(b.uid));
         // 这种行不给「删规则」：它只删本地那条 UID 规则，**不会**把人从账号黑名单移出，
         // 与旁边的「撤销拉黑」看着像但语义不同，同一行摆两个含义不同的撤销按钮必然误操作。
         const loc = b.src === 'BL' && isBlacklisted ? null : locateRule(b.reason);

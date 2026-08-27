@@ -1,6 +1,6 @@
 // 卡片信息抽取：从 DOM 卡片（extractCardInfo）或接口 JSON 列表项（normFeedItem）
 // 归一成同形状的 CardInfo，供匹配引擎判定。两路同构，判定一致。
-// 广告/直播检测是热路径开销，仅在对应功能开启时才做——开关经 configureCardDetect 注入，避免直接耦合 CONFIG。
+// 广告检测要遍历全卡节点，是热路径大头，仅在「屏蔽广告卡」开启时才做——开关经 configureCardDetect 注入，避免直接耦合 CONFIG。
 import { parseDuration, parseCount } from './util';
 import {
   AD_CARD_SELECTOR,
@@ -31,10 +31,9 @@ export interface CardInfo {
 
 interface DetectFlags {
   detectAd: boolean;
-  detectLive: boolean;
 }
-// 默认不检测（零开销）；主程序在 CONFIG 就绪后注入 () => ({ detectAd: hideAd, detectLive: hideLiveCard }）。
-let getDetect: () => DetectFlags = () => ({ detectAd: false, detectLive: false });
+// 默认不检测（零开销）；主程序在 CONFIG 就绪后注入 () => ({ detectAd: CONFIG.hideAd })。
+let getDetect: () => DetectFlags = () => ({ detectAd: false });
 export function configureCardDetect(fn: () => DetectFlags): void {
   getDetect = fn;
 }
@@ -113,15 +112,16 @@ export function extractCardInfo(card: Element, deepUid = true): CardInfo {
     }
   }
 
-  const { detectAd, detectLive } = getDetect();
-  // 直播识别：服务于「屏蔽直播推荐卡」，并避免把直播误当广告。hideAd / hideLiveCard 任一开启才算（省热路径）。
-  if (detectAd || detectLive) {
-    info.isLive = !!(
-      card.querySelector('a[href*="live.bilibili.com"]') ||
-      card.querySelector(LIVE_CARD_SELECTOR) ||
-      /直播中|正在直播/.test(card.textContent || '')
-    );
-  }
+  const { detectAd } = getDetect();
+  // 直播识别**不挂开关**：除了「屏蔽直播卡」这个功能，它还是 processCard 判定骨架卡的依据
+  // （直播卡常常没有标题，靠 isLive 才不会被当成尚未渲染的空壳）。跟着开关走的话，
+  // 两个开关都关时每一张无标题直播卡都会被判成骨架、每轮扫描重抠一次，且这个字段的含义会随配置漂移。
+  // 三次判定都很轻（两次 querySelector + 一次本卡 textContent），远小于下面的广告角标全卡遍历。
+  info.isLive = !!(
+    card.querySelector('a[href*="live.bilibili.com"]') ||
+    card.querySelector(LIVE_CARD_SELECTOR) ||
+    /直播中|正在直播/.test(card.textContent || '')
+  );
 
   // 广告判定（含遍历全卡 span/div 找角标文案）只服务于「屏蔽广告卡」，hideAd 关时整段跳过，省热路径开销。
   // 直播卡直接判非广告（下面本来也是 !isLive && …），顺带省掉那次全卡 span/div 遍历。
@@ -155,7 +155,10 @@ export function normFeedItem(it: any): CardInfo | null {
     title: String(rawTitle || '').replace(/<[^>]*>/g, ''), // String()：接口偶发非字符串 title 时不抛错
     up: owner.name || it.author || it.name || (ad && ad.source_content && ad.source_content.name) || '',
     uid: owner.mid != null ? String(owner.mid) : it.mid != null ? String(it.mid) : '',
-    partition: it.tname || it.typename || (it.rcmd_reason && it.rcmd_reason.content) || '',
+    // 只认真正的分区字段。曾经兜底取过 rcmd_reason.content，但那是「已关注 / 高播放」这类**推荐理由**，
+    // 不是分区；混进来会让 `分区:` 规则和 `part:` 关键词莫名其妙地匹配上推荐角标。
+    // JSON 这一路本来就拿得到权威的 tname/typename，没有理由降级去用一个语义不同的字段。
+    partition: it.tname || it.typename || '',
     bvid: it.bvid || '',
     link: it.uri || it.jump_url || adC.url || adC.jump_url || '',
     duration: typeof it.duration === 'number' ? it.duration : it.duration ? parseDuration(it.duration) : null,

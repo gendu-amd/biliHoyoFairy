@@ -38,7 +38,7 @@ import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
   /* ===================== 1. 注入 seam 接线 ===================== */
   // 匹配引擎 ./match/engine 在自身模块加载时已绑定 fuzzy 取值器并构建首个 M；
   // 此处仅把卡片广告/直播检测开关注入 ./cardinfo（保持 cardinfo 不直接依赖 CONFIG）。
-  configureCardDetect(() => ({ detectAd: CONFIG.hideAd, detectLive: CONFIG.hideLiveCard }));
+  configureCardDetect(() => ({ detectAd: CONFIG.hideAd }));
   // 注入 UI 回调桥：低层模块（stats 等）经此回调到面板/角标，避免 import 面板成环。
   setPanelHooks({
     refreshPanelIfOpen: () => refreshPanelIfOpen(),

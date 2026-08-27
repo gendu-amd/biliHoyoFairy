@@ -9,6 +9,7 @@ import { M, ruleVersion } from './match/engine';
 import { shadowRoots } from './shadow';
 import { recordBlock } from './stats';
 import { log, safe } from './logging';
+import { escapeHtml } from './util';
 import { COMMENT_TAGS, isCommentTag } from './selectors';
 
 // —— B 站挂在宿主上的数据（.__data）——
@@ -144,7 +145,7 @@ function collapseComment(host: CommentHost, reason: string) {
     'font-size:12px;color:#9499a0;cursor:pointer;user-select:none;line-height:1.5';
   ph.innerHTML =
     '<span class="bfb-ph-txt" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">已折叠 · 命中：' +
-    String(reason).replace(/[<>&]/g, '') +
+    escapeHtml(reason) +
     '</span><span style="color:#fb7299;flex:none">点击展开 ▾</span>';
   ph.addEventListener('click', function () {
     ph.remove();
@@ -170,9 +171,11 @@ function removeCmtPlaceholder(host: CommentHost) {
 // 处理单条评论宿主（错误边界 + 版本号去重）。
 const processComment = safe('processComment', function (host: CommentHost, isSub: boolean) {
   if (host.__bfbCmtV === ruleVersion) return; // 本版本已评估过
-  host.__bfbCmtV = ruleVersion;
   const c = readCmt(host);
+  // 数据未 hydrate 时**不打版本号**：评论宿主常常先入 DOM、__data 后到，
+  // 提前打标会让这条评论在本规则版本内被永久跳过（下一轮扫描直接 return），规则形同虚设。
   if (!c.uname && !c.message) return; // 还没渲染出数据，等下一轮
+  host.__bfbCmtV = ruleVersion;
   const reason = matchComment(c, isSub);
   if (reason) {
     if (CONFIG.reviewMode) {
@@ -210,7 +213,7 @@ const processComment = safe('processComment', function (host: CommentHost, isSub
 function revertComments() {
   for (const root of shadowRoots) {
     const host = hostOf(root);
-    if (!host || COMMENT_TAGS[host.tagName] === undefined) continue;
+    if (!host || !isCommentTag(host.tagName)) continue;
     if (host.__bfbCmtHit || host.__bfbCmtPh || host.style.display === 'none' || host.style.outline) {
       removeCmtPlaceholder(host);
       host.style.removeProperty('display');

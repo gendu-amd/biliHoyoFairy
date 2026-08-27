@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { CONFIG, DEFAULT_CONFIG } from '../src/config';
-import { matchRule, matchApi, apiNeeds, rebuildRules } from '../src/match/engine';
+import { matchRule, matchApi, apiNeeds, rebuildRules, enumerateRules } from '../src/match/engine';
 import type { CardInfo } from '../src/cardinfo';
 
 // 每个用例从默认配置开始，改完配置后 rebuildRules() 让匹配器生效。
@@ -111,6 +111,23 @@ describe('apiNeeds：按启用的联网维度推导要拉的接口', () => {
   });
 });
 
+// 存档被写坏（旧版本 bug、手改 GM 存储、导入了畸形 JSON）时，名单字段可能不是数组而是字符串。
+// 字符串是可迭代的，`for...of` / `map` 会把它按**字符**拆成一堆单字伪规则——一条 "原神" 能让
+// 所有含「原」或「神」的视频全被屏蔽，且用户在面板里看不出任何异常。ruleLines 是唯一的收口。
+describe('名单字段被写成字符串时不产生单字伪规则', () => {
+  const FIELDS = ['keywords', 'partitions', 'upNames', 'uids', 'bvids', 'tags', 'dualTags', 'upBio'] as const;
+
+  it('每个可定位维度都扛得住', () => {
+    for (const f of FIELDS) (CONFIG.block as any)[f] = '原神+抽卡';
+    expect(() => rebuildRules()).not.toThrow();
+    expect(matchRule(card({ title: '神作', up: '原', partition: '抽' }))).toBe(null);
+    expect(matchApi(card(), { is_upower_exclusive: false }, ['原神', '抽卡'], { card: { sign: '原' } })).toBe(null);
+    const n = apiNeeds();
+    expect([n.needTag, n.needView, n.needCard]).toEqual([false, false, false]);
+    expect(enumerateRules()).toEqual([]);
+  });
+});
+
 describe('matchApi：联网维度', () => {
   it('标签命中（任一标签 textHit）', () => {
     CONFIG.block.tags.push('鬼畜');
@@ -124,6 +141,13 @@ describe('matchApi：联网维度', () => {
     expect(matchApi(card(), null, ['原神', '抽卡', '日常'], null)).toBe('双标签:原神+抽卡');
     expect(matchApi(card(), null, ['原神'], null)).toBe(null);
   });
+  it('双标签：少于两个分量的行不成立（编译期就丢掉，别让「原神+」等价于单标签）', () => {
+    CONFIG.block.dualTags.push('原神+', '+', '  ');
+    rebuildRules();
+    expect(matchApi(card(), null, ['原神', '抽卡'], null)).toBe(null);
+    expect(apiNeeds().needTag).toBe(false); // 一条有效规则都没有 → 不该为此去拉标签接口
+  });
+
   it('充电专属（view.is_upower_exclusive）', () => {
     CONFIG.hideCharging = true;
     rebuildRules();

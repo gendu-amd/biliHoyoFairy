@@ -488,7 +488,7 @@
   }
 
   // src/cardinfo.ts
-  var getDetect = () => ({ detectAd: false, detectLive: false });
+  var getDetect = () => ({ detectAd: false });
   function configureCardDetect(fn) {
     getDetect = fn;
   }
@@ -544,10 +544,8 @@
         break;
       }
     }
-    const { detectAd, detectLive } = getDetect();
-    if (detectAd || detectLive) {
-      info.isLive = !!(card.querySelector('a[href*="live.bilibili.com"]') || card.querySelector(LIVE_CARD_SELECTOR) || /直播中|正在直播/.test(card.textContent || ""));
-    }
+    const { detectAd } = getDetect();
+    info.isLive = !!(card.querySelector('a[href*="live.bilibili.com"]') || card.querySelector(LIVE_CARD_SELECTOR) || /直播中|正在直播/.test(card.textContent || ""));
     if (detectAd && !info.isLive) {
       const adBadge = () => Array.from(card.querySelectorAll("span,div")).some((el) => {
         const tx = (el.textContent || "").trim();
@@ -570,7 +568,10 @@
       // String()：接口偶发非字符串 title 时不抛错
       up: owner.name || it.author || it.name || ad && ad.source_content && ad.source_content.name || "",
       uid: owner.mid != null ? String(owner.mid) : it.mid != null ? String(it.mid) : "",
-      partition: it.tname || it.typename || it.rcmd_reason && it.rcmd_reason.content || "",
+      // 只认真正的分区字段。曾经兜底取过 rcmd_reason.content，但那是「已关注 / 高播放」这类**推荐理由**，
+      // 不是分区；混进来会让 `分区:` 规则和 `part:` 关键词莫名其妙地匹配上推荐角标。
+      // JSON 这一路本来就拿得到权威的 tname/typename，没有理由降级去用一个语义不同的字段。
+      partition: it.tname || it.typename || "",
       bvid: it.bvid || "",
       link: it.uri || it.jump_url || adC.url || adC.jump_url || "",
       duration: typeof it.duration === "number" ? it.duration : it.duration ? parseDuration(it.duration) : null,
@@ -800,20 +801,36 @@
 
   // src/match/engine.ts
   configureFuzzy(() => CONFIG.fuzzyMatch);
+  var SUB_DIM_SET = new Set(SUB_DIMS);
+  var isSubDim = (f) => SUB_DIM_SET.has(f);
+  function userAndSubLines(dim, sub) {
+    const own = ruleLines(CONFIG.block[dim]);
+    return isSubDim(dim) ? own.concat(ruleLines(sub[dim])) : own;
+  }
+  function compileDualTags(lines) {
+    const out = [];
+    for (const src of ruleLines(lines)) {
+      const parts = src.split("+").map((s) => lc(s.trim())).filter(Boolean);
+      if (parts.length >= 2) out.push({ src, parts });
+    }
+    return out;
+  }
   function buildMatchers() {
     const lcSet = (arr) => new Set(ruleLines(arr).map((x) => lc(x)).filter(Boolean));
     const strSet = (arr) => new Set(ruleLines(arr));
     const sub = collectSubRules();
-    const u = (dim) => ruleLines(CONFIG.block[dim]).concat(ruleLines(sub[dim]));
+    const u = (dim) => userAndSubLines(dim, sub);
     const blockUidSet = strSet(u("uids"));
     const allowUidSet = strSet(CONFIG.allow.uids);
     const blockTag = compileLines(u("tags"));
+    const dualTags = compileDualTags(u("dualTags"));
     const upBio = compileLines(u("upBio"));
     return {
       blockKw: compileScopedKeywords(u("keywords")),
       blockPartition: compileLines(u("partitions")),
       allowKw: compileScopedKeywords(CONFIG.allow.keywords),
       blockTag,
+      dualTags,
       upBio,
       blockUidSet,
       blockBvidSet: new Set(u("bvids")),
@@ -908,11 +925,10 @@
     {
       source: "tag",
       needs: "tag",
-      active: () => CONFIG.block.dualTags.length,
+      active: () => M.dualTags.length > 0,
       match: (info, ctx) => {
-        for (const group of CONFIG.block.dualTags) {
-          const parts = String(group).split("+").map((s) => s.trim()).filter(Boolean);
-          if (parts.length >= 2 && parts.every((p) => ctx.tags.some((t) => lc(t).includes(lc(p))))) return "双标签:" + group;
+        for (const rule of M.dualTags) {
+          if (rule.parts.every((p) => ctx.tags.some((t) => lc(t).includes(p)))) return "双标签:" + rule.src;
         }
         return null;
       }
@@ -981,7 +997,7 @@
     for (const field of Object.keys(REASON_RULE_FIELD).map((d) => REASON_RULE_FIELD[d])) {
       const active = !API_FIELDS.has(field) || !!CONFIG.apiFilters;
       const own = new Set(ruleLines(CONFIG.block[field]));
-      for (const line of ruleLines(CONFIG.block[field]).concat(ruleLines(sub[field]))) {
+      for (const line of userAndSubLines(field, sub)) {
         const key = ruleKeyOf(field, line);
         if (!key || seen.has(key)) continue;
         seen.add(key);
@@ -1565,7 +1581,7 @@
     const ph = document.createElement("div");
     ph.className = "bfb-cmt-ph";
     ph.style.cssText = "display:flex;align-items:center;gap:8px;margin:4px 0;padding:6px 10px;border-radius:8px;background:rgba(251,114,153,.08);border:1px dashed rgba(251,114,153,.45);font-size:12px;color:#9499a0;cursor:pointer;user-select:none;line-height:1.5";
-    ph.innerHTML = '<span class="bfb-ph-txt" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">已折叠 · 命中：' + String(reason).replace(/[<>&]/g, "") + '</span><span style="color:#fb7299;flex:none">点击展开 ▾</span>';
+    ph.innerHTML = '<span class="bfb-ph-txt" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">已折叠 · 命中：' + escapeHtml(reason) + '</span><span style="color:#fb7299;flex:none">点击展开 ▾</span>';
     ph.addEventListener("click", function() {
       ph.remove();
       host.style.removeProperty("display");
@@ -1587,9 +1603,9 @@
   }
   var processComment = safe("processComment", function(host, isSub) {
     if (host.__bfbCmtV === ruleVersion) return;
-    host.__bfbCmtV = ruleVersion;
     const c = readCmt(host);
     if (!c.uname && !c.message) return;
+    host.__bfbCmtV = ruleVersion;
     const reason = matchComment(c, isSub);
     if (reason) {
       if (CONFIG.reviewMode) {
@@ -1622,7 +1638,7 @@
   function revertComments() {
     for (const root of shadowRoots) {
       const host = hostOf(root);
-      if (!host || COMMENT_TAGS[host.tagName] === void 0) continue;
+      if (!host || !isCommentTag(host.tagName)) continue;
       if (host.__bfbCmtHit || host.__bfbCmtPh || host.style.display === "none" || host.style.outline) {
         removeCmtPlaceholder(host);
         host.style.removeProperty("display");
@@ -2084,18 +2100,10 @@
     22120: "该用户已在你的黑名单中"
   };
   var relErr = (code) => code == null ? "" : REL_ERR[String(code)] || "";
-  function doBlacklist(uid, upName, cb, quiet) {
-    const label = upName || uid;
-    const addLocal = () => {
-      if (upName) setUidName(uid, upName);
-      if (quiet) pushUnique(CONFIG.block.uids, [String(uid)]);
-      else addToList(CONFIG.block.uids, String(uid));
-    };
+  function relationModify(uid, act, done) {
     const csrf = getCookie("bili_jct");
     if (!csrf) {
-      addLocal();
-      if (!quiet) toast(`未登录，已本地屏蔽「${label}」(未同步账号黑名单)`, "warn");
-      cb?.(false, -101);
+      done({ code: -101, msg: "", outcome: "noauth" });
       return;
     }
     gmRequest({
@@ -2103,7 +2111,7 @@
       url: "https://api.bilibili.com/x/relation/modify",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       // gaia_source=web_main 贴合当前官方 web 端行为，降低被风控/失败概率
-      data: `fid=${encodeURIComponent(uid)}&act=5&re_src=11&gaia_source=web_main&csrf=${encodeURIComponent(csrf)}`,
+      data: `fid=${encodeURIComponent(uid)}&act=${act}&re_src=11&gaia_source=web_main&csrf=${encodeURIComponent(csrf)}`,
       withCredentials: true,
       onload: (res) => {
         let code = null;
@@ -2115,58 +2123,41 @@
         } catch (e) {
         }
         riskGuard.note(code);
-        addLocal();
-        const ok = code === 0 || code === 22120;
-        if (ok) logBlocked("拉黑", { up: upName || CONFIG.uidNames && CONFIG.uidNames[String(uid)] || "", uid: String(uid) }, "BL");
-        if (!quiet) {
-          if (code === 0) toast(`已拉黑并同步账号黑名单：${label}（刷新后不再推荐）`, "success", { label: "撤销", onClick: () => unblockUp(String(uid), upName) });
-          else if (code === 22120) toast(`「${label}」此前已在账号黑名单，已本地同步`, "success");
-          else toast(`账号侧拉黑失败（${relErr(code) || msg || "code " + code}），已本地屏蔽：${label}`, "warn");
-        }
-        cb?.(ok, code);
+        done({ code, msg, outcome: "replied" });
       },
-      onerror: () => {
-        addLocal();
-        if (!quiet) toast(`网络错误，已本地屏蔽：${label}`, "error");
-        cb?.(false, null);
+      onerror: () => done({ code: null, msg: "", outcome: "neterr" })
+    });
+  }
+  function doBlacklist(uid, upName, cb, quiet) {
+    const label = upName || uid;
+    const addLocal = () => {
+      if (upName) setUidName(uid, upName);
+      if (quiet) pushUnique(CONFIG.block.uids, [String(uid)]);
+      else addToList(CONFIG.block.uids, String(uid));
+    };
+    relationModify(uid, 5, ({ code, msg, outcome }) => {
+      addLocal();
+      const ok = code === 0 || code === 22120;
+      if (ok) logBlocked("拉黑", { up: upName || CONFIG.uidNames && CONFIG.uidNames[String(uid)] || "", uid: String(uid) }, "BL");
+      if (!quiet) {
+        if (outcome === "noauth") toast(`未登录，已本地屏蔽「${label}」(未同步账号黑名单)`, "warn");
+        else if (outcome === "neterr") toast(`网络错误，已本地屏蔽：${label}`, "error");
+        else if (code === 0) toast(`已拉黑并同步账号黑名单：${label}（刷新后不再推荐）`, "success", { label: "撤销", onClick: () => unblockUp(String(uid), upName) });
+        else if (code === 22120) toast(`「${label}」此前已在账号黑名单，已本地同步`, "success");
+        else toast(`账号侧拉黑失败（${relErr(code) || msg || "code " + code}），已本地屏蔽：${label}`, "warn");
       }
+      cb?.(ok, code);
     });
   }
   function unblockUp(uid, upName, cb) {
     const label = upName || uid;
-    const csrf = getCookie("bili_jct");
-    if (!csrf) {
+    relationModify(uid, 6, ({ code, msg, outcome }) => {
       removeFromList(CONFIG.block.uids, String(uid));
-      toast(`已移出本地屏蔽：${label}（未登录，账号黑名单未变动）`, "warn");
-      cb?.(false, -101);
-      return;
-    }
-    gmRequest({
-      method: "POST",
-      url: "https://api.bilibili.com/x/relation/modify",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      data: `fid=${encodeURIComponent(uid)}&act=6&re_src=11&gaia_source=web_main&csrf=${encodeURIComponent(csrf)}`,
-      withCredentials: true,
-      onload: (res) => {
-        let code = null;
-        let msg = "";
-        try {
-          const j = JSON.parse(res.responseText);
-          code = j.code;
-          msg = j.message || "";
-        } catch (e) {
-        }
-        riskGuard.note(code);
-        removeFromList(CONFIG.block.uids, String(uid));
-        const ok = code === 0;
-        toast(ok ? `已撤销拉黑：${label}（刷新后恢复推荐）` : `账号侧撤销失败（${relErr(code) || msg || "code " + code}），已移出本地屏蔽：${label}`, ok ? "success" : "warn");
-        cb?.(ok, code);
-      },
-      onerror: () => {
-        removeFromList(CONFIG.block.uids, String(uid));
-        toast(`网络错误，已移出本地屏蔽：${label}`, "error");
-        cb?.(false, null);
-      }
+      const ok = code === 0 && outcome === "replied";
+      if (outcome === "noauth") toast(`已移出本地屏蔽：${label}（未登录，账号黑名单未变动）`, "warn");
+      else if (outcome === "neterr") toast(`网络错误，已移出本地屏蔽：${label}`, "error");
+      else toast(ok ? `已撤销拉黑：${label}（刷新后恢复推荐）` : `账号侧撤销失败（${relErr(code) || msg || "code " + code}），已移出本地屏蔽：${label}`, ok ? "success" : "warn");
+      cb?.(ok, code);
     });
   }
   var BL_DELAY = 900;
@@ -4164,7 +4155,7 @@ ${r.line}`, {
             };
             row.appendChild(pass);
           }
-          const isBlacklisted = b.uid && CONFIG.block.uids.map(String).includes(String(b.uid));
+          const isBlacklisted = b.uid && ruleLines(CONFIG.block.uids).includes(String(b.uid));
           const loc = b.src === "BL" && isBlacklisted ? null : locateRule(b.reason);
           if (loc) {
             const del = document.createElement("button");
@@ -4386,7 +4377,7 @@ ${r.line}`, {
   // src/main.ts
   (function() {
     "use strict";
-    configureCardDetect(() => ({ detectAd: CONFIG.hideAd, detectLive: CONFIG.hideLiveCard }));
+    configureCardDetect(() => ({ detectAd: CONFIG.hideAd }));
     setPanelHooks({
       refreshPanelIfOpen: () => refreshPanelIfOpen2(),
       openPanel: () => openPanel2()

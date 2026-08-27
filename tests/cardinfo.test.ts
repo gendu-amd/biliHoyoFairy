@@ -65,7 +65,7 @@ describe('normFeedItem：拦截层 JSON 归一', () => {
 // 锁住三件最容易在改版/重构中悄悄坏掉的事：优先级顺序、UID 兜底链、按开关跳过热路径。
 describe('extractCardInfo：DOM 抽取', () => {
   // 检测开关是模块级状态，用完还原，免得测试之间互相影响
-  afterAll(() => configureCardDetect(() => ({ detectAd: false, detectLive: false })));
+  afterAll(() => configureCardDetect(() => ({ detectAd: false })));
   const card = (...kids: El[]) => {
     const c = new El('div', 'bili-video-card');
     kids.forEach((k) => c.appendChild(k));
@@ -120,23 +120,24 @@ describe('extractCardInfo：DOM 抽取', () => {
     expect(i.views).toBe(32000);
   });
 
-  it('默认不做广告/直播检测（热路径零开销），开关打开后才判', () => {
+  // isLive 不跟开关走：processCard 靠它把「无标题的直播卡」和「尚未渲染的骨架卡」区分开，
+  // 若跟着 hideLiveCard 漂移，两个开关都关时直播卡会被当骨架、每轮重抠一次。
+  it('直播识别与开关无关，广告检测才跟着开关走', () => {
     const live = card(h('a', '', { href: 'https://live.bilibili.com/123' }));
-    configureCardDetect(() => ({ detectAd: false, detectLive: false }));
-    expect(extractCardInfo(live as any).isLive).toBe(false);
-    configureCardDetect(() => ({ detectAd: false, detectLive: true }));
+    configureCardDetect(() => ({ detectAd: false }));
     expect(extractCardInfo(live as any).isLive).toBe(true);
+    expect(extractCardInfo(card(h('span', '', {}, ' 广告 ')) as any).isAd).toBe(false);
   });
 
   it('广告角标文案要精确等于「广告/赞助/推广」，不能是包含', () => {
-    configureCardDetect(() => ({ detectAd: true, detectLive: false }));
+    configureCardDetect(() => ({ detectAd: true }));
     // 「广告位招租」「推广方式」这类标题会让「包含」判法把正常视频当广告删掉。
     expect(extractCardInfo(card(h('span', '', {}, '广告位招租的日常')) as any).isAd).toBe(false);
     expect(extractCardInfo(card(h('span', '', {}, ' 广告 ')) as any).isAd).toBe(true);
   });
 
   it('直播卡不再判广告（省掉遍历全卡节点的那次开销）', () => {
-    configureCardDetect(() => ({ detectAd: true, detectLive: true }));
+    configureCardDetect(() => ({ detectAd: true }));
     const c = card(h('a', '', { href: 'https://live.bilibili.com/1' }), h('span', '', {}, '广告'));
     const i = extractCardInfo(c as any);
     expect(i.isLive).toBe(true);

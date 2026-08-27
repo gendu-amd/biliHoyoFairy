@@ -81,20 +81,23 @@ export const REL_ERR: Record<string, string> = {
 // 业务码 → 文案。code 可能是 null（网络错误），查表统一走这里，省得每处都判一次空。
 const relErr = (code: number | null): string => (code == null ? '' : REL_ERR[String(code)] || '');
 
-// 真正调接口拉黑（已确定 uid）。quiet=true 时不弹单条提示（批量/联合投稿场景由调用方汇总）。
-function doBlacklist(uid: string, upName: string, cb?: BlockCb, quiet?: boolean): void {
-  const label = upName || uid;
-  const addLocal = () => {
-    if (upName) setUidName(uid, upName);
-    // 批量(quiet) 不逐条存盘/重扫——由 doBlacklistMany.finish 统一一次 saveConfig+重扫，避免 N 次全页重扫卡顿。
-    if (quiet) pushUnique(CONFIG.block.uids, [String(uid)]);
-    else addToList(CONFIG.block.uids, String(uid));
-  };
+/** 一次 relation/modify 的归一结果。
+ *  outcome 三态是必需的：未登录（压根没发）、网络错误、拿到了响应，三种情况 code 都可能不是正常业务码，
+ *  但对用户要说的话完全不同（「未登录」/「网络错误」/「账号侧失败(code X)」）——只看 code 分不开。 */
+type RelationOutcome = 'noauth' | 'neterr' | 'replied';
+interface RelationRes {
+  code: number | null; // null = 网络层失败或响应不是 JSON，没拿到业务码
+  msg: string;
+  outcome: RelationOutcome;
+}
+
+// 拉黑与撤销拉黑打的是同一个接口，只差一个 act：把「发请求 + 取 csrf + 解析响应 + 喂熔断器」
+// 收成这一个函数。至于本地名单怎么改、弹什么文案、成功怎么算，两个动作本就不同，留给调用方——
+// 硬塞进来只会换成一堆回调参数，不比重复两遍好。
+function relationModify(uid: string, act: 5 | 6, done: (r: RelationRes) => void): void {
   const csrf = getCookie('bili_jct');
   if (!csrf) {
-    addLocal();
-    if (!quiet) toast(`未登录，已本地屏蔽「${label}」(未同步账号黑名单)`, 'warn');
-    cb?.(false, -101);
+    done({ code: -101, msg: '', outcome: 'noauth' });
     return;
   }
   gmRequest({
@@ -102,7 +105,7 @@ function doBlacklist(uid: string, upName: string, cb?: BlockCb, quiet?: boolean)
     url: 'https://api.bilibili.com/x/relation/modify',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     // gaia_source=web_main 贴合当前官方 web 端行为，降低被风控/失败概率
-    data: `fid=${encodeURIComponent(uid)}&act=5&re_src=11&gaia_source=web_main&csrf=${encodeURIComponent(csrf)}`,
+    data: `fid=${encodeURIComponent(uid)}&act=${act}&re_src=11&gaia_source=web_main&csrf=${encodeURIComponent(csrf)}`,
     withCredentials: true,
     onload: (res) => {
       let code: number | null = null;
@@ -112,27 +115,40 @@ function doBlacklist(uid: string, upName: string, cb?: BlockCb, quiet?: boolean)
         code = j.code;
         msg = j.message || '';
       } catch (e) {
-        /* 响应不是 JSON（风控页/网关错误）：code 保持 null，下面按「未知失败」处理 */
+        /* 响应不是 JSON（风控页/网关错误）：code 保持 null，调用方按「未知失败」处理 */
       }
-      riskGuard.note(code); // 拉黑响应也喂给熔断器（批量拉黑触发风控时全局退避）
-      addLocal();
-      // 22120 = 已在黑名单，视作成功（幂等）
-      const ok = code === 0 || code === 22120;
-      // 成功拉黑写入屏蔽记录（单发/批量共用），让用户能看到“这次拉黑了谁”
-      if (ok) logBlocked('拉黑', { up: upName || (CONFIG.uidNames && CONFIG.uidNames[String(uid)]) || '', uid: String(uid) }, 'BL');
-      if (!quiet) {
-        // 仅对「本次新拉黑(code 0)」提供撤销：22120 是此前就已在黑名单，撤销它可能误删用户早先的设置，故不提供。
-        if (code === 0) toast(`已拉黑并同步账号黑名单：${label}（刷新后不再推荐）`, 'success', { label: '撤销', onClick: () => unblockUp(String(uid), upName) });
-        else if (code === 22120) toast(`「${label}」此前已在账号黑名单，已本地同步`, 'success');
-        else toast(`账号侧拉黑失败（${relErr(code) || msg || 'code ' + code}），已本地屏蔽：${label}`, 'warn');
-      }
-      cb?.(ok, code);
+      riskGuard.note(code); // 两个方向的响应都喂给熔断器（批量拉黑触发风控时全局退避）
+      done({ code, msg, outcome: 'replied' });
     },
-    onerror: () => {
-      addLocal();
-      if (!quiet) toast(`网络错误，已本地屏蔽：${label}`, 'error');
-      cb?.(false, null);
-    },
+    onerror: () => done({ code: null, msg: '', outcome: 'neterr' }),
+  });
+}
+
+// 真正调接口拉黑（已确定 uid）。quiet=true 时不弹单条提示（批量/联合投稿场景由调用方汇总）。
+function doBlacklist(uid: string, upName: string, cb?: BlockCb, quiet?: boolean): void {
+  const label = upName || uid;
+  const addLocal = () => {
+    if (upName) setUidName(uid, upName);
+    // 批量(quiet) 不逐条存盘/重扫——由 doBlacklistMany.finish 统一一次 saveConfig+重扫，避免 N 次全页重扫卡顿。
+    if (quiet) pushUnique(CONFIG.block.uids, [String(uid)]);
+    else addToList(CONFIG.block.uids, String(uid));
+  };
+  relationModify(uid, 5, ({ code, msg, outcome }) => {
+    // 本地屏蔽无条件落地：账号侧不管成没成，用户的意图都是「别再让我看到这个人」。
+    addLocal();
+    // 22120 = 已在黑名单，视作成功（幂等）
+    const ok = code === 0 || code === 22120;
+    // 成功拉黑写入屏蔽记录（单发/批量共用），让用户能看到“这次拉黑了谁”
+    if (ok) logBlocked('拉黑', { up: upName || (CONFIG.uidNames && CONFIG.uidNames[String(uid)]) || '', uid: String(uid) }, 'BL');
+    if (!quiet) {
+      if (outcome === 'noauth') toast(`未登录，已本地屏蔽「${label}」(未同步账号黑名单)`, 'warn');
+      else if (outcome === 'neterr') toast(`网络错误，已本地屏蔽：${label}`, 'error');
+      // 仅对「本次新拉黑(code 0)」提供撤销：22120 是此前就已在黑名单，撤销它可能误删用户早先的设置，故不提供。
+      else if (code === 0) toast(`已拉黑并同步账号黑名单：${label}（刷新后不再推荐）`, 'success', { label: '撤销', onClick: () => unblockUp(String(uid), upName) });
+      else if (code === 22120) toast(`「${label}」此前已在账号黑名单，已本地同步`, 'success');
+      else toast(`账号侧拉黑失败（${relErr(code) || msg || 'code ' + code}），已本地屏蔽：${label}`, 'warn');
+    }
+    cb?.(ok, code);
   });
 }
 
@@ -140,40 +156,13 @@ function doBlacklist(uid: string, upName: string, cb?: BlockCb, quiet?: boolean)
 // 给「不可逆账号写操作」一个可恢复路径：单条拉黑成功后的撤销 toast、面板屏蔽记录的撤销按钮共用。
 export function unblockUp(uid: string, upName?: string, cb?: BlockCb): void {
   const label = upName || uid;
-  const csrf = getCookie('bili_jct');
-  if (!csrf) {
-    removeFromList(CONFIG.block.uids, String(uid)); // 未登录：仅能撤销本地屏蔽
-    toast(`已移出本地屏蔽：${label}（未登录，账号黑名单未变动）`, 'warn');
-    cb?.(false, -101);
-    return;
-  }
-  gmRequest({
-    method: 'POST',
-    url: 'https://api.bilibili.com/x/relation/modify',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    data: `fid=${encodeURIComponent(uid)}&act=6&re_src=11&gaia_source=web_main&csrf=${encodeURIComponent(csrf)}`,
-    withCredentials: true,
-    onload: (res) => {
-      let code = null;
-      let msg = '';
-      try {
-        const j = JSON.parse(res.responseText);
-        code = j.code;
-        msg = j.message || '';
-      } catch (e) {
-        /* 响应不是 JSON（风控页/网关错误）：code 保持 null，下面按「未知失败」处理 */
-      }
-      riskGuard.note(code);
-      removeFromList(CONFIG.block.uids, String(uid)); // 无论账号侧成败都移出本地屏蔽，避免界面与意图不一致
-      const ok = code === 0;
-      toast(ok ? `已撤销拉黑：${label}（刷新后恢复推荐）` : `账号侧撤销失败（${relErr(code) || msg || 'code ' + code}），已移出本地屏蔽：${label}`, ok ? 'success' : 'warn');
-      cb?.(ok, code);
-    },
-    onerror: () => {
-      removeFromList(CONFIG.block.uids, String(uid));
-      toast(`网络错误，已移出本地屏蔽：${label}`, 'error');
-      cb?.(false, null);
-    },
+  relationModify(uid, 6, ({ code, msg, outcome }) => {
+    removeFromList(CONFIG.block.uids, String(uid)); // 无论账号侧成败都移出本地屏蔽，避免界面与意图不一致
+    const ok = code === 0 && outcome === 'replied';
+    if (outcome === 'noauth') toast(`已移出本地屏蔽：${label}（未登录，账号黑名单未变动）`, 'warn');
+    else if (outcome === 'neterr') toast(`网络错误，已移出本地屏蔽：${label}`, 'error');
+    else toast(ok ? `已撤销拉黑：${label}（刷新后恢复推荐）` : `账号侧撤销失败（${relErr(code) || msg || 'code ' + code}），已移出本地屏蔽：${label}`, ok ? 'success' : 'warn');
+    cb?.(ok, code);
   });
 }
 
@@ -301,7 +290,6 @@ export function blacklistUp(info: BlockSource, cb?: (ok: boolean) => void, cardE
         return;
       }
       doBlacklistMany(targets, (r) => {
-        // 修正：doBlacklistMany 回调的是结果对象 {added,already,failed,total}，旧代码误按 (n,total) 取参导致文案/cb 恒错。
         const ok = r.added + r.already;
         toast(targets.length > 1 ? `联合投稿：已拉黑 ${ok}/${r.total} 位作者${r.failed.length ? `（失败 ${r.failed.length}）` : ''}` : `已拉黑：${targets[0].name || targets[0].uid}`);
         cb?.(ok > 0);

@@ -11,6 +11,10 @@ Phase 3：正确性修复 + 失败可见性 + 结构收敛（无用户可见的�
 - **XHR 实例复用污染**：同一个 `XMLHttpRequest` 对象被复用（`open()` 第二次调用）时，上一次请求缓存的 hook 匹配结果与惰性 getter 不会重置，导致 A 接口的过滤规则被套用到 B 接口的响应上。现在 `open()` 入口无条件重置这些状态。
 - **shadow DOM 内的卡片不随规则更新**：规则变更后的重扫只清主文档的已处理标记，shadow root 里的卡片保持旧判定（改了规则也不重判）。卡片扫描与标记清理现在共用同一套「主文档 + 所有存活 shadow root」的根集合。
 - **不可信配置可造出单字规则**：导入的 JSON 若把 `keywords` 写成字符串而非数组，`for..of "原神"` 会按字符编译出「原」「神」两条单字规则，足以屏蔽整个首页。新增 `sanitizeConfigInput`（按 `DEFAULT_CONFIG` 形状清洗导入内容）与消费侧兜底 `ruleLines`（规则数组的唯一入口，非字符串元素一律丢弃）。
+- **上一条的两个漏网点**：`dualTags` 是唯一没走 `ruleLines` 的规则维度——它不在 `buildMatchers` 里编译，而是每张卡现从 `CONFIG.block.dualTags` 上 `for..of` + `.length`，于是既绕过了防线（字段是字符串时 `.length` 非零，会白白去拉每张卡的标签接口），也让 `ApiDim.active` 的类型被迫写成 `() => boolean | number`。现在与其它维度一样在 `buildMatchers` 里编译成 `M.dualTags`（预拆分量并小写，热路径不再每张卡跑一遍 `split/map/filter`；原行原样保留，`维度:规则` 原因串不受影响），`active` 收回 `() => boolean`。屏蔽记录面板里的 `CONFIG.block.uids.map(String)` 同理改走 `ruleLines`——字段被写坏时 `.map` 会直接抛，把整个记录面板打空。新增用例覆盖全部 8 个可定位维度被写成字符串的情形。
+- **未渲染的评论被永久跳过**：`processComment` 在读 `__data` **之前**就写下 `host.__bfbCmtV = ruleVersion`，而评论宿主常常先入 DOM、数据后到。于是紧接着那句 `if (!c.uname && !c.message) return; // 还没渲染出数据，等下一轮` 永远等不到下一轮——本规则版本内这条评论再也不会被评估，代码与自己的注释相互矛盾。改为数据到齐后才打版本号。
+- **`isLive` 的含义随开关漂移**：它原先只在 `hideAd || hideLiveCard` 时才计算，但 `processCard` 拿它来区分「无标题的直播卡」与「尚未渲染的骨架卡」——两个开关都关时，每一张无标题直播卡都会被判成骨架、每轮扫描重抠一次。字段含义不该随配置变化，现在直播识别（两次 `querySelector` + 一次本卡 `textContent`，很轻）恒定计算，只有真正昂贵的广告角标全卡遍历仍跟着 `hideAd` 走；`DetectFlags` 随之只剩 `detectAd` 一个。
+- **`分区` 会匹配到推荐理由**：拦截层归一 JSON 时，`partition` 在 `tname`/`typename` 缺失后兜底取 `rcmd_reason.content`，而那是「已关注 / 高播放」这类**推荐角标**，不是分区——`分区:` 规则与 `part:` 关键词会因此莫名其妙地命中。JSON 这一路本就拿得到权威分区字段，没有理由降级去用一个语义不同的字段，兜底删除。
 
 ### 可观测性（失败可见）
 - **运行自检 `src/health.ts`**：这类脚本最典型的故障是静默失效——B 站换个接口路径或类名，脚本照常跑、角标照常显示，只是什么都不再拦。现在在拦截层与 DOM 层埋轻量计数器，首屏稳定后（3.5s）在控制台输出告警，面板「工具」页新增「🩺 运行自检」区可随时查看：接口请求数 / 形似推荐流的请求数 / 命中推荐接口数 / 解析出列表数 / 识别卡片数。
@@ -50,6 +54,8 @@ Phase 3：正确性修复 + 失败可见性 + 结构收敛（无用户可见的�
   - `ui/panel/index.ts` 的 `buildPanel()` 改为返回面板根节点，调用方不必再 `getElementById` 一遍去应付「理论上的 null」——顺带去掉了首次打开时白渲染一遍的重复调用。
   至此 lint 里为未类型化模块兜底的 `no-undef` 与 `UNTYPED_FILES` 名单一并删除，`ban-ts-comment` 对 `ts-nocheck` 的豁免也收回：再想整文件关掉类型检查得先过这条规则，防止「加个 nocheck 先跑起来」重新变成常态。
 - **迁移期的 lint 豁免全部收回**：`eslint.config.js` 里那组「等类型化完再收紧」的关停规则（空 `catch`、`arguments`、`x && x()`、`this` 别名、正则字符类）到期兑现，一并把对应的 29 处代码改了而不是把规则继续关着：回调统一写 `cb?.(…)`；5 个空 `catch` 补上「为什么可以吞」的说明（吞异常的理由必须写下来，否则下一个人无法判断该不该改）；`XHR.open` 的 `async/user/password` 从 `arguments[2..4]` 转正为具名可选参数，「原样透传」这件事从此看得见。真正的例外只剩 3 处，改用**定点** `eslint-disable-next-line` + 理由注释（表情正则要的就是按码点拆掉组合表情；两处 `this` 别名分别是给 `defineProperty` 的 getter 和 `closest` 的起点用的），这样同类问题在新代码里仍会被拦下——而不是像整条规则关掉那样对所有人静默放行。全角空格改为只在模板串与注释里允许（中文文案的排版是有意的，代码里的则是误输入）。
+- **拉黑与撤销拉黑收敛为一个请求函数**：两者打的是同一个 `relation/modify`，只差一个 `act`，此前却是两份约 95% 相同的代码（取 csrf、拼表单、解析响应、喂熔断器各写了一遍）——改一处忘另一处只是时间问题。现在 `relationModify(uid, act, done)` 只管「发请求 + 归一响应」，本地名单怎么改、弹什么文案、成功怎么算留给两个调用方（这部分两个动作本就不同，硬塞进去只会换成一堆回调参数）。归一结果带一个三态 `outcome`（未登录 / 网络错误 / 拿到响应）：这三种情况 `code` 都可能不是正常业务码，但对用户要说的话完全不同，只看 `code` 分不开——过去正是靠代码路径的位置隐式区分的，合并时若不显式建模就会把「网络错误」说成「账号侧失败（code null）」。
+- **`collectSubRules()` 的返回值恢复真类型**：`match/engine.ts` 里两处 `const sub: any = collectSubRules()` 把 `SubRules` 丢掉了，起因是 `dualTags` 不属于订阅可携带的维度、按 `SubDim` 索引会报错。改为一个类型守卫 `isSubDim` + 共享的 `userAndSubLines(dim, sub)`：「这个维度有没有订阅来源」从一次 `any` 变成编译器认得的事实，`buildMatchers` 与 `enumerateRules` 里那两段各写一遍的「用户名单 ∪ 订阅」也合成了一处。
 - **选择器登记表 `src/selectors.ts`**：散落在 5 个模块里的 B 站 DOM 选择器字面量集中到一处。B 站改版时只需改这一个文件。
 - **配置结构版本 `schemaVersion`**：存档带版本号 + `migrateConfig` 迁移链，为将来重命名字段/改变量纲留出无损升级路径（纯新增字段不需要升版本，`deepMerge` 会补默认值）。
 - **`net.ts` 移除 `@ts-nocheck`**：拦截层恢复完整类型检查。

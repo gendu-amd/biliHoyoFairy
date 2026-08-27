@@ -6,10 +6,24 @@ import { compileScopedKeywords, compileLines, kwHit, kwWhich, textHit, whichHit,
 import type { Matcher, ScopedKw, KwScope } from './normalize';
 import type { CardInfo } from '../cardinfo';
 import { collectSubRules } from '../subscriptions/store';
+import { SUB_DIMS } from '../subscriptions/parse';
+import type { SubDim, SubRules } from '../subscriptions/parse';
 
 // 关键时序：必须在下方首次 buildMatchers() 之前接好 fuzzy 取值器，否则初始匹配器会以 fuzzy=false 编译，
 // 导致首屏（网络层过滤 + 首次扫描）对默认开启的反绕过匹配失效，直到某次 rebuildRules 才纠正。
 configureFuzzy(() => CONFIG.fuzzyMatch);
+
+// 订阅能携带的维度是 SUB_DIMS 的子集（dualTags 不在其列——组合规则语义太重，不接受外部订阅下发）。
+// 用一个类型守卫把「这个维度有没有订阅来源」表达出来，取代过去的 `sub: any`：
+// 少了 any，多写一个 dualTags 维度时编译器会直接告诉你订阅侧要不要跟着改。
+const SUB_DIM_SET = new Set<string>(SUB_DIMS);
+const isSubDim = (f: RuleListField): f is SubDim & RuleListField => SUB_DIM_SET.has(f);
+// 一条维度当前生效的全部规则行 = 用户名单 ∪ 已启用订阅。ruleLines 是唯一入口：
+// 存档/导入/订阅里的字段可能不是数组（甚至是字符串），直接 map 会得到按字符拆开的伪规则。
+function userAndSubLines(dim: RuleListField, sub: SubRules): string[] {
+  const own = ruleLines(CONFIG.block[dim]);
+  return isSubDim(dim) ? own.concat(ruleLines(sub[dim])) : own;
+}
 
 // 编译后的匹配器集合：精确维度预编译成 Set、关键词/正则维度编译成 Matcher，热路径直接复用。
 export interface Matchers {
@@ -17,6 +31,7 @@ export interface Matchers {
   blockPartition: Matcher;
   allowKw: ScopedKw;
   blockTag: Matcher;
+  dualTags: DualTagRule[];
   upBio: Matcher;
   blockUidSet: Set<string>;
   blockBvidSet: Set<string>;
@@ -33,24 +48,41 @@ export interface Matchers {
   upBioActive: boolean;
 }
 
+// 「双标签」规则的编译形态：src 是名单里的**原行**（命中原因串要用它，且不能 trim，
+// 否则与 ruleKeyOf 对不上、规则体检会误报死规则）；parts 是拆好并预先小写的各分量。
+// 编译成这个形状而不是在 match 里现拆，一是让它和其它维度一样只在 ruleLines 这一个口子进，
+// 二是每张卡不再重复跑 split/map/filter。
+export interface DualTagRule {
+  src: string;
+  parts: string[];
+}
+function compileDualTags(lines: unknown): DualTagRule[] {
+  const out: DualTagRule[] = [];
+  for (const src of ruleLines(lines)) {
+    const parts = src.split('+').map((s) => lc(s.trim())).filter(Boolean);
+    if (parts.length >= 2) out.push({ src, parts }); // 少于两个分量的行不成其为「双标签」，编译期就丢掉
+  }
+  return out;
+}
+
 export function buildMatchers(): Matchers {
   // 精确匹配维度预编译成 Set，避免每张卡每次都 map/includes/some 重建数组（大黑名单下显著更快）
-  // 一律先过 ruleLines：存档/导入/订阅里的规则字段可能不是数组（甚至是字符串），
-  // 直接 map 会拿到按字符拆开的伪规则或抛错。消费点收口，写入点漏了也不致命。
   const lcSet = (arr: unknown) => new Set(ruleLines(arr).map((x) => lc(x)).filter(Boolean));
   const strSet = (arr: unknown) => new Set(ruleLines(arr));
   // 黑名单 = 用户规则 ∪ 已启用订阅规则（订阅只并入黑名单维度，不碰白名单/开关）
-  const sub: any = collectSubRules();
-  const u = (dim: keyof typeof CONFIG.block) => ruleLines(CONFIG.block[dim]).concat(ruleLines(sub[dim]));
+  const sub = collectSubRules();
+  const u = (dim: RuleListField) => userAndSubLines(dim, sub);
   const blockUidSet = strSet(u('uids'));
   const allowUidSet = strSet(CONFIG.allow.uids);
   const blockTag = compileLines(u('tags'));
+  const dualTags = compileDualTags(u('dualTags'));
   const upBio = compileLines(u('upBio'));
   return {
     blockKw: compileScopedKeywords(u('keywords')),
     blockPartition: compileLines(u('partitions')),
     allowKw: compileScopedKeywords(CONFIG.allow.keywords),
     blockTag,
+    dualTags,
     upBio,
     blockUidSet,
     blockBvidSet: new Set(u('bvids')),
@@ -108,7 +140,7 @@ export interface SyncDim {
 export interface ApiDim {
   source: 'tag' | 'view' | 'card';
   needs: 'tag' | 'view' | 'card';
-  active: () => boolean | number;
+  active: () => boolean;
   match: (info: CardInfo, ctx: ApiCtx) => string | null;
 }
 
@@ -184,11 +216,10 @@ export const API_DIMS: ApiDim[] = [
   {
     source: 'tag',
     needs: 'tag',
-    active: () => CONFIG.block.dualTags.length,
+    active: () => M.dualTags.length > 0,
     match: (info, ctx) => {
-      for (const group of CONFIG.block.dualTags) {
-        const parts = String(group).split('+').map((s) => s.trim()).filter(Boolean);
-        if (parts.length >= 2 && parts.every((p) => ctx.tags.some((t) => lc(t).includes(lc(p))))) return '双标签:' + group;
+      for (const rule of M.dualTags) {
+        if (rule.parts.every((p) => ctx.tags.some((t) => lc(t).includes(p)))) return '双标签:' + rule.src;
       }
       return null;
     },
@@ -289,12 +320,12 @@ export function ruleKeyOf(field: RuleListField, line: string): string | null {
 // 规则体检据此与 CONFIG.ruleStats 求差集：有键无命中 = 可疑的死规则。
 export function enumerateRules(): RuleRef[] {
   const out: RuleRef[] = [];
-  const sub: any = collectSubRules();
+  const sub = collectSubRules();
   const seen = new Set<string>();
   for (const field of Object.keys(REASON_RULE_FIELD).map((d) => REASON_RULE_FIELD[d])) {
     const active = !API_FIELDS.has(field) || !!CONFIG.apiFilters;
     const own = new Set(ruleLines(CONFIG.block[field]));
-    for (const line of ruleLines(CONFIG.block[field]).concat(ruleLines(sub[field]))) {
+    for (const line of userAndSubLines(field, sub)) {
       const key = ruleKeyOf(field, line);
       // 同一条规则可能同时存在于用户名单与订阅里；只留一条，且以「用户自己的」为准（那份能删）。
       if (!key || seen.has(key)) continue;

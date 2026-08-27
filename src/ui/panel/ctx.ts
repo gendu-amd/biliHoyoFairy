@@ -28,8 +28,8 @@ export interface PanelSection {
 // 因此直接抛（错误边界会记到控制台），而不是每处都写 if (!el) return 把 bug 藏起来。
 // 有了它，各分区不必再为「Element 可能为 null / Element 上没有 .value」到处写断言，
 // 这正是 sections/* 曾经需要 @ts-nocheck 的主要原因。
-// 形参写成三者的并集而不是 ParentNode：ParentNode 只是接口，浏览器里并不存在同名全局，
-// 而 lint 的 no-undef（仍在为未类型化模块兜底）只认真实全局名。
+// 形参写成三者的并集而不是 ParentNode：面板只会把这三种东西传进来，写全了调用方一眼可见，
+// 也避免 ParentNode 那个更宽的接口把不该进来的节点类型放进来。
 export function q<T extends HTMLElement = HTMLElement>(root: Element | Document | DocumentFragment, sel: string): T {
   const el = root.querySelector(sel);
   if (!el) throw new Error('[bfb] 面板模板缺少元素: ' + sel);
