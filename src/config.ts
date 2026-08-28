@@ -1,5 +1,5 @@
 // 配置：默认值 + 本地存储（GM）+ 载入合并 + 导入/导出。CONFIG 为全局共享单例（对象被各模块就地读写）。
-import { SAVE_DEBOUNCE_MS, SCHEMA_VERSION, STORE_KEY, UNSAFE_KEYS, VERSION } from './constants';
+import { SAVE_DEBOUNCE_MS, SCHEMA_VERSION, STORE_KEY, SYNC_COALESCE_MS, UNSAFE_KEYS, VERSION } from './constants';
 
 export interface BlockConfig {
   keywords: string[];
@@ -190,8 +190,54 @@ export function loadConfig(): AppConfig {
 // 全局共享配置单例。
 export const CONFIG: AppConfig = loadConfig();
 
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
 export function saveConfig(): void {
+  // 立即存盘时顺手取消待写入：内容相同的重复写没有意义，而且每次写都会广播给其它标签页
+  // （见下面的 installConfigSync），让它们白重载一次。
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
   GM_setValue(STORE_KEY, JSON.stringify(CONFIG));
+}
+
+export function scheduleSave(): void {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveConfig, SAVE_DEBOUNCE_MS);
+}
+
+// —— 多标签页同步 ——
+//
+// CONFIG 是内存单例，saveConfig() 把它**整份**覆盖写回存储。于是同时开着两个 B 站标签页时：
+// A 页加了规则并存盘 → B 页内存里还是加规则之前的旧快照 → B 页此后任何一次存盘（哪怕只是
+// 拦截计数 +1）都会把 A 页刚加的规则整体冲掉。用户侧的现象是「这脚本有时候记不住规则」，
+// 且完全没有报错。开得越久的那个标签页，覆盖掉的东西越多。
+//
+// 修法是让写入可被感知：任一标签页写入后，其余标签页立刻重新载入并重建规则，
+// 把丢数据的窗口从「两个标签页的整个生命周期」缩到「一次存盘防抖」。
+export function installConfigSync(onAdopt: () => void): void {
+  // 老版本脚本管理器没有这个 API：降级为无同步（即当前行为），不影响其它功能。
+  if (typeof GM_addValueChangeListener !== 'function') return;
+  let syncTimer: ReturnType<typeof setTimeout> | null = null;
+  GM_addValueChangeListener(STORE_KEY, (_name, _old, _new, remote) => {
+    if (!remote) return; // 自己写的回声：不理，否则每次存盘都会自我重载一遍
+    if (syncTimer) clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => {
+      syncTimer = null;
+      // 撤掉本页待写入：saveConfig 序列化的是**当下**的 CONFIG，采纳之后它写回去的内容
+      // 与对面刚写的一模一样，只会再广播一轮、让所有标签页白重载一次。
+      if (saveTimer) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+      }
+      // 用 deepMerge 就地并入，而不是 Object.assign(CONFIG, fresh)：后者会把 CONFIG.block /
+      // CONFIG.comment 换成新对象，而面板的输入框在渲染时就绑定了这些**对象引用**，
+      // 换掉之后用户再改设置就写进了脱钩的旧对象，看得见改不生效。
+      deepMerge(CONFIG, loadConfig());
+      onAdopt();
+    }, SYNC_COALESCE_MS);
+  });
 }
 
 // uidNames（持久化）软上限：达上限后不再写入「新」键，避免存档 blob 无界膨胀（仅影响新 UP 按名展示，退回显示 uid）。
@@ -203,12 +249,6 @@ export function setUidName(uid: unknown, name: string): void {
   if (CONFIG.uidNames[k] !== undefined || Object.keys(CONFIG.uidNames).length < UID_NAMES_MAX) {
     CONFIG.uidNames[k] = name;
   }
-}
-
-let saveTimer: ReturnType<typeof setTimeout> | null = null;
-export function scheduleSave(): void {
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveConfig, SAVE_DEBOUNCE_MS);
 }
 
 // 导出：仅含可分享的规则与过滤开关，剔除统计/缓存/个人会话偏好。

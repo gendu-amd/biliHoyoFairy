@@ -22,6 +22,7 @@ export const banner = `// ==UserScript==
 // @connect      gitee.com
 // @grant        GM_setValue
 // @grant        GM_getValue
+// @grant        GM_addValueChangeListener
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand

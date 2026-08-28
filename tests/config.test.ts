@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CONFIG,
   DEFAULT_CONFIG,
@@ -7,8 +7,9 @@ import {
   exportConfig,
   sanitizeConfigInput,
   migrateConfig,
+  installConfigSync,
 } from '../src/config';
-import { SCHEMA_VERSION } from '../src/constants';
+import { SCHEMA_VERSION, STORE_KEY, SYNC_COALESCE_MS } from '../src/constants';
 
 describe('exportConfig：剔除不可移植键（安全红线）', () => {
   it('导出不含 subscriptions/uidNames/blockedCount/enabled/debug/reviewMode，但保留规则', () => {
@@ -89,6 +90,63 @@ describe('sanitizeConfigInput：清洗不可信导入（安全红线）', () => 
   it('subscriptions 这类无形状引用的字段整体丢弃（防塞入自动联网 URL）', () => {
     const out = sanitizeConfigInput({ subscriptions: [{ url: 'https://evil.example/x.json', enabled: true }] });
     expect(out.subscriptions).toEqual([]); // 元素非字符串 → 清空；面板侧还会再按 NON_PORTABLE 删掉整键
+  });
+});
+
+// 同时开两个 B 站标签页时，晚存盘的那个会把先存盘的那个刚加的规则整体冲掉（各自写的是
+// 自己内存里的整份快照）。这组用例锁住「对面写入 → 本页立刻采纳」这条链路。
+describe('installConfigSync：多标签页配置同步', () => {
+  const fire = (remote: boolean) => (globalThis as any).__gmFireValueChange(STORE_KEY, remote);
+  const writeFromOtherTab = (patch: Record<string, any>) => {
+    GM_setValue(STORE_KEY, JSON.stringify({ ...structuredClone(DEFAULT_CONFIG), ...patch }));
+  };
+  let adopts = 0;
+
+  beforeAll(() => installConfigSync(() => adopts++));
+  beforeEach(() => {
+    vi.useFakeTimers();
+    adopts = 0;
+    Object.assign(CONFIG, structuredClone(DEFAULT_CONFIG));
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it('采纳其它标签页写入的规则，并回调通知（重扫/刷面板由 main 接线）', () => {
+    writeFromOtherTab({ block: { ...DEFAULT_CONFIG.block, keywords: ['另一个标签页加的'] } });
+    fire(true);
+    vi.advanceTimersByTime(SYNC_COALESCE_MS + 10);
+    expect(CONFIG.block.keywords).toEqual(['另一个标签页加的']);
+    expect(adopts).toBe(1);
+  });
+
+  it('自己写的回声（remote=false）不触发重载', () => {
+    writeFromOtherTab({ block: { ...DEFAULT_CONFIG.block, keywords: ['不该被采纳'] } });
+    fire(false);
+    vi.advanceTimersByTime(SYNC_COALESCE_MS + 10);
+    expect(CONFIG.block.keywords).toEqual([]);
+    expect(adopts).toBe(0);
+  });
+
+  it('对面连改几条时合并成一次重载', () => {
+    writeFromOtherTab({});
+    fire(true);
+    fire(true);
+    fire(true);
+    vi.advanceTimersByTime(SYNC_COALESCE_MS + 10);
+    expect(adopts).toBe(1);
+  });
+
+  // 面板的输入框在渲染时绑定的是 CONFIG.block 这类**对象引用**。采纳若换掉这些对象，
+  // 用户之后改设置就写进了脱钩的旧对象——界面有反应、配置不变、也不报错。
+  it('采纳时保持嵌套对象的引用不变（面板绑定不脱钩）', () => {
+    const block = CONFIG.block;
+    const comment = CONFIG.comment;
+    writeFromOtherTab({ hideAd: true, block: { ...DEFAULT_CONFIG.block, uids: ['123'] } });
+    fire(true);
+    vi.advanceTimersByTime(SYNC_COALESCE_MS + 10);
+    expect(CONFIG.block).toBe(block);
+    expect(CONFIG.comment).toBe(comment);
+    expect(CONFIG.block.uids).toEqual(['123']); // 内容照常更新
+    expect(CONFIG.hideAd).toBe(true);
   });
 });
 

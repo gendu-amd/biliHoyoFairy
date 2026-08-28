@@ -18,6 +18,7 @@
 // @connect      gitee.com
 // @grant        GM_setValue
 // @grant        GM_getValue
+// @grant        GM_addValueChangeListener
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand
@@ -70,6 +71,7 @@
   var UNSAFE_KEYS = /* @__PURE__ */ new Set(["__proto__", "constructor", "prototype"]);
   var BLOCKED_LOG_MAX = 300;
   var SAVE_DEBOUNCE_MS = 1200;
+  var SYNC_COALESCE_MS = 300;
   var STARTUP_SUMMARY_MS = 3500;
   var LIST_SEARCH_MIN = 8;
   var RISK_CODES = /* @__PURE__ */ new Set([-352, -412, -509, -799]);
@@ -205,8 +207,34 @@
     }
   }
   var CONFIG = loadConfig();
+  var saveTimer = null;
   function saveConfig() {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
     GM_setValue(STORE_KEY, JSON.stringify(CONFIG));
+  }
+  function scheduleSave() {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveConfig, SAVE_DEBOUNCE_MS);
+  }
+  function installConfigSync(onAdopt) {
+    if (typeof GM_addValueChangeListener !== "function") return;
+    let syncTimer = null;
+    GM_addValueChangeListener(STORE_KEY, (_name, _old, _new, remote) => {
+      if (!remote) return;
+      if (syncTimer) clearTimeout(syncTimer);
+      syncTimer = setTimeout(() => {
+        syncTimer = null;
+        if (saveTimer) {
+          clearTimeout(saveTimer);
+          saveTimer = null;
+        }
+        deepMerge(CONFIG, loadConfig());
+        onAdopt();
+      }, SYNC_COALESCE_MS);
+    });
   }
   var UID_NAMES_MAX = 5e3;
   function setUidName(uid, name) {
@@ -215,11 +243,6 @@
     if (CONFIG.uidNames[k] !== void 0 || Object.keys(CONFIG.uidNames).length < UID_NAMES_MAX) {
       CONFIG.uidNames[k] = name;
     }
-  }
-  var saveTimer = null;
-  function scheduleSave() {
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveConfig, SAVE_DEBOUNCE_MS);
   }
   var NON_PORTABLE = ["blockedCount", "uidNames", "enabled", "debug", "reviewMode", "subscriptions", "ruleStats", "ruleStatsSince"];
   function exportConfig() {
@@ -4387,6 +4410,14 @@ ${r.line}`, {
       refreshStatsIfOpen();
     });
     setRulesChangedHandler(() => rescanAfterRuleChange());
+    installConfigSync(() => {
+      rescanAfterRuleChange();
+      if (document.body) updateBadge();
+      const ae = document.activeElement;
+      const typing = !!(ae && ae.closest("#bfb-panel") && ae.matches("input, textarea, select"));
+      if (!typing) refreshPanelIfOpen2();
+      toast("⚙ 配置已在另一个标签页更新，本页已同步");
+    });
     function installShadowHook() {
       const orig = Element.prototype.attachShadow;
       if (orig.__bfb) return;

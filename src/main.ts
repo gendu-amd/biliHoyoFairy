@@ -3,7 +3,7 @@
 // 业务逻辑全部在各 src 模块；本文件只负责装配。
 // bootstrap 只依赖各模块的「入口/接线」符号；其余模块经依赖图传递性加载（无需在此直接 import）。
 import { VERSION, BLACKLIST_MANAGE_URL, STARTUP_SUMMARY_MS } from './constants';
-import { CONFIG, saveConfig } from './config';
+import { CONFIG, saveConfig, installConfigSync } from './config';
 import { safe, logErr, BADGE } from './logging';
 import { healthReport } from './health';
 import { configureCardDetect } from './cardinfo';
@@ -51,6 +51,17 @@ import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
   });
   // 规则变更 seam：rules / subscriptions 发事件，这里落到 DOM 层的重建+重扫（打断 dom↔rules 环）。
   setRulesChangedHandler(() => rescanAfterRuleChange());
+  // 多标签页同步 seam：别的标签页改了配置 → 本页已就地采纳，这里负责让它可见（重扫 + 角标 + 面板）。
+  installConfigSync(() => {
+    rescanAfterRuleChange();
+    if (document.body) updateBadge();
+    // 正在面板里打字时不重渲：refreshPanelIfOpen 会重建整个面板，把用户没提交完的输入清掉。
+    // 配置本身已经采纳（规则已生效），少刷新一次面板只是显示滞后，下一次交互就会补上。
+    const ae = document.activeElement;
+    const typing = !!(ae && ae.closest('#bfb-panel') && ae.matches('input, textarea, select'));
+    if (!typing) refreshPanelIfOpen();
+    toast('⚙ 配置已在另一个标签页更新，本页已同步');
+  });
 
   /* ===================== 2. shadow 钩子（依赖 comments/shadow，故留在 bootstrap） ===================== */
   // hook Element.prototype.attachShadow：把页面创建的每个开放 shadowRoot 收进注册表（评论组件定位、卡片穿透共用）。

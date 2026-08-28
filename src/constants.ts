@@ -38,6 +38,9 @@ export const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 // 分散在各模块里时没人能一眼看到这份预算（各模块自己的缓存上限仍留在原地，那是实现细节不是预算）。
 export const BLOCKED_LOG_MAX = 300; // 本次会话屏蔽记录条数上限
 export const SAVE_DEBOUNCE_MS = 1200; // 配置存盘防抖
+// 多标签页同步：收到别的标签页写入后，等这么久再整份采纳（对面连改几条规则时只重载一次）。
+// 要明显短于 SAVE_DEBOUNCE_MS，否则本页在采纳之前就可能先把旧快照写回去。
+export const SYNC_COALESCE_MS = 300;
 export const STARTUP_SUMMARY_MS = 3500; // 首屏稳定后弹「本次拦截」汇总 + 跑运行自检的延时
 export const LIST_SEARCH_MIN = 8; // 名单超过这么多条才显示搜索框（三五条时肉眼就够，多一个框只是噪音）
 
