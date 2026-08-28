@@ -1831,45 +1831,57 @@
     });
     if (!sent) cb(null);
   }
-  function fetchView(bvid, cb) {
-    if (!bvid) return cb(null);
-    if (API.view.has(bvid)) return cb(API.view.get(bvid));
+  var RETRY_AFTER_MS = 3e4;
+  var COOLDOWN_MAX = 2e3;
+  var cooldown = /* @__PURE__ */ new Map();
+  function inCooldown(k) {
+    const until = cooldown.get(k);
+    if (until === void 0) return false;
+    if (Date.now() < until) return true;
+    cooldown.delete(k);
+    return false;
+  }
+  function cachedGet(cache, cap, ns, key, url, pick, cb) {
+    if (!key) return cb(null);
+    if (cache.has(key)) return cb(cache.get(key));
+    if (inCooldown(ns + key)) return cb(null);
     apiEnqueue((done) => {
-      gmGet("https://api.bilibili.com/x/web-interface/view?bvid=" + encodeURIComponent(bvid), (j) => {
-        const d = j && j.code === 0 ? j.data : null;
-        capMapSet(API.view, bvid, d, VIEW_CACHE_MAX);
-        if (d && d.owner && d.owner.mid && d.owner.name && CONFIG.uidNames[String(d.owner.mid)] === void 0) {
-          setUidName(d.owner.mid, d.owner.name);
-          scheduleSave();
+      gmGet(url, (j) => {
+        const code = j && typeof j.code === "number" ? j.code : null;
+        if (code === null || RISK_CODES.has(code)) {
+          capMapSet(cooldown, ns + key, Date.now() + RETRY_AFTER_MS, COOLDOWN_MAX);
+          cb(null);
+        } else {
+          const d = code === 0 ? pick(j) : null;
+          capMapSet(cache, key, d, cap);
+          cb(d);
         }
-        cb(d);
         done();
       });
+    });
+  }
+  function fetchView(bvid, cb) {
+    cachedGet(API.view, VIEW_CACHE_MAX, "v:", bvid, "https://api.bilibili.com/x/web-interface/view?bvid=" + encodeURIComponent(bvid), (j) => j.data, (d) => {
+      if (d && d.owner && d.owner.mid && d.owner.name && CONFIG.uidNames[String(d.owner.mid)] === void 0) {
+        setUidName(d.owner.mid, d.owner.name);
+        scheduleSave();
+      }
+      cb(d);
     });
   }
   function fetchTags(bvid, cb) {
-    if (!bvid) return cb(null);
-    if (API.tag.has(bvid)) return cb(API.tag.get(bvid));
-    apiEnqueue((done) => {
-      gmGet("https://api.bilibili.com/x/web-interface/view/detail/tag?bvid=" + encodeURIComponent(bvid), (j) => {
-        const arr = j && j.code === 0 && Array.isArray(j.data) ? j.data.map((x) => x.tag_name).filter(Boolean) : null;
-        capMapSet(API.tag, bvid, arr, TAG_CACHE_MAX);
-        cb(arr);
-        done();
-      });
-    });
+    cachedGet(
+      API.tag,
+      TAG_CACHE_MAX,
+      "t:",
+      bvid,
+      "https://api.bilibili.com/x/web-interface/view/detail/tag?bvid=" + encodeURIComponent(bvid),
+      (j) => Array.isArray(j.data) ? j.data.map((x) => x.tag_name).filter(Boolean) : null,
+      cb
+    );
   }
   function fetchCard(mid, cb) {
-    if (!mid) return cb(null);
-    if (API.card.has(mid)) return cb(API.card.get(mid));
-    apiEnqueue((done) => {
-      gmGet("https://api.bilibili.com/x/web-interface/card?mid=" + encodeURIComponent(mid), (j) => {
-        const d = j && j.code === 0 ? j.data : null;
-        capMapSet(API.card, mid, d, CARD_CACHE_MAX);
-        cb(d);
-        done();
-      });
-    });
+    cachedGet(API.card, CARD_CACHE_MAX, "c:", mid, "https://api.bilibili.com/x/web-interface/card?mid=" + encodeURIComponent(mid), (j) => j.data, cb);
   }
   function cachedUid(bvid) {
     const d = bvid && API.view.get(bvid);
