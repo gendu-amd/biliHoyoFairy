@@ -22,6 +22,7 @@ export const health = {
   feedParsed: 0, // 命中后又成功取出可过滤列表的响应数
   feedItems: 0, // 累计经过拦截层判定的列表项数
   cardsSeen: 0, // DOM 兜底层识别到的视频卡数
+  signedSkipped: 0, // 因携带 WBI 签名(w_rid)而放弃改写的请求数（见 net.ts SIGNED_RE）
   noteRequest(url: string): void {
     if (!url || !API_RE.test(url)) return;
     this.apiSeen++;
@@ -41,6 +42,12 @@ export function healthReport(): string[] {
   } else if (health.feedMatched > 0 && health.feedParsed === 0) {
     w.push('已捕获到推荐接口响应，但取不出其中的视频列表：接口返回结构可能已变更，拦截层当前未生效。请更新脚本或提 Issue。');
   }
+  // 用户开着一个不生效的开关，比脚本坏了更难自己发现——页面一切正常，只是设的东西没用。
+  if (health.signedSkipped > 0) {
+    w.push(
+      `有 ${health.signedSkipped} 个请求因携带 WBI 签名（w_rid）而放弃改写：签名覆盖全部查询参数，改动会被 B 站判为 -403 校验失败。目前唯一会改写请求的功能是「进阶 → 增大首页推荐每批加载数量」，它在这些已签名的接口上不会生效（不影响屏蔽本身），可以关掉。`
+    );
+  }
   if (pageType() !== '其他' && health.cardsSeen === 0) {
     w.push('未识别到任何视频卡：卡片选择器可能已失效，DOM 兜底层当前未生效。请更新脚本或提 Issue。');
   }
@@ -58,5 +65,9 @@ export function healthNotes(): string[] {
 
 // 面板「运行自检」用的一行摘要。
 export function healthSummary(): string {
-  return `页面 ${pageType()} · 接口请求 ${health.apiSeen}（形似推荐流 ${health.feedLike}）· 命中推荐接口 ${health.feedMatched} · 解析出列表 ${health.feedParsed}（${health.feedItems} 项）· 识别卡片 ${health.cardsSeen}`;
+  return (
+    `页面 ${pageType()} · 接口请求 ${health.apiSeen}（形似推荐流 ${health.feedLike}）· 命中推荐接口 ${health.feedMatched} · 解析出列表 ${health.feedParsed}（${health.feedItems} 项）· 识别卡片 ${health.cardsSeen}` +
+    // 常态是 0，只有开了改写类功能且撞上已签名接口才非 0——恒显示只会变成没人看的噪音。
+    (health.signedSkipped ? ` · 因 WBI 签名放弃改写 ${health.signedSkipped}` : '')
+  );
 }

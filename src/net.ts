@@ -92,6 +92,18 @@ export function filterFeedJson(url: string, json: any): number {
 //   postFn: (url, json) => removedCount —— 原地修改解析后的 JSON，返回删除条数
 type PreFn = (url: string) => string | void;
 type PostFn = (url: string, json: any) => number;
+
+// 「这条请求已带 WBI 签名」的标记。
+//
+// B 站的 wbi 接口把**全部** query 参数按 key 排序后连同 mixin_key 一起 MD5，得出 w_rid。
+// 也就是说签名覆盖每一个参数——签完名再动其中任何一个（哪怕只是把 ps=12 改成 ps=30、
+// 或加个防缓存随机数），服务端校验必然对不上，直接返回 -403 校验失败，该接口这一次就白发了。
+// 首页推荐早已迁到 wbi 路径（FEED_HOOKS 第一条），所以这不是理论风险。
+//
+// 兜底放在管线出口而不是某个 preFn 里：B 站把接口往 wbi 迁是持续在发生的事，按「有没有
+// w_rid」这个确定性标记判定，才不会在下一次迁移时又悄悄破一遍。代价是相应的改写功能
+// 在已签名接口上不生效——这由 health 显式报出来，而不是让用户对着刷不出的首页猜。
+const SIGNED_RE = /[?&]w_rid=/;
 const NET = (() => {
   const preFns: PreFn[] = [];
   const postFns: PostFn[] = [];
@@ -109,6 +121,11 @@ const NET = (() => {
           logErr('NET.pre', e); // 管线内异常不静默：改写失效会让 boostFeedLoad 之类的功能无声失灵
         }
       }
+      // 已签名请求兜底（见 SIGNED_RE）：宁可这次改写不生效，也不能把请求改成必然 -403 的形状。
+      if (u !== url && SIGNED_RE.test(url)) {
+        health.signedSkipped++;
+        return url;
+      }
       return u;
     },
     runJson(url: string, json: any): number {
@@ -125,7 +142,14 @@ const NET = (() => {
   };
 })();
 
+/** 跑一遍请求改写管线（含已签名 URL 的兜底）。非字符串 URL 不处理，原样返回。 */
+export function rewriteRequestUrl(url: string): string {
+  return NET.hasPre() ? NET.rewriteUrl(url) : url;
+}
+
 // 首页推荐接口（增大加载数量用）。与 FEED_HOOKS 里的两条 rcmd 规则同源，避免两处各写一份。
+// 保留 wbi/ 那一路的匹配：改写会被上面的 SIGNED_RE 兜底拦下并计数，比在这里假装 wbi 不存在
+// 更诚实——用户开了开关却没效果时，自检能说出原因。未签名的旧路径上它照常生效。
 const RCMD_RE = /\/x\/web-interface\/(wbi\/)?index\/top\/feed\/rcmd/;
 
 // 注册唯一的内容过滤 postFn（即 filterFeedJson）；以后新增过滤器只需再 addPost 一条。
@@ -158,7 +182,7 @@ export function installNetworkHooks(): void {
     const wrapped: any = function (this: unknown, input: any, init: any) {
       // 请求改写（preFn）：仅当输入是字符串 URL 时处理，避免重建 Request 对象的副作用
       let input2 = input;
-      if (NET.hasPre() && typeof input === 'string') input2 = NET.rewriteUrl(input);
+      if (typeof input === 'string') input2 = rewriteRequestUrl(input);
       const url = typeof input2 === 'string' ? input2 : (input2 && input2.url) || '';
       const p = origFetch.call(this, input2, init);
       health.noteRequest(url);
@@ -210,7 +234,7 @@ export function installNetworkHooks(): void {
       self.__bfbText = undefined;
       self.__bfbResp = undefined;
       // 请求改写（preFn）：仅处理字符串 URL
-      const url2 = NET.hasPre() && typeof url === 'string' ? NET.rewriteUrl(url) : url;
+      const url2 = typeof url === 'string' ? rewriteRequestUrl(url) : url;
       health.noteRequest(url2);
       if (isFeedUrl(url2)) {
         health.feedMatched++;

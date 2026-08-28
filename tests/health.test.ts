@@ -8,6 +8,7 @@ function reset() {
   health.feedParsed = 0;
   health.feedItems = 0;
   health.cardsSeen = 0;
+  health.signedSkipped = 0;
 }
 
 describe('health.noteRequest', () => {

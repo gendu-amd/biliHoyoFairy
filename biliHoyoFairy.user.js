@@ -445,6 +445,8 @@
     // 累计经过拦截层判定的列表项数
     cardsSeen: 0,
     // DOM 兜底层识别到的视频卡数
+    signedSkipped: 0,
+    // 因携带 WBI 签名(w_rid)而放弃改写的请求数（见 net.ts SIGNED_RE）
     noteRequest(url) {
       if (!url || !API_RE.test(url)) return;
       this.apiSeen++;
@@ -457,6 +459,11 @@
       w.push(`本页发出了 ${health.feedLike} 个形似推荐流的接口请求，却没有一个命中拦截规则表：接口路径可能已变更，拦截层当前未生效。请更新脚本或提 Issue。`);
     } else if (health.feedMatched > 0 && health.feedParsed === 0) {
       w.push("已捕获到推荐接口响应，但取不出其中的视频列表：接口返回结构可能已变更，拦截层当前未生效。请更新脚本或提 Issue。");
+    }
+    if (health.signedSkipped > 0) {
+      w.push(
+        `有 ${health.signedSkipped} 个请求因携带 WBI 签名（w_rid）而放弃改写：签名覆盖全部查询参数，改动会被 B 站判为 -403 校验失败。目前唯一会改写请求的功能是「进阶 → 增大首页推荐每批加载数量」，它在这些已签名的接口上不会生效（不影响屏蔽本身），可以关掉。`
+      );
     }
     if (pageType() !== "其他" && health.cardsSeen === 0) {
       w.push("未识别到任何视频卡：卡片选择器可能已失效，DOM 兜底层当前未生效。请更新脚本或提 Issue。");
@@ -471,7 +478,8 @@
     return n;
   }
   function healthSummary() {
-    return `页面 ${pageType()} · 接口请求 ${health.apiSeen}（形似推荐流 ${health.feedLike}）· 命中推荐接口 ${health.feedMatched} · 解析出列表 ${health.feedParsed}（${health.feedItems} 项）· 识别卡片 ${health.cardsSeen}`;
+    return `页面 ${pageType()} · 接口请求 ${health.apiSeen}（形似推荐流 ${health.feedLike}）· 命中推荐接口 ${health.feedMatched} · 解析出列表 ${health.feedParsed}（${health.feedItems} 项）· 识别卡片 ${health.cardsSeen}` + // 常态是 0，只有开了改写类功能且撞上已签名接口才非 0——恒显示只会变成没人看的噪音。
+    (health.signedSkipped ? ` · 因 WBI 签名放弃改写 ${health.signedSkipped}` : "");
   }
 
   // src/util.ts
@@ -1203,6 +1211,7 @@
     if (removed) log(`拦截层 删除 ${removed} 项 @ ${url.split("?")[0]}`);
     return removed;
   }
+  var SIGNED_RE = /[?&]w_rid=/;
   var NET = /* @__PURE__ */ (() => {
     const preFns = [];
     const postFns = [];
@@ -1220,6 +1229,10 @@
             logErr("NET.pre", e);
           }
         }
+        if (u !== url && SIGNED_RE.test(url)) {
+          health.signedSkipped++;
+          return url;
+        }
         return u;
       },
       runJson(url, json) {
@@ -1235,6 +1248,9 @@
       }
     };
   })();
+  function rewriteRequestUrl(url) {
+    return NET.hasPre() ? NET.rewriteUrl(url) : url;
+  }
   var RCMD_RE = /\/x\/web-interface\/(wbi\/)?index\/top\/feed\/rcmd/;
   NET.addPost(filterFeedJson);
   NET.addPre((url) => {
@@ -1258,7 +1274,7 @@
       const origFetch = W.fetch;
       const wrapped = function(input, init) {
         let input2 = input;
-        if (NET.hasPre() && typeof input === "string") input2 = NET.rewriteUrl(input);
+        if (typeof input === "string") input2 = rewriteRequestUrl(input);
         const url = typeof input2 === "string" ? input2 : input2 && input2.url || "";
         const p = origFetch.call(this, input2, init);
         health.noteRequest(url);
@@ -1295,7 +1311,7 @@
         }
         self.__bfbText = void 0;
         self.__bfbResp = void 0;
-        const url2 = NET.hasPre() && typeof url === "string" ? NET.rewriteUrl(url) : url;
+        const url2 = typeof url === "string" ? rewriteRequestUrl(url) : url;
         health.noteRequest(url2);
         if (isFeedUrl(url2)) {
           health.feedMatched++;
@@ -3318,7 +3334,8 @@
       feed.className = "sec";
       feed.innerHTML = `<label>信息流加载</label>
       <div class="switch"><input type="checkbox" id="bfb-boost"> 增大首页推荐每批加载数量</div>
-      <div class="hint">拦截层会删除命中项，开启后每批多取一些视频，删除后信息流更饱满。下次加载或刷新生效；个别情况下可能影响载入，如有异常请关闭。</div>`;
+      <div class="hint">拦截层会删除命中项，开启后每批多取一些视频，删除后信息流更饱满。下次加载或刷新生效。
+      ⚠ B 站的推荐接口大多已带 <b>WBI 签名</b>（签名覆盖全部请求参数，改动会被判为校验失败），这类接口上本功能<b>不会生效</b>——脚本会跳过改写而不是把请求改坏，具体次数见「工具 → 🩺 运行自检」。</div>`;
       host.appendChild(feed);
       bindControl(feed, "bfb-boost", CONFIG, "boostFeedLoad");
       const api = document.createElement("div");

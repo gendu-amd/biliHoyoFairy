@@ -5,8 +5,8 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { CONFIG, DEFAULT_CONFIG } from '../src/config';
 import { rebuildRules } from '../src/match/engine';
-import { filterFeedJson, findFeedHook, FEED_HOOKS } from '../src/net';
-import { health } from '../src/health';
+import { filterFeedJson, findFeedHook, FEED_HOOKS, rewriteRequestUrl } from '../src/net';
+import { health, healthReport } from '../src/health';
 import rcmd from './fixtures/rcmd.json';
 import ranking from './fixtures/ranking.json';
 import popular from './fixtures/popular.json';
@@ -183,6 +183,42 @@ describe('health：静默失效自检计数', () => {
     const before = health.feedParsed;
     filterFeedJson(URLS.rcmd, { code: 0, data: { items: [] } }); // 假想的字段改名
     expect(health.feedParsed).toBe(before);
+  });
+});
+
+// WBI 签名覆盖**全部** query 参数（按 key 排序后连同 mixin_key 一起 MD5 得出 w_rid），
+// 签完再改任何一个参数都会被 B 站判为 -403 校验失败——首页那次请求就白发了。
+// 这组用例锁住「带 w_rid 的 URL 一律不改写」这条兜底，别让以后新增的 preFn 又把它破掉。
+describe('rewriteRequestUrl：不改写已签名(WBI)请求', () => {
+  const RCMD = 'https://api.bilibili.com/x/web-interface/wbi/index/top/feed/rcmd?ps=12&fresh_idx=1';
+  beforeEach(() => {
+    health.signedSkipped = 0;
+    CONFIG.boostFeedLoad = true; // 唯一的改写类功能，默认关，这里显式打开
+  });
+
+  it('带 w_rid 时原样发出，并计入自检', () => {
+    const url = RCMD + '&w_rid=deadbeef&wts=1700000000';
+    expect(rewriteRequestUrl(url)).toBe(url);
+    expect(health.signedSkipped).toBe(1);
+    expect(healthReport().some((s) => s.includes('w_rid'))).toBe(true);
+  });
+
+  it('未签名的旧路径照常改写，不计数', () => {
+    const url = 'https://api.bilibili.com/x/web-interface/index/top/feed/rcmd?ps=12&fresh_idx=1';
+    expect(rewriteRequestUrl(url)).toContain('ps=30');
+    expect(health.signedSkipped).toBe(0);
+  });
+
+  it('本来就没人想改的已签名请求不算「放弃改写」（不误报）', () => {
+    const url = 'https://api.bilibili.com/x/web-interface/wbi/search/all/v2?keyword=x&w_rid=abc';
+    expect(rewriteRequestUrl(url)).toBe(url);
+    expect(health.signedSkipped).toBe(0);
+  });
+
+  it('开关关闭时不改写任何 URL', () => {
+    CONFIG.boostFeedLoad = false;
+    const url = 'https://api.bilibili.com/x/web-interface/index/top/feed/rcmd?ps=12';
+    expect(rewriteRequestUrl(url)).toBe(url);
   });
 });
 

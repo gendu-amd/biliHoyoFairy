@@ -26,7 +26,8 @@ export const advancedSection: PanelSection = {
     feed.className = 'sec';
     feed.innerHTML = `<label>信息流加载</label>
       <div class="switch"><input type="checkbox" id="bfb-boost"> 增大首页推荐每批加载数量</div>
-      <div class="hint">拦截层会删除命中项，开启后每批多取一些视频，删除后信息流更饱满。下次加载或刷新生效；个别情况下可能影响载入，如有异常请关闭。</div>`;
+      <div class="hint">拦截层会删除命中项，开启后每批多取一些视频，删除后信息流更饱满。下次加载或刷新生效。
+      ⚠ B 站的推荐接口大多已带 <b>WBI 签名</b>（签名覆盖全部请求参数，改动会被判为校验失败），这类接口上本功能<b>不会生效</b>——脚本会跳过改写而不是把请求改坏，具体次数见「工具 → 🩺 运行自检」。</div>`;
     host.appendChild(feed);
     bindControl(feed, 'bfb-boost', CONFIG, 'boostFeedLoad');
 
