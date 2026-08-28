@@ -171,10 +171,14 @@
   function deepMerge(base, override) {
     for (const k of Object.keys(override || {})) {
       if (UNSAFE_KEYS.has(k)) continue;
-      if (override[k] && typeof override[k] === "object" && !Array.isArray(override[k]) && typeof base[k] === "object") {
-        deepMerge(base[k], override[k]);
+      const v = override[k];
+      if (Array.isArray(v) && Array.isArray(base[k])) {
+        base[k].length = 0;
+        for (const x of v) base[k].push(x);
+      } else if (v && typeof v === "object" && !Array.isArray(v) && typeof base[k] === "object") {
+        deepMerge(base[k], v);
       } else {
-        base[k] = override[k];
+        base[k] = v;
       }
     }
     return base;
@@ -3819,7 +3823,8 @@
           subListEl.appendChild(e);
           return;
         }
-        subs.forEach((sub, idx) => {
+        const findSub = (url) => (CONFIG.subscriptions || []).find((s) => s.url === url);
+        subs.forEach((sub) => {
           const e = store[sub.url] || {};
           const status = e.ok ? `✅ ${e.count || 0} 条 · ${fmtSubTime(e.lastSync)}` : e.error ? `⚠ ${e.error}` : "未同步";
           const row = document.createElement("div");
@@ -3830,7 +3835,9 @@
           <div class="bfb-sub-status">${escapeHtml(status)}</div>
           <div class="chip-bar"><button class="chip-act sub-refresh">刷新</button><button class="chip-act sub-del">删除</button></div>`;
           q(row, ".sub-en").onchange = (ev) => {
-            sub.enabled = ev.target.checked;
+            const cur = findSub(sub.url);
+            if (!cur) return renderSubList();
+            cur.enabled = ev.target.checked;
             saveConfig();
             rescanAfterRuleChange();
           };
@@ -3845,7 +3852,8 @@
           q(row, ".sub-del").onclick = () => {
             confirmModal("删除该订阅？其规则将立即移除。", { title: "删除订阅", okText: "删除", danger: true }).then((ok) => {
               if (!ok) return;
-              CONFIG.subscriptions.splice(idx, 1);
+              const i = (CONFIG.subscriptions || []).findIndex((s) => s.url === sub.url);
+              if (i >= 0) CONFIG.subscriptions.splice(i, 1);
               const st = loadSubStore();
               delete st[sub.url];
               saveSubStore(st);

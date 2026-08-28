@@ -134,13 +134,23 @@ export const DEFAULT_CONFIG: AppConfig = {
 };
 
 // 深合并：override 的同名对象递归并入 base，其余标量直接覆盖（原型链污染键已被 UNSAFE_KEYS 拦掉）。
+//
+// 不变量：**并入不会替换 base 里任何已存在的对象或数组，只改它们的内容**。
+// 这不是洁癖——面板的名单控件在渲染时就闭包持有了数组本身（chipModel(CONFIG.block.keywords)），
+// 把 CONFIG.block.keywords 换成一个新数组，控件此后的增删就写进了一个脱钩的旧数组：
+// 界面上「已添加」，存盘时却什么都没有。对象层早就靠递归保住了身份，数组层原先是直接赋值，
+// 于是 installConfigSync 采纳别的标签页的配置时会踩到这个坑。
 export function deepMerge(base: Record<string, any>, override: any): Record<string, any> {
   for (const k of Object.keys(override || {})) {
     if (UNSAFE_KEYS.has(k)) continue;
-    if (override[k] && typeof override[k] === 'object' && !Array.isArray(override[k]) && typeof base[k] === 'object') {
-      deepMerge(base[k], override[k]);
+    const v = override[k];
+    if (Array.isArray(v) && Array.isArray(base[k])) {
+      base[k].length = 0;
+      for (const x of v) base[k].push(x); // 不用 push(...v)：名单可达数万条，展开会撑爆参数表
+    } else if (v && typeof v === 'object' && !Array.isArray(v) && typeof base[k] === 'object') {
+      deepMerge(base[k], v);
     } else {
-      base[k] = override[k];
+      base[k] = v;
     }
   }
   return base;

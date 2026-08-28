@@ -35,7 +35,13 @@ export const subscriptionsSection: PanelSection = {
         subListEl.appendChild(e);
         return;
       }
-      subs.forEach((sub, idx) => {
+      // 行内动作一律按 url 现查现改，不闭包持有这一行的 sub 对象或它的下标。
+      // 订阅行的两个动作（启用开关、删除）都可能跨越一段异步（删除要过确认弹窗），
+      // 而这期间 CONFIG.subscriptions 的元素可能已被换成新对象——别的标签页改了配置、
+      // installConfigSync 采纳了一份新快照（deepMerge 只保住数组本身的身份，保不住里面的元素）。
+      // 那时写回旧对象就是写进空气：开关拨了没生效，删除按下标可能删掉相邻的另一条订阅。
+      const findSub = (url: string) => (CONFIG.subscriptions || []).find((s) => s.url === url);
+      subs.forEach((sub) => {
         const e = store[sub.url] || {};
         const status = e.ok ? `✅ ${e.count || 0} 条 · ${fmtSubTime(e.lastSync)}` : e.error ? `⚠ ${e.error}` : '未同步';
         const row = document.createElement('div');
@@ -46,7 +52,9 @@ export const subscriptionsSection: PanelSection = {
           <div class="bfb-sub-status">${escapeHtml(status)}</div>
           <div class="chip-bar"><button class="chip-act sub-refresh">刷新</button><button class="chip-act sub-del">删除</button></div>`;
         q<HTMLInputElement>(row, '.sub-en').onchange = (ev) => {
-          sub.enabled = (ev.target as HTMLInputElement).checked;
+          const cur = findSub(sub.url);
+          if (!cur) return renderSubList(); // 这条订阅已经不在了（别处删掉的）：重画一遍即可
+          cur.enabled = (ev.target as HTMLInputElement).checked;
           saveConfig();
           rescanAfterRuleChange();
         };
@@ -61,7 +69,8 @@ export const subscriptionsSection: PanelSection = {
         q(row, '.sub-del').onclick = () => {
           confirmModal('删除该订阅？其规则将立即移除。', { title: '删除订阅', okText: '删除', danger: true }).then((ok) => {
             if (!ok) return;
-            CONFIG.subscriptions.splice(idx, 1);
+            const i = (CONFIG.subscriptions || []).findIndex((s) => s.url === sub.url);
+            if (i >= 0) CONFIG.subscriptions.splice(i, 1);
             const st = loadSubStore();
             delete st[sub.url];
             saveSubStore(st);

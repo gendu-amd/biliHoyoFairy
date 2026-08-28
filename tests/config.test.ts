@@ -40,6 +40,19 @@ describe('deepMerge', () => {
     deepMerge(base, { arr: [9] });
     expect(base.arr).toEqual([9]);
   });
+  // 面板的名单控件闭包持有的是数组本身（chipModel(CONFIG.block.keywords)）。
+  // 覆盖时若换成新数组，控件此后的增删就写进脱钩的旧数组：界面显示加上了，存盘里没有。
+  it('覆盖数组时就地换内容，不换数组本身', () => {
+    const base: any = { arr: [1, 2, 3] };
+    const arr = base.arr;
+    deepMerge(base, { arr: [9] });
+    expect(base.arr).toBe(arr);
+  });
+  it('原本不是数组（存档被写坏）时仍按整体覆盖', () => {
+    const base: any = { arr: '原神' };
+    deepMerge(base, { arr: [9] });
+    expect(base.arr).toEqual([9]);
+  });
   it('拦截原型链污染键 __proto__', () => {
     const base: any = {};
     deepMerge(base, JSON.parse('{"__proto__":{"polluted":1}}'));
@@ -147,6 +160,18 @@ describe('installConfigSync：多标签页配置同步', () => {
     expect(CONFIG.comment).toBe(comment);
     expect(CONFIG.block.uids).toEqual(['123']); // 内容照常更新
     expect(CONFIG.hideAd).toBe(true);
+  });
+
+  // 名单控件（chipModel）持有的是数组本身，比对象层更容易被换掉。
+  // 这一条模拟「用户正在面板里打字 → 面板不重渲 → 采纳发生 → 用户回车加了一条规则」。
+  it('采纳时保持名单数组的引用不变（不重渲的面板加规则仍写得进去）', () => {
+    const kw = CONFIG.block.keywords; // 面板渲染时闭包持有的那个数组
+    writeFromOtherTab({ block: { ...DEFAULT_CONFIG.block, keywords: ['别处加的'] } });
+    fire(true);
+    vi.advanceTimersByTime(SYNC_COALESCE_MS + 10);
+    expect(CONFIG.block.keywords).toBe(kw);
+    kw.push('本页加的'); // 控件写的是旧引用
+    expect(CONFIG.block.keywords).toEqual(['别处加的', '本页加的']);
   });
 });
 
