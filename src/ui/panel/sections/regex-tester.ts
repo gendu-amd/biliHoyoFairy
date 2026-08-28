@@ -1,5 +1,5 @@
 // 正则测试器：纯调试工具，不读也不写任何规则。
-import { escapeRe } from '../../../match/normalize';
+import { escapeRe, regexRejectReason } from '../../../match/normalize';
 import { q } from '../ctx';
 import type { PanelSection } from '../ctx';
 
@@ -26,6 +26,14 @@ export const regexTesterSection: PanelSection = {
       }
       let re;
       const m = pat.match(/^\/(.*)\/([a-z]*)$/);
+      // 引擎会拒收的正则，测试器也不能装作能用：否则这里报「✅ 命中」，抄进名单却一条都拦不到。
+      // 顺带也避免在这里真的去跑它——测试器是 oninput 实时执行的，跑一条灾难性回溯正则就是卡死面板。
+      const reject = m && regexRejectReason(m[1]);
+      if (reject) {
+        reOut.textContent = `⚠ 这条正则会被规则引擎忽略（${reject}），加进名单也不会生效`;
+        reOut.style.color = '#e67e22';
+        return;
+      }
       try {
         re = m ? new RegExp(m[1], m[2].includes('i') ? m[2] : m[2] + 'i') : new RegExp(escapeRe(pat), 'i');
       } catch (e) {

@@ -640,6 +640,11 @@
   function looksCatastrophic(src) {
     return /\((?:[^()]*[*+]|[^()]*\{\d+,\}?)[^()]*\)\s*(?:[*+]|\{\d+,\}?)/.test(src);
   }
+  function regexRejectReason(body) {
+    if (body.length > MAX_REGEX_LEN) return `模式体超过 ${MAX_REGEX_LEN} 字符`;
+    if (looksCatastrophic(body)) return "疑似灾难性回溯（量词套在含无界量词的分组上，如 (a+)+），可能卡死页面";
+    return null;
+  }
   function ruleLines(lines) {
     if (!Array.isArray(lines)) return [];
     return lines.filter((x) => typeof x === "string");
@@ -655,7 +660,7 @@
       if (!line) continue;
       const m = line.match(/^\/(.*)\/([a-z]*)$/);
       if (m) {
-        if (m[1].length > MAX_REGEX_LEN || looksCatastrophic(m[1])) continue;
+        if (regexRejectReason(m[1])) continue;
         try {
           const flags = (m[2] || "i").replace(/[gy]/g, "");
           regexes.push(new RegExp(m[1], flags.includes("i") ? flags : flags + "i"));
@@ -3547,6 +3552,12 @@
         }
         let re;
         const m = pat.match(/^\/(.*)\/([a-z]*)$/);
+        const reject = m && regexRejectReason(m[1]);
+        if (reject) {
+          reOut.textContent = `⚠ 这条正则会被规则引擎忽略（${reject}），加进名单也不会生效`;
+          reOut.style.color = "#e67e22";
+          return;
+        }
         try {
           re = m ? new RegExp(m[1], m[2].includes("i") ? m[2] : m[2] + "i") : new RegExp(escapeRe(pat), "i");
         } catch (e) {

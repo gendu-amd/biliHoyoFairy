@@ -7,6 +7,7 @@ import {
   kwHit,
   lc,
   normMatch,
+  regexRejectReason,
   splitRuleInput,
   stripInvisible,
   textHit,
@@ -81,6 +82,18 @@ describe('compileLines + textHit', () => {
     expect(compileLines(['/(a*)*/']).empty).toBe(true);
     expect(compileLines(['/(ab)+/']).empty).toBe(false); // 普通分组+量词 → 保留
     expect(compileLines(['/ab+/']).empty).toBe(false);
+  });
+  // 正则测试器与编译器共用这个判据：拒收理由是给用户看的字符串，null=引擎会正常收下。
+  // 两处若各判各的，测试器就会对一条引擎其实不收的正则报「命中」，抄进名单后一次都不生效。
+  it('regexRejectReason 与 compileLines 的取舍一致', () => {
+    for (const body of ['a'.repeat(2000), '(a+)+$', '(a*)*']) {
+      expect(regexRejectReason(body), body).toBeTruthy();
+      expect(compileLines([`/${body}/`]).empty, body).toBe(true);
+    }
+    for (const body of ['abc', '(ab)+', 'ab+']) {
+      expect(regexRejectReason(body), body).toBeNull();
+      expect(compileLines([`/${body}/`]).empty, body).toBe(false);
+    }
   });
   it('剥除 g/y 标志（避免 .test 复用时 lastIndex 粘连漏判）', () => {
     const re = compileLines(['/ab/g']).regexes[0];

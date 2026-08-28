@@ -58,6 +58,15 @@ function looksCatastrophic(src: string): boolean {
   return /\((?:[^()]*[*+]|[^()]*\{\d+,\}?)[^()]*\)\s*(?:[*+]|\{\d+,\}?)/.test(src);
 }
 
+// 「这条 /正则/ 会被规则引擎拒收吗」——拒收理由，可直接展示给用户；null = 会被正常编译。
+// 单点判据：compileLines 用它决定丢不丢，正则测试器用它提示。否则测试器会对一条
+// 引擎其实不收的正则报「✅ 命中」，用户照抄进名单后它一次都不生效，且没有任何提示。
+export function regexRejectReason(body: string): string | null {
+  if (body.length > MAX_REGEX_LEN) return `模式体超过 ${MAX_REGEX_LEN} 字符`;
+  if (looksCatastrophic(body)) return '疑似灾难性回溯（量词套在含无界量词的分组上，如 (a+)+），可能卡死页面';
+  return null;
+}
+
 // 消费侧兜底：规则数组的**唯一**入口。
 // 存档/导入/订阅都可能把某个规则字段写成字符串或对象；`for..of "原神"` 会按**字符**遍历，
 // 编译出「原」「神」两条单字规则，足以屏蔽掉整个首页。在消费点收口比在每个写入点堵更可靠，
@@ -81,7 +90,7 @@ export function compileLines(lines: readonly string[] | null | undefined): Match
     const m = line.match(/^\/(.*)\/([a-z]*)$/);
     if (m) {
       // ReDoS 防护：过长 或 含灾难性回溯形态的 /正则/（多来自订阅/导入的不可信来源）直接忽略。
-      if (m[1].length > MAX_REGEX_LEN || looksCatastrophic(m[1])) continue;
+      if (regexRejectReason(m[1])) continue;
       try {
         // 剥除 g/y：编译出的 RegExp 会跨多张卡复用 .test()，全局/粘性标志会让 lastIndex 粘连导致间歇漏判。
         const flags = (m[2] || 'i').replace(/[gy]/g, '');
