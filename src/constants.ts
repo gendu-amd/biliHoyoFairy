@@ -5,6 +5,9 @@ export const VERSION: string =
   (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '0.0.1';
 
 export const STORE_KEY = 'bfb_config_v2';
+// 存档解析失败时，原始内容被原样另存到这里等人工抢救（见 config.ts loadConfig 的 catch）。
+// 不带版本号后缀：它存的是「当时 STORE_KEY 里那坨东西」，本来就没有可信的结构版本。
+export const STORE_BACKUP_KEY = 'bfb_config_corrupt_backup';
 // 配置结构版本。**只在需要就地改写老存档时**递增（改字段名、改语义、改单位），
 // 单纯新增带默认值的字段不用动它——deepMerge 会自动补齐。递增时必须在 config.ts 的
 // MIGRATIONS 里补上对应迁移函数，否则老用户升级后会静默丢配置。

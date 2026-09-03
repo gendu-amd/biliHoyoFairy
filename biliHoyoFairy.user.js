@@ -32,6 +32,7 @@
   // src/constants.ts
   var VERSION = typeof GM_info !== "undefined" && GM_info.script && GM_info.script.version || "0.0.1";
   var STORE_KEY = "bfb_config_v2";
+  var STORE_BACKUP_KEY = "bfb_config_corrupt_backup";
   var SCHEMA_VERSION = 1;
   var SUB_STORE_KEY = "bfb_subs_v1";
   var BLACKLIST_MANAGE_URL = "https://account.bilibili.com/account/blacklist";
@@ -200,6 +201,12 @@
     parsed.schemaVersion = SCHEMA_VERSION;
     return parsed;
   }
+  var configRescue = {
+    corrupted: false,
+    backupKey: STORE_BACKUP_KEY,
+    raw: null
+    // 原始内容，供报错时打进控制台（备份键在 GM 存储里，用户自己翻不到）
+  };
   function loadConfig() {
     const raw = GM_getValue(STORE_KEY, null);
     if (!raw) return structuredClone(DEFAULT_CONFIG);
@@ -207,6 +214,12 @@
       const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
       return deepMerge(structuredClone(DEFAULT_CONFIG), migrateConfig(parsed));
     } catch (e) {
+      try {
+        if (!GM_getValue(STORE_BACKUP_KEY, null)) GM_setValue(STORE_BACKUP_KEY, raw);
+      } catch (_) {
+      }
+      configRescue.corrupted = true;
+      configRescue.raw = raw;
       return structuredClone(DEFAULT_CONFIG);
     }
   }
@@ -340,6 +353,9 @@
     "div.floor-card.single-card"
     // 首页信息流里的「直播推荐」单卡（链向 live.bilibili.com）
   ];
+  var VIDEO_PAGE_UP_BOX = ".up-info-container, .membersinfo-upcard, .up-detail, .video-info-container";
+  var VIDEO_PAGE_UP_NAME = ".up-name, .up-name__text";
+  var PAGE_HEADER_SELECTOR = ".bili-header, #biliMainHeader, #bili-header-container";
   var CELL_CONTAINERS = [
     "div.feed-card",
     // 首页信息流网格项（.container 的直接子元素，必须优先）
@@ -2469,6 +2485,92 @@
   function elementOf(t) {
     return t instanceof Element ? t : null;
   }
+  function findCard(e) {
+    const path = e.composedPath && e.composedPath() || [];
+    for (const node of path) {
+      const el = elementOf(node);
+      if (el && el.matches(VIDEO_CARD_SELECTOR)) return el;
+    }
+    const t = elementOf(e.target);
+    return t ? t.closest(VIDEO_CARD_SELECTOR) : null;
+  }
+  function findVideoPageUp(e) {
+    if (pageType() !== "播放页") return null;
+    const path = e.composedPath && e.composedPath() || [];
+    let link = null;
+    for (const node of path) {
+      const el = elementOf(node);
+      if (!el) continue;
+      if (isCommentTag(el.tagName) || el.matches(PAGE_HEADER_SELECTOR)) return null;
+      if (!link && el.matches('a[href*="space.bilibili.com"]')) link = el;
+    }
+    if (!link) return null;
+    const uid = ((link.getAttribute("href") || "").match(/space\.bilibili\.com\/(\d+)/) || [])[1] || "";
+    if (!uid) return null;
+    let up = (link.getAttribute("title") || link.textContent || "").trim();
+    if (!up) {
+      const box = link.closest(VIDEO_PAGE_UP_BOX);
+      const nameEl = box && box.querySelector(VIDEO_PAGE_UP_NAME);
+      up = (nameEl && (nameEl.getAttribute("title") || nameEl.textContent) || "").trim();
+    }
+    return { uid, up, bvid: (location.pathname.match(/(BV[0-9A-Za-z]+)/) || [])[1] || "" };
+  }
+  function showVideoPageUpMenu(e) {
+    const info = findVideoPageUp(e);
+    if (!info) return;
+    const label = info.up || "UID " + info.uid;
+    e.preventDefault();
+    e.stopPropagation();
+    closeCtxMenu();
+    const items = [];
+    const sel = selectedText();
+    if (sel) {
+      items.push({
+        label: `🚫 屏蔽含「${sel}」关键词`,
+        act: () => {
+          addToList(CONFIG.block.keywords, sel);
+          toast(`已加入关键词：${sel}`);
+          refreshPanelIfOpen();
+        }
+      });
+    }
+    items.push({
+      label: `🚫 屏蔽 UP「${label}」`,
+      act: () => {
+        addToList(CONFIG.block.uids, info.uid);
+        toast(`已屏蔽 UP：${label}（此后不再向你推荐其视频）`);
+        refreshPanelIfOpen();
+      }
+    });
+    items.push({
+      label: `⛔ 拉黑 UP「${label}」（同步账号黑名单）`,
+      act: () => {
+        confirmBlacklist(label).then((ok) => {
+          if (ok) blacklistUp(info, refreshPanelIfOpen);
+        });
+      }
+    });
+    items.push({
+      label: `⭐ 加入白名单（永不屏蔽此 UP）`,
+      act: () => {
+        addToList(CONFIG.allow.uids, info.uid);
+        toast(`已加入白名单：${label}`);
+        refreshPanelIfOpen();
+      }
+    });
+    if (info.bvid) {
+      items.push({
+        label: `🚫 屏蔽此视频（${info.bvid}）`,
+        act: () => {
+          addToList(CONFIG.block.bvids, info.bvid);
+          toast(`已屏蔽视频：${info.bvid}`);
+          refreshPanelIfOpen();
+        }
+      });
+    }
+    items.push({ label: "⚙️ 打开设置面板", act: openPanel });
+    renderCtxMenu(e, items);
+  }
   function confirmBlacklist(name) {
     return confirmModal(`确定拉黑「${name}」并写入账号黑名单？
 刷新后不再推荐、不可一键撤销（未登录则仅本地屏蔽）。`, {
@@ -2526,9 +2628,8 @@
         }
       }
     }
-    const target = elementOf(e.target);
-    const card = target && target.closest(VIDEO_CARD_SELECTOR);
-    if (!card) return;
+    const card = findCard(e);
+    if (!card) return showVideoPageUpMenu(e);
     const info = extractCardInfo(card, true);
     if (!info.up && !info.bvid) return;
     e.preventDefault();
@@ -2720,7 +2821,7 @@
     if (!CONFIG.enabled || !CONFIG.cardHoverBtn) return;
     const t = elementOf(e.target);
     if (t && t === overlayHost) return;
-    const card = t && t.closest(VIDEO_CARD_SELECTOR);
+    const card = findCard(e);
     if (card) {
       if (card !== hoverCard) positionHoverBtn(card);
     } else {
@@ -4492,6 +4593,11 @@ ${r.line}`, {
         BADGE + ";font-weight:bold",
         "color:#fb7299"
       );
+      if (configRescue.corrupted) {
+        logErr("配置存档损坏", `已回落到默认配置；原始内容存于 GM 存储键 ${configRescue.backupKey}，原文见下一行`);
+        logErr("配置存档损坏（原始内容）", configRescue.raw);
+        toast("⚠ 配置存档损坏，设置已回到默认值。原内容已备份（详见控制台），请勿急着重设规则", "error");
+      }
       updateBadge();
       applyHotSearchStyle();
       harvestShadowRoots(document);

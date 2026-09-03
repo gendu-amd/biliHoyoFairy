@@ -1,5 +1,5 @@
 // 配置：默认值 + 本地存储（GM）+ 载入合并 + 导入/导出。CONFIG 为全局共享单例（对象被各模块就地读写）。
-import { SAVE_DEBOUNCE_MS, SCHEMA_VERSION, STORE_KEY, SYNC_COALESCE_MS, UNSAFE_KEYS, VERSION } from './constants';
+import { SAVE_DEBOUNCE_MS, SCHEMA_VERSION, STORE_BACKUP_KEY, STORE_KEY, SYNC_COALESCE_MS, UNSAFE_KEYS, VERSION } from './constants';
 
 export interface BlockConfig {
   keywords: string[];
@@ -185,6 +185,14 @@ export function migrateConfig(parsed: any): any {
   return parsed;
 }
 
+// 存档损坏的抢救记录。config 是底层模块（logging 反过来依赖它），不能自己弹 toast 或写日志，
+// 所以只留状态，由 main 在页面就绪后报给用户——「所有设置一夜回到出厂」这种事必须有人说一声。
+export const configRescue = {
+  corrupted: false,
+  backupKey: STORE_BACKUP_KEY,
+  raw: null as unknown, // 原始内容，供报错时打进控制台（备份键在 GM 存储里，用户自己翻不到）
+};
+
 // 读取存档：先按 schemaVersion 逐级迁移，再与默认值合并（新增字段由 deepMerge 自动补默认值）。
 export function loadConfig(): AppConfig {
   const raw = GM_getValue(STORE_KEY, null);
@@ -193,6 +201,19 @@ export function loadConfig(): AppConfig {
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
     return deepMerge(structuredClone(DEFAULT_CONFIG), migrateConfig(parsed)) as AppConfig;
   } catch (e) {
+    // 存档读不出来（写入被打断、存储被别的东西改坏、磁盘满…）。
+    // 过去这里直接返回默认配置就算完，可 CONFIG 一旦成了默认值，随后**任何一次** saveConfig
+    // 就把那份也许只是被截断、还能人工抢救的原始内容永久盖掉——而存盘会被拦截计数这类后台
+    // 改动悄悄触发，所以往往几秒内就发生了。用户看到的是「所有设置一夜之间回到出厂」，
+    // 没有任何提示，也没有任何补救余地。
+    // 现在先原样另存一份再走默认值。首次为准：第二次损坏不该覆盖掉第一份还有救的备份。
+    try {
+      if (!GM_getValue(STORE_BACKUP_KEY, null)) GM_setValue(STORE_BACKUP_KEY, raw);
+    } catch (_) {
+      /* 备份也写不进去（存储满/权限）：不能因此让脚本起不来，继续走默认值 */
+    }
+    configRescue.corrupted = true;
+    configRescue.raw = raw;
     return structuredClone(DEFAULT_CONFIG);
   }
 }

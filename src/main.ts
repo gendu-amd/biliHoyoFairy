@@ -3,7 +3,7 @@
 // 业务逻辑全部在各 src 模块；本文件只负责装配。
 // bootstrap 只依赖各模块的「入口/接线」符号；其余模块经依赖图传递性加载（无需在此直接 import）。
 import { VERSION, BLACKLIST_MANAGE_URL, STARTUP_SUMMARY_MS } from './constants';
-import { CONFIG, saveConfig, installConfigSync } from './config';
+import { CONFIG, configRescue, saveConfig, installConfigSync } from './config';
 import { safe, logErr, BADGE } from './logging';
 import { healthReport } from './health';
 import { configureCardDetect } from './cardinfo';
@@ -97,6 +97,14 @@ import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
       BADGE + ';font-weight:bold',
       'color:#fb7299'
     );
+    // 存档损坏：配置已回落到默认值，原始内容被另存了一份。这件事必须当场说——
+    // 用户看到的是「所有设置一夜之间回到出厂」，不说的话他只会以为脚本坏了或自己记错了。
+    // 不受 CONFIG.enabled 限制（配置本身就没读出来，这个开关的值也不作数）。
+    if (configRescue.corrupted) {
+      logErr('配置存档损坏', `已回落到默认配置；原始内容存于 GM 存储键 ${configRescue.backupKey}，原文见下一行`);
+      logErr('配置存档损坏（原始内容）', configRescue.raw);
+      toast('⚠ 配置存档损坏，设置已回到默认值。原内容已备份（详见控制台），请勿急着重设规则', 'error');
+    }
     updateBadge();
     applyHotSearchStyle();
     harvestShadowRoots(document);

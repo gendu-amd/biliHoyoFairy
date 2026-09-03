@@ -8,8 +8,54 @@ import {
   sanitizeConfigInput,
   migrateConfig,
   installConfigSync,
+  loadConfig,
+  configRescue,
 } from '../src/config';
-import { SCHEMA_VERSION, STORE_KEY, SYNC_COALESCE_MS } from '../src/constants';
+import { SCHEMA_VERSION, STORE_BACKUP_KEY, STORE_KEY, SYNC_COALESCE_MS } from '../src/constants';
+
+// 存档损坏这条路径只有把存储预置成坏数据才走得到（桩见 tests/setup.ts）。
+const gmStore = (globalThis as any).__gmStore as Record<string, string>;
+const gmClear = (globalThis as any).__gmClear as () => void;
+
+// 存档读不出来时，过去直接回落到默认配置，而随后**任何一次** saveConfig（拦截计数 +1 就会触发）
+// 就把那份也许只是被截断、还能人工抢救的原始内容永久盖掉——用户看到的是「所有设置一夜回到出厂」，
+// 且全程没有任何提示。这组用例锁住「先备份、再回落、并留下可上报的状态」。
+describe('loadConfig：存档损坏时先抢救再回落', () => {
+  beforeEach(() => {
+    gmClear();
+    configRescue.corrupted = false;
+    configRescue.raw = null;
+  });
+
+  it('解析失败：原始内容原样备份，配置回落默认值，并留下可上报的状态', () => {
+    gmStore[STORE_KEY] = '{"block":{"keywords":["原神"'; // 写到一半被打断的存档
+    const c = loadConfig();
+    expect(c.block.keywords).toEqual([]); // 回落默认值，脚本照常起得来
+    expect(gmStore[STORE_BACKUP_KEY]).toBe('{"block":{"keywords":["原神"');
+    expect(configRescue.corrupted).toBe(true);
+    expect(configRescue.raw).toBe('{"block":{"keywords":["原神"');
+  });
+
+  it('第二次损坏不覆盖第一份备份（首次为准，那份才最可能有救）', () => {
+    gmStore[STORE_KEY] = '{"block":{"keywords":["原神"';
+    loadConfig();
+    gmStore[STORE_KEY] = '{'; // 第二次损坏时，第一份已被默认配置盖掉，内容更少
+    loadConfig();
+    expect(gmStore[STORE_BACKUP_KEY]).toBe('{"block":{"keywords":["原神"');
+  });
+
+  it('存档正常时不备份、不置位', () => {
+    gmStore[STORE_KEY] = JSON.stringify({ block: { keywords: ['原神'] } });
+    expect(loadConfig().block.keywords).toEqual(['原神']);
+    expect(gmStore[STORE_BACKUP_KEY]).toBeUndefined();
+    expect(configRescue.corrupted).toBe(false);
+  });
+
+  it('没有存档（首次安装）也不算损坏', () => {
+    expect(loadConfig().block.keywords).toEqual([]);
+    expect(configRescue.corrupted).toBe(false);
+  });
+});
 
 describe('exportConfig：剔除不可移植键（安全红线）', () => {
   it('导出不含 subscriptions/uidNames/blockedCount/enabled/debug/reviewMode，但保留规则', () => {

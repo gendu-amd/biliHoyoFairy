@@ -21,6 +21,17 @@ export const VIDEO_CARD_SELECTORS = [
   'div.floor-card.single-card', // 首页信息流里的「直播推荐」单卡（链向 live.bilibili.com）
 ];
 
+// —— 播放页「当前视频的 UP 主」信息区 ——
+// ⚠ 故意**不**放进 VIDEO_CARD_SELECTORS：那是扫描器的输入，把 UP 信息区当成卡片会被判定、被隐藏。
+// 这一组只服务于右键菜单——播放页上正在看的这个视频的 UP 不属于任何一张卡，右键一直没有反应，
+// 而那正是最想屏蔽的时刻（看到一半发现是营销号）。
+// 定位主要靠「指向 space.bilibili.com 的链接」这个稳定特征，下面两条只用来补 UP 名的显示文本
+// （头像那种链接本身没有文字）。
+export const VIDEO_PAGE_UP_BOX = '.up-info-container, .membersinfo-upcard, .up-detail, .video-info-container';
+export const VIDEO_PAGE_UP_NAME = '.up-name, .up-name__text';
+// 顶栏：里面也有指向 space 的链接（你自己的头像），右键它不该弹屏蔽菜单。
+export const PAGE_HEADER_SELECTOR = '.bili-header, #biliMainHeader, #bili-header-container';
+
 // —— 隐藏目标定位 ——
 // 网格格子容器：隐藏时上移到它，避免只隐内层留下空洞/黑框。
 //

@@ -7,6 +7,9 @@ g.GM_setValue = (k: string, v: string) => {
   store[k] = v;
 };
 g.GM_info = { script: { version: '0.0.5' } };
+// 让用例能把存储清空/预置成任意形态（存档损坏的分支只有这样才测得到）。
+g.__gmStore = store;
+g.__gmClear = () => Object.keys(store).forEach((k) => delete store[k]);
 // GM_addValueChangeListener（多标签页同步）：桩只收集监听器，由测试手动触发来模拟
 // 「另一个标签页写入了存储」。GM_setValue 故意**不**触发它——那是本页自己的写入（remote=false）。
 const valueListeners: Record<string, Array<(...a: any[]) => void>> = {};
