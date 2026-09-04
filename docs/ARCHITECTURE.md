@@ -64,9 +64,9 @@ src/
 │
 │  ── L6+ UI ──
 ├─ ui/toast.ts          角标 updateBadge + 轻提示 toast
-├─ ui/field.ts          通用列表字段组件（折叠/添加/搜索/批量管理/chip）+ chipModel/upModel
+├─ ui/field.ts          门面 → ui/field/{types,models,list,controls}.ts
 ├─ ui/listfilter.ts     名单搜索的判定部分（纯函数：普通词=包含、/.../ =正则；与渲染分开以便单测）
-├─ ui/menu.ts           右键菜单 + 悬停拉黑浮层
+├─ ui/menu.ts           门面 → ui/menu/{locate,context,hover,shared}.ts
 └─ ui/panel/            设置面板
    ├─ index.ts          面板外壳：Tab 骨架 + 分区注册表 SECTIONS（数组顺序=显示顺序）+ 开关/重渲
    ├─ ctx.ts            分区契约 PanelSection/PanelCtx（叶子：不 import 任何 section，也不 import index）
@@ -133,7 +133,7 @@ L9        main（bootstrap，装配一切）
 改 `net.ts` 的 `FEED_HOOKS`，加一条 `{ re: URL正则, get: (data) => 可过滤数组 }`。
 
 ### 加一个配置项
-改 `config.ts`：`DEFAULT_CONFIG` 加默认值 + `AppConfig` 接口加字段。旧存档由 `deepMerge` 自动补默认，**纯新增字段无需写迁移、也不用升 `SCHEMA_VERSION`**。面板控件用 `ui/field.bindControl` 绑定。
+改 `config.ts`：`DEFAULT_CONFIG` 加默认值 + `AppConfig` 接口加字段。旧存档由 `deepMerge` 自动补默认，**纯新增字段无需写迁移、也不用升 `SCHEMA_VERSION`**。面板控件用 `ui/field.bindControl` 绑定。若属「高频后台数据」（每拦一次就变），加进 `config.STATS_FIELDS` 走独立存储键，别让计数器自增去重写全部规则。
 只有当老存档需要被**改写**时（重命名字段、改变语义/单位）才升 `constants.SCHEMA_VERSION`，并在 `config.MIGRATIONS` 里加一步 `旧版本号 -> 改写函数`（迁移链会逐级执行到最新版）。
 
 ### 加一个面板分区

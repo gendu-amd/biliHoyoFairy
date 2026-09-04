@@ -56,6 +56,7 @@ const SECTIONS: PanelSection[] = [
 ];
 
 let activeTab = 'base'; // 记住当前激活的 Tab（重渲时保留）
+let finderQuery = ''; // 设置搜索词（同上，重渲时保留）
 let lastFocus: HTMLElement | null = null; // 打开面板前的焦点，关闭时归还（键盘可达性）
 
 function panelEl(): HTMLElement | null {
@@ -140,6 +141,61 @@ function renderPanel(p: HTMLElement) {
     };
   });
 
+  // —— 全局设置搜索 ——
+  // 14 个分区散在 6 个 Tab 里，「营销号那个阈值在哪」得靠一个个点开翻。
+  // 搜索直接在**已渲染的 DOM** 上按文本过滤 .sec 块，而不是另建一份「设置项索引」——
+  // 索引会与分区各自的文案漂移（改了文案忘了改索引，搜不到且不报错），而 DOM 就是唯一真相。
+  const finder = document.createElement('div');
+  finder.className = 'bfb-finder';
+  const fInput = document.createElement('input');
+  fInput.type = 'text';
+  fInput.placeholder = '搜索设置项（如：营销、评论等级、备份）';
+  const fClear = document.createElement('button');
+  fClear.textContent = '✕';
+  fClear.title = '清除';
+  const fStat = document.createElement('span');
+  fStat.className = 'fst';
+  finder.append(fInput, fClear, fStat);
+  p.insertBefore(finder, tabBar.nextSibling);
+
+  let total = 0;
+  const applyFinder = () => {
+    const kw = fInput.value.trim().toLowerCase();
+    // 搜索期间跨 Tab 展示：命中的设置项可能散在好几个 Tab，逐个切过去找违背了搜索的意义。
+    Object.entries(groups).forEach(([id, g]) => {
+      const secs = Array.from(g.querySelectorAll<HTMLElement>(':scope > .sec'));
+      let shown = 0;
+      for (const sec of secs) {
+        const hit = !kw || (sec.textContent || '').toLowerCase().includes(kw);
+        sec.style.display = hit ? '' : 'none';
+        if (hit) shown++;
+      }
+      const tip = g.querySelector<HTMLElement>('.grp-tip');
+      if (tip) tip.style.display = kw ? 'none' : '';
+      g.classList.toggle('active', kw ? shown > 0 : id === activeTab);
+      total += shown;
+    });
+  };
+  const runFinder = () => {
+    total = 0;
+    applyFinder();
+    const kw = fInput.value.trim();
+    fStat.textContent = kw ? (total ? `${total} 项` : '无匹配') : '';
+    tabBar.style.display = kw ? 'none' : '';
+    p.scrollTop = 0;
+  };
+  fInput.value = finderQuery; // 重渲后保留搜索词（与 activeTab 同理）
+  fInput.addEventListener('input', () => {
+    finderQuery = fInput.value;
+    runFinder();
+  });
+  fClear.onclick = () => {
+    fInput.value = '';
+    finderQuery = '';
+    runFinder();
+    fInput.focus();
+  };
+
   const ctx: PanelCtx = {
     panel: p,
     groups,
@@ -157,6 +213,7 @@ function renderPanel(p: HTMLElement) {
     if (!host) continue; // 分区声明了不存在的 tab：跳过而不是让整个面板渲染失败
     sec.render(host, ctx);
   }
+  if (finderQuery) runFinder(); // 分区渲染完才有得筛
 }
 
 export function openPanel(): void {

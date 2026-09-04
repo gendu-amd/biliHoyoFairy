@@ -3456,6 +3456,10 @@
     #bfb-panel .sec.allow .chip.off{background:#f2f2f4;color:#8a8a8a;border-color:#e0e0e4}
     #bfb-panel .chip .chip-toggle{text-decoration:none;font-size:10px}
     #bfb-panel .chip b:hover{opacity:1}
+    #bfb-panel .bfb-finder{display:flex;align-items:center;gap:6px;margin:8px 0 4px}
+    #bfb-panel .bfb-finder input{flex:1;padding:5px 9px;border:1px solid #ddd;border-radius:8px;font-size:12px}
+    #bfb-panel .bfb-finder button{padding:4px 9px;border:1px solid #ddd;border-radius:8px;background:#fff;cursor:pointer;font-size:12px}
+    #bfb-panel .bfb-finder .fst{font-size:11px;color:#6e6e6e;min-width:3em}
     #bfb-panel .empty{font-size:11px;color:#767676;margin-top:6px}
     #bfb-panel .hint code{background:rgba(0,0,0,.06);border-radius:4px;padding:1px 5px;font-family:ui-monospace,Consolas,monospace;font-size:11px}
     #bfb-panel input[type=number]{width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:6px}
@@ -3560,6 +3564,7 @@
       #bfb-panel .chip.off{background:rgba(255,255,255,.07);color:#8b8b93;border-color:rgba(255,255,255,.14)}
       #bfb-panel .sec.allow .chip.off{background:rgba(255,255,255,.07);color:#8b8b93;border-color:rgba(255,255,255,.14)}
       #bfb-panel .hint code{background:rgba(255,255,255,.12)}
+      #bfb-panel .bfb-finder input,#bfb-panel .bfb-finder button{background:#2e2e34;border-color:#45454d;color:#e8e8ea}
       #bfb-panel .chip.sel{background:rgba(251,114,153,.3)}
       #bfb-panel .sec.allow .chip.sel{background:rgba(39,174,96,.3)}
       #bfb-panel .field .chips{background:#232328;border-color:#34343a}
@@ -5217,6 +5222,7 @@ ${r.line}`, {
     logSection
   ];
   var activeTab = "base";
+  var finderQuery = "";
   var lastFocus = null;
   function panelEl() {
     return document.getElementById("bfb-panel");
@@ -5292,6 +5298,54 @@ ${r.line}`, {
         p.scrollTop = 0;
       };
     });
+    const finder = document.createElement("div");
+    finder.className = "bfb-finder";
+    const fInput = document.createElement("input");
+    fInput.type = "text";
+    fInput.placeholder = "搜索设置项（如：营销、评论等级、备份）";
+    const fClear = document.createElement("button");
+    fClear.textContent = "✕";
+    fClear.title = "清除";
+    const fStat = document.createElement("span");
+    fStat.className = "fst";
+    finder.append(fInput, fClear, fStat);
+    p.insertBefore(finder, tabBar.nextSibling);
+    let total = 0;
+    const applyFinder = () => {
+      const kw = fInput.value.trim().toLowerCase();
+      Object.entries(groups).forEach(([id, g]) => {
+        const secs = Array.from(g.querySelectorAll(":scope > .sec"));
+        let shown = 0;
+        for (const sec of secs) {
+          const hit = !kw || (sec.textContent || "").toLowerCase().includes(kw);
+          sec.style.display = hit ? "" : "none";
+          if (hit) shown++;
+        }
+        const tip = g.querySelector(".grp-tip");
+        if (tip) tip.style.display = kw ? "none" : "";
+        g.classList.toggle("active", kw ? shown > 0 : id === activeTab);
+        total += shown;
+      });
+    };
+    const runFinder = () => {
+      total = 0;
+      applyFinder();
+      const kw = fInput.value.trim();
+      fStat.textContent = kw ? total ? `${total} 项` : "无匹配" : "";
+      tabBar.style.display = kw ? "none" : "";
+      p.scrollTop = 0;
+    };
+    fInput.value = finderQuery;
+    fInput.addEventListener("input", () => {
+      finderQuery = fInput.value;
+      runFinder();
+    });
+    fClear.onclick = () => {
+      fInput.value = "";
+      finderQuery = "";
+      runFinder();
+      fInput.focus();
+    };
     const ctx = {
       panel: p,
       groups,
@@ -5308,6 +5362,7 @@ ${r.line}`, {
       if (!host) continue;
       sec.render(host, ctx);
     }
+    if (finderQuery) runFinder();
   }
   function openPanel2() {
     lastFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
