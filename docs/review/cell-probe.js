@@ -110,5 +110,20 @@
       console.log('   格子 HTML 头 300 字：', cell.outerHTML.slice(0, 300));
     }
   }
+  // 布局快照：把容器所有子项的实际位置摊开。少一项之后哪里错位、间距是谁给的，
+  // 看这张表比看任何单个属性都直接。
+  if (box) {
+    console.log('%c[空洞探针] 容器子项排布（前 12 个）:', P);
+    [...box.children].slice(0, 12).forEach((e, i) => {
+      const r = e.getBoundingClientRect();
+      const cs = getComputedStyle(e);
+      const hidden = cs.display === 'none';
+      console.log(
+        `   #${i} ${desc(e)}` +
+          (hidden ? '  [已隐藏]' : `  left:${Math.round(r.left)} top:${Math.round(r.top)} ${Math.round(r.width)}×${Math.round(r.height)}`) +
+          `  margin:${cs.margin}`
+      );
+    });
+  }
   console.log('%c[空洞探针] 小结:', P, holes.length ? `有 ${holes.length} 列的格子没被隐藏 → 这就是留洞的位置` : '所有列的格子都已隐藏，空洞不是 cellOf 的问题');
 })();
