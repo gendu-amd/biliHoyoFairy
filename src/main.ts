@@ -20,7 +20,7 @@ import { isCommentTag } from './selectors';
 import { applyHotSearchStyle } from './hotsearch';
 import { scanAll, rescanAfterRuleChange } from './dom';
 import { startScanner } from './scanner';
-import { onContextMenu, onCardHover, hideHoverBtn } from './ui/menu';
+import { onContextMenu, onCardHover, hideHoverBtn, closeCtxMenu } from './ui/menu';
 import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
 /*
  * 架构（拦截优先 + DOM 兜底）：
@@ -117,6 +117,17 @@ import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
     document.addEventListener('contextmenu', safe('onContextMenu', onContextMenu), true);
     document.addEventListener('mouseover', safe('onCardHover', onCardHover), true);
     document.addEventListener('scroll', safe('hideHoverBtn', hideHoverBtn), true);
+    // 右键菜单的关闭时机。放这儿而不是 menu 模块里的顶层副作用——那种写法在拆文件时看不见，
+    // 上一轮拆 menu.ts 就把 click/scroll 两条漏搬了，菜单弹出后除非点菜单项否则不消失。
+    document.addEventListener('click', safe('closeCtxMenu', closeCtxMenu), true);
+    document.addEventListener('scroll', safe('closeCtxMenu', closeCtxMenu), true);
+    document.addEventListener(
+      'keydown',
+      safe('closeCtxMenu', (e: KeyboardEvent) => {
+        if (e.key === 'Escape') closeCtxMenu();
+      }),
+      true
+    );
 
     // 信息流的增量扫描由 ./scanner 负责，且早在 document-start 就已装好（首屏 SSR 的卡
     // 必须在解析出来的当帧判定，等到这里就已经画在屏幕上了）。此处不再另装观察器。

@@ -3142,6 +3142,7 @@
     return t.length <= 30 ? t : "";
   }
   function onContextMenu(e) {
+    closeCtxMenu();
     if (!CONFIG.enabled || !CONFIG.rightClickBlock) return;
     if (CONFIG.comment.enabled) {
       const cmtHost = findCommentHost(e);
@@ -5465,6 +5466,15 @@ ${r.line}`, {
       document.addEventListener("contextmenu", safe("onContextMenu", onContextMenu), true);
       document.addEventListener("mouseover", safe("onCardHover", onCardHover), true);
       document.addEventListener("scroll", safe("hideHoverBtn", hideHoverBtn), true);
+      document.addEventListener("click", safe("closeCtxMenu", closeCtxMenu), true);
+      document.addEventListener("scroll", safe("closeCtxMenu", closeCtxMenu), true);
+      document.addEventListener(
+        "keydown",
+        safe("closeCtxMenu", (e) => {
+          if (e.key === "Escape") closeCtxMenu();
+        }),
+        true
+      );
       setTimeout(() => {
         markHealthReady();
         updateBadge();

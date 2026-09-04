@@ -79,7 +79,7 @@ interface CtxItem {
 }
 
 let ctxMenuEl: HTMLElement | null = null;
-function closeCtxMenu() {
+export function closeCtxMenu(): void {
   if (ctxMenuEl) {
     ctxMenuEl.remove();
     ctxMenuEl = null;
@@ -94,6 +94,9 @@ function selectedText(): string {
 }
 
 export function onContextMenu(e: MouseEvent): void {
+  // 先关掉上一个菜单：下面几条分支都可能直接 return（右键在空白处、拿不到任何信息的卡…），
+  // 不先关的话旧菜单会一直挂在屏幕上。
+  closeCtxMenu();
   if (!CONFIG.enabled || !CONFIG.rightClickBlock) return;
 
   // 评论区右键（优先于视频卡）：在评论上右键 → 屏蔽该评论用户 / 选中文本加评论关键词
@@ -225,4 +228,3 @@ function renderCtxMenu(e: MouseEvent, items: CtxItem[]) {
   menu.style.top = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 10) + 'px';
   ctxMenuEl = menu;
 }
-
