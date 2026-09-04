@@ -37,8 +37,15 @@
   const blocked = all.filter((c) => c.hasAttribute('data-bfb-blocked'));
   console.log('%c[空洞探针] 页面:', P, location.pathname, '| 卡片', all.length, '| 已判定拦截', blocked.length);
   if (document.querySelector('.bfb-review')) {
-    console.warn('[空洞探针] ⚠ 检测到审查模式开着（.bfb-review）。那个模式本来就不隐藏卡片，' +
-      '这次跑不到出问题的状态。请到「基础 → 审查模式」关掉、刷新页面后重跑。');
+    // 直接中止而不是只警告：审查模式下「格子没被隐藏」是**预期行为**，继续跑只会得出
+    // 「这就是留洞的位置」这种错误结论——探针给错结论比不给结论更糟。
+    console.warn(
+      '%c[空洞探针] ⛔ 审查模式开着（.bfb-review），本次不做判断。\n' +
+        '那个模式按设计就不隐藏卡片，继续跑会把「没隐藏」误报成留洞。\n' +
+        '请到「基础 → 审查模式」关掉 → 刷新页面 → 加一条必然命中的关键词 → 滚两屏 → 重跑。',
+      'color:#e74c3c;font-weight:bold'
+    );
+    return;
   }
   if (!blocked.length) return console.log('这一页还没有被拦下的卡。加一条必然命中的关键词，滚两屏再跑。');
 
