@@ -18,9 +18,15 @@
   for (const h of hosts) {
     const cs = getComputedStyle(h);
     const inline = h.getAttribute('style') || '';
+    const r = h.getBoundingClientRect();
     const st = {
       tag: h.tagName,
+      尺寸: Math.round(r.width) + '×' + Math.round(r.height),
+      正文长度: (h.textContent || '').trim().length,
       computedDisplay: cs.display,
+      visibility: cs.visibility,
+      opacity: cs.opacity,
+      父容器display: h.parentElement ? getComputedStyle(h.parentElement).display : '(无)',
       inline,
       outline: cs.outlineStyle + ' ' + cs.outlineWidth,
       title: h.getAttribute('title') || '',
@@ -40,6 +46,10 @@
   samples.forEach((s, i) => console.log(`   #${i}`, JSON.stringify(s, null, 1)));
 
   // 关键交叉验证：内存里的规则版本 vs 评论上打的版本。对不上说明这批评论根本没被重新评估。
+  // 决定性判据：有尺寸 = 渲染出来了（问题不在我们）；0 高 = 真的塌了。
+  const sized = hosts.filter((h) => h.getBoundingClientRect().height > 0).length;
+  console.log('%c[评论探针] 有实际尺寸的宿主:', P, sized, '/', hosts.length,
+    sized === hosts.length ? '← 全部渲染出来了：评论没有消失，问题不在隐藏逻辑' : '← 有塌掉的');
   console.log('%c[评论探针] 提示:', P, '若样本里 computedDisplay 是 none 且 inline 带 display:none !important，' +
     '说明处理它的是「隐藏」分支而不是审查分支——把 评估版本 一起发我，能判断是不是压根没重跑。');
 })();
