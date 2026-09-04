@@ -21,6 +21,7 @@ export const baseSection: PanelSection = {
       <div class="switch"><input type="checkbox" id="bfb-hoverbtn"> 悬停卡片显示快捷「拉黑 / 不看这个」按钮</div>
       <div class="switch"><input type="checkbox" id="bfb-collab"> 联合投稿一并拉黑合作者</div>
       <div class="switch"><input type="checkbox" id="bfb-fuzzy"> 反绕过模糊匹配（「原 神」「原.神」同样拦截；隐形字符始终拦截）</div>
+      <div class="switch"><input type="checkbox" id="bfb-trad"> 简繁归一（规则写「原神」也能拦住繁体标题；单向繁→简）</div>
       <div class="switch"><input type="checkbox" id="bfb-debug"> 调试模式（控制台逐卡打印拦截 / 放行原因；并在「工具 → 运行自检」里记录耗时）</div>
       <div class="hint">所有开关与规则均<b>即时生效</b>，无需保存。<b>审查模式</b>与<b>折叠模式</b>都会让拦截层停止在数据层删项（否则你只会看到一部分被折叠、另一部分凭空消失），代价是失去「从头就不出现」的无闪烁效果，切换后建议<b>刷新页面</b>。如需让视频真正从推荐流中消失，请使用<b>拉黑</b>。</div>`;
     host.appendChild(sw);
@@ -36,6 +37,7 @@ export const baseSection: PanelSection = {
     bindControl(sw, 'bfb-hoverbtn', CONFIG, 'cardHoverBtn', { after: hideHoverBtn });
     bindControl(sw, 'bfb-collab', CONFIG, 'blacklistCollab');
     bindControl(sw, 'bfb-fuzzy', CONFIG, 'fuzzyMatch', { after: rescanAfterRuleChange });
+    bindControl(sw, 'bfb-trad', CONFIG, 'tradNorm', { after: rescanAfterRuleChange });
     bindControl(sw, 'bfb-debug', CONFIG, 'debug', {
       after: () => {
         setTimingEnabled(CONFIG.debug); // 顺带开/关耗时采样，结果见「工具 → 🩺 运行自检」

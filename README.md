@@ -187,3 +187,9 @@ B 站自带的「关键词屏蔽 / 不感兴趣」只在展示环节藏标题命
 ## License
 
 [MIT](LICENSE)
+
+### 第三方数据
+
+`src/match/t2s.ts` 的繁体→简体单字对照表来自 [OpenCC](https://github.com/BYVoid/OpenCC) 的 `TSCharacters.txt`，
+按 Apache License 2.0 使用；已过滤为「单字 → 单字、且两者不同」的条目并取多值项的首选值。
+该表仅在开启「简繁归一」时才会被使用。

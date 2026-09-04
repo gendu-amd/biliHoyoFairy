@@ -3,6 +3,8 @@ import {
   compileLines,
   compileScopedKeywords,
   configureFuzzy,
+  configureTradNorm,
+  toSimplified,
   escapeRe,
   kwHit,
   lc,
@@ -178,5 +180,55 @@ describe('normMatch 的 memo', () => {
     expect(normMatch('ＡＢ')).toBe('ab');
     expect(normMatch('ＣＤ')).toBe('cd');
     expect(normMatch('ＡＢ')).toBe('ab');
+  });
+});
+
+// 简繁归一：只做繁→简单向（繁→简基本多对一少歧义，反过来一个简体常对多个繁体）。
+// 匹配时两侧都归到简体即可互通。
+describe('简繁归一', () => {
+  beforeEach(() => {
+    configureFuzzy(() => false);
+    configureTradNorm(() => false);
+  });
+
+  it('toSimplified 逐字转换，无繁体时原样返回同一个字符串', () => {
+    expect(toSimplified('這個遊戲')).toBe('这个游戏');
+    const plain = '这个游戏';
+    expect(toSimplified(plain)).toBe(plain);
+  });
+
+  it('关闭时不归一（默认档不受影响）', () => {
+    const m = compileLines(['原神']);
+    expect(textHit('原神啟動', m)).toBe(true); // 「原神」本身简繁同形
+    expect(textHit('這個遊戲', compileLines(['这个游戏']))).toBe(false);
+  });
+
+  it('开启后简体规则能拦住繁体文本', () => {
+    configureTradNorm(() => true);
+    expect(textHit('這個遊戲很好玩', compileLines(['这个游戏']))).toBe(true);
+  });
+
+  it('开启后繁体规则也能拦住简体文本（两侧同归一）', () => {
+    configureTradNorm(() => true);
+    expect(textHit('这个游戏很好玩', compileLines(['這個遊戲']))).toBe(true);
+  });
+
+  it('正则那一路同样归一', () => {
+    configureTradNorm(() => true);
+    expect(textHit('震驚！這個遊戲', compileLines(['/震惊.*游戏/']))).toBe(true);
+  });
+
+  it('与模糊匹配叠加：繁体 + 分隔符绕过一起破', () => {
+    configureTradNorm(() => true);
+    configureFuzzy(() => true);
+    expect(textHit('這 個 遊 戲', compileLines(['这个游戏']))).toBe(true);
+  });
+
+  it('memo 带上简繁开关，拨了立刻生效', () => {
+    const s = '這個';
+    configureTradNorm(() => false);
+    expect(normMatch(s)).toBe('這個');
+    configureTradNorm(() => true);
+    expect(normMatch(s)).toBe('这个');
   });
 });

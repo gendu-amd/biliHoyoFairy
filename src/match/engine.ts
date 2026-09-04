@@ -2,7 +2,7 @@
 // M（编译后的匹配器）与 ruleVersion 是共享可变状态，经 rebuildRules 重建；以 ESM 实时绑定导出，
 // 其它模块 import 后读到的是最新值（切勿解构后缓存）。
 import { CONFIG, isRuleDisabled } from '../config';
-import { compileScopedKeywords, compileLines, kwHit, kwWhich, textHit, whichHit, lc, ruleLines, configureFuzzy } from './normalize';
+import { compileScopedKeywords, compileLines, kwHit, kwWhich, textHit, whichHit, lc, ruleLines, configureFuzzy, configureTradNorm } from './normalize';
 import type { Matcher, ScopedKw, KwScope } from './normalize';
 import type { CardInfo } from '../cardinfo';
 import { collectSubRules } from '../subscriptions/store';
@@ -12,6 +12,7 @@ import type { SubDim, SubRules } from '../subscriptions/parse';
 // 关键时序：必须在下方首次 buildMatchers() 之前接好 fuzzy 取值器，否则初始匹配器会以 fuzzy=false 编译，
 // 导致首屏（网络层过滤 + 首次扫描）对默认开启的反绕过匹配失效，直到某次 rebuildRules 才纠正。
 configureFuzzy(() => CONFIG.fuzzyMatch);
+configureTradNorm(() => CONFIG.tradNorm);
 
 // 订阅能携带的维度是 SUB_DIMS 的子集（dualTags 不在其列——组合规则语义太重，不接受外部订阅下发）。
 // 用一个类型守卫把「这个维度有没有订阅来源」表达出来，取代过去的 `sub: any`：

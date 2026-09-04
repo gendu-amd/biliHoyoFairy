@@ -68,6 +68,8 @@ export interface AppConfig {
   rightClickBlock: boolean;
   cardHoverBtn: boolean;
   fuzzyMatch: boolean;
+  // 简繁归一：匹配前把繁体归到简体，「原神/原神」互通（单向，见 match/t2s.ts）。
+  tradNorm: boolean;
   blacklistCollab: boolean;
   block: BlockConfig;
   allow: AllowConfig;
@@ -103,6 +105,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   rightClickBlock: true,
   cardHoverBtn: false, // 悬停卡片时显示快捷「拉黑」浮层按钮（独立浮层，不改 B 站卡片 DOM）
   fuzzyMatch: true, // 反绕过：普通关键词匹配前剔除分隔符（“原 神/原.神”也命中）；隐形字符始终剔除
+  tradNorm: false, // 简繁归一（默认关：多数用户用不到，且要多建一张 2.8k 条的表）
   blacklistCollab: false, // 拉黑联合投稿时，是否把所有合作者一并拉黑
   block: {
     keywords: [], // 命中 标题/UP名/分区（纯本地，不联网；标签匹配请用 tags 维度）；普通词=包含，/.../ =正则

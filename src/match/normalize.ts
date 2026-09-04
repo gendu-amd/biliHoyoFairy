@@ -1,3 +1,4 @@
+import { T2S_PAIRS } from './t2s';
 // 匹配核心：文本归一 + 规则行编译 + 作用域关键词 + 输入拆分。纯逻辑，无 DOM / 无网络依赖（L0 叶子）。
 // 唯一的运行时配置依赖（fuzzyMatch 开关）通过 configureFuzzy 注入，便于单测与解耦。
 
@@ -28,19 +29,49 @@ export function configureFuzzy(fn: () => boolean): void {
   getFuzzy = fn;
 }
 
+// 简繁归一（默认关）。同样走注入，理由与 fuzzy 一致：normalize 不该直接依赖 CONFIG。
+let getTrad: () => boolean = () => false;
+export function configureTradNorm(fn: () => boolean): void {
+  getTrad = fn;
+}
+
+// 表按需构建：开关默认关，绝大多数用户永远不会用到这 2.8k 个条目。
+let t2sMap: Map<string, string> | null = null;
+let t2sRe: RegExp | null = null;
+function buildT2S(): void {
+  t2sMap = new Map();
+  let cls = '';
+  for (let i = 0; i + 1 < T2S_PAIRS.length; i += 2) {
+    t2sMap.set(T2S_PAIRS[i], T2S_PAIRS[i + 1]);
+    cls += T2S_PAIRS[i];
+  }
+  // 一次原生 replace 扫描，比逐字符 JS 循环快得多；表里全是 CJK，无需转义。
+  t2sRe = new RegExp('[' + cls + ']', 'g');
+}
+
+/** 繁体→简体（单字级）。没有繁体字时原样返回，不产生新字符串。 */
+export function toSimplified(s: string): string {
+  if (!t2sRe) buildT2S();
+  return t2sRe!.test(s) ? ((t2sRe!.lastIndex = 0), s.replace(t2sRe!, (c) => t2sMap!.get(c) || c)) : s;
+}
+
 // 匹配前对文本的归一：全角→半角 + 小写 + 去隐形（+ fuzzy 时去分隔符）。普通词编译时用同一套，两侧一致。
-// 单格 memo：kwHit 对同一段文本要归一两次，一张卡 6~8 次。key 必须带 fuzzy 开关，
+// 单格 memo：kwHit 对同一段文本要归一两次，一张卡 6~8 次。key 必须带上两个开关，
 // 否则拨了开关会继续用旧结果匹配。
 let memoSrc: unknown;
 let memoFuzzy: boolean | undefined;
+let memoTrad: boolean | undefined;
 let memoOut = '';
 export function normMatch(s: unknown): string {
   const fuzzy = getFuzzy();
-  if (s === memoSrc && fuzzy === memoFuzzy) return memoOut;
+  const trad = getTrad();
+  if (s === memoSrc && fuzzy === memoFuzzy && trad === memoTrad) return memoOut;
   let t = stripInvisible(toHalfWidth(s)).toLowerCase();
+  if (trad) t = toSimplified(t);
   if (fuzzy) t = t.replace(SEP_RE, '');
   memoSrc = s;
   memoFuzzy = fuzzy;
+  memoTrad = trad;
   memoOut = t;
   return t;
 }
@@ -132,7 +163,10 @@ export function textHit(text: unknown, matcher: Matcher | null | undefined): boo
   if (!text || !matcher) return false;
   if (matcher.plain && matcher.plain.test(normMatch(text))) return true;
   if (matcher.regexes.length) {
-    const t = stripInvisible(text); // 正则按其原样匹配，仅去隐形字符防零宽绕过
+    // 正则按其原样匹配，仅去隐形字符防零宽绕过；开了简繁归一则文本侧也归一
+    // （规则里的正则由用户自己写，写简体即可两边都命中）。
+    let t = stripInvisible(text);
+    if (getTrad()) t = toSimplified(t);
     for (const r of matcher.regexes) if (r.test(t)) return true;
   }
   return false;
