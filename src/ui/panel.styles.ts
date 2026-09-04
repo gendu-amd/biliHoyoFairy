@@ -55,6 +55,7 @@
     #bfb-panel .chip .chip-toggle{text-decoration:none;font-size:10px}
     #bfb-panel .chip b:hover{opacity:1}
     #bfb-panel .empty{font-size:11px;color:#767676;margin-top:6px}
+    #bfb-panel .hint code{background:rgba(0,0,0,.06);border-radius:4px;padding:1px 5px;font-family:ui-monospace,Consolas,monospace;font-size:11px}
     #bfb-panel input[type=number]{width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:6px}
     #bfb-panel .hint{font-size:11px;color:#6e6e6e;margin-top:7px;line-height:1.7}
     #bfb-panel .toolbar{display:flex;gap:8px;flex-wrap:wrap}
@@ -156,6 +157,7 @@
       #bfb-panel .chip.group{background:rgba(124,92,255,.18);color:#c4b5fd;border-color:rgba(124,92,255,.4)}
       #bfb-panel .chip.off{background:rgba(255,255,255,.07);color:#8b8b93;border-color:rgba(255,255,255,.14)}
       #bfb-panel .sec.allow .chip.off{background:rgba(255,255,255,.07);color:#8b8b93;border-color:rgba(255,255,255,.14)}
+      #bfb-panel .hint code{background:rgba(255,255,255,.12)}
       #bfb-panel .chip.sel{background:rgba(251,114,153,.3)}
       #bfb-panel .sec.allow .chip.sel{background:rgba(39,174,96,.3)}
       #bfb-panel .field .chips{background:#232328;border-color:#34343a}

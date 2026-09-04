@@ -13,6 +13,7 @@ import {
   VERSION,
 } from './constants';
 import { timed } from './health';
+import { SUB_DIMS } from './subscriptions/parse';
 
 export interface BlockConfig {
   keywords: string[];
@@ -85,6 +86,8 @@ export interface AppConfig {
   ruleStats: Record<string, number>;
   // 开始统计的时间戳。没有它就无法区分「装了三个月没命中=可疑」和「昨天刚装=正常」。
   ruleStatsSince: number;
+  // 首次安装引导是否已展示过（一次性，展示后置 true）。
+  onboarded: boolean;
   // 被「停用」的规则：键 = 'block.keywords' 这样的名单路径，值 = 停用的**原行**。
   // 存原行而不是下标——名单会增删，下标会漂到别的规则上。
   disabled: Record<string, string[]>;
@@ -145,6 +148,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   uidNames: {}, // uid -> UP 名 缓存（仅用于面板按名称展示；拉黑仍用 uid）
   ruleStats: {}, // 规则 -> 累计命中次数（规则体检：过宽 / 从未命中）
   ruleStatsSince: 0, // 首次记账的时间戳（0=尚未开始统计）
+  onboarded: false,
   disabled: {}, // 规则停用表（见 AppConfig.disabled / isRuleDisabled）
   // 规则订阅：每条 { url, name, enabled }。拉取到的规则数据另存于 SUB_STORE_KEY 缓存（不进 config，不外传）
   subscriptions: [],
@@ -545,7 +549,34 @@ export function setUidName(uid: unknown, name: string): void {
 // ruleStats/ruleStatsSince 属于个人使用数据而非规则本身：别人的命中次数对你没有意义，
 // 更会让导入者的「死规则」判断建立在别人的浏览历史上。
 // disabled 属个人使用状态，且导入侧的 sanitizeConfigInput 本来就会丢掉它；列在这里是让两侧对称。
-export const NON_PORTABLE = ['blockedCount', 'uidNames', 'enabled', 'debug', 'reviewMode', 'subscriptions', 'ruleStats', 'ruleStatsSince', 'disabled'];
+export const NON_PORTABLE = ['blockedCount', 'uidNames', 'enabled', 'debug', 'reviewMode', 'subscriptions', 'ruleStats', 'ruleStatsSince', 'disabled', 'onboarded'];
+// 把自己的黑名单导出成**订阅格式**文件（examples/blocklist.example.json 那个形状）。
+// 「我维护一份名单给别人订阅」此前要求会用 Git 手写 JSON，这一步把门槛降到「点一下」。
+// 只带订阅支持的 7 个黑名单维度——白名单/开关/数值阈值订阅侧本来就不收，导出了也是误导。
+export function exportSubscription(title: string): string {
+  const b = CONFIG.block as unknown as Record<string, unknown>;
+  const rules: Record<string, string[]> = {};
+  for (const dim of SUB_DIMS) {
+    const arr = b[dim];
+    if (Array.isArray(arr) && arr.length) rules[dim] = arr.filter((x): x is string => typeof x === 'string');
+  }
+  return JSON.stringify(
+    {
+      app: 'biliHoyoFairy',
+      format: 1,
+      meta: {
+        title: title || '我的名单',
+        description: '由 biliHoyoFairy 导出。托管到公开 URL（GitHub raw / Gist raw）后，别人在「工具 → 规则订阅」填入即可。',
+        version: new Date().toISOString().slice(0, 10),
+        expires: '1d',
+      },
+      rules,
+    },
+    null,
+    2
+  );
+}
+
 export function exportConfig(): string {
   const c: Record<string, any> = structuredClone(CONFIG);
   NON_PORTABLE.forEach((k) => delete c[k]);

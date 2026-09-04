@@ -298,6 +298,65 @@
     (health.signedSkipped ? ` · 因 WBI 签名放弃改写 ${health.signedSkipped}` : "");
   }
 
+  // src/subscriptions/parse.ts
+  var SUB_DIMS = ["uids", "upNames", "keywords", "partitions", "tags", "upBio", "bvids"];
+  var SUB_LINE_PREFIX = { uid: "uids", up: "upNames", kw: "keywords", part: "partitions", tag: "tags", bio: "upBio", bv: "bvids" };
+  var SUB_PREFIX_RE = new RegExp("^(" + Object.keys(SUB_LINE_PREFIX).join("|") + ")\\s*:\\s*(.+)$", "i");
+  var SUB_CAP = { uids: 5e4, upNames: 5e4, bvids: 5e4 };
+  var SUB_CAP_DEFAULT = 5e3;
+  function migrateSub(obj) {
+    return obj || {};
+  }
+  function sanitizeSubRules(rawRules) {
+    const out = {};
+    for (const dim of SUB_DIMS) {
+      const arr = rawRules && rawRules[dim];
+      if (!Array.isArray(arr)) continue;
+      const max = SUB_CAP[dim] || SUB_CAP_DEFAULT;
+      const seen = /* @__PURE__ */ new Set();
+      const clean = [];
+      for (const x of arr) {
+        if (typeof x !== "string") continue;
+        const v = x.trim();
+        if (!v || seen.has(v)) continue;
+        seen.add(v);
+        clean.push(v);
+        if (clean.length >= max) break;
+      }
+      if (clean.length) out[dim] = clean;
+    }
+    return out;
+  }
+  function parseSubscription(text) {
+    const t = (text || "").trim();
+    if (!t) throw new Error("空内容");
+    if (t[0] === "{") {
+      const obj = migrateSub(JSON.parse(t));
+      const meta2 = obj && obj.meta && typeof obj.meta === "object" ? obj.meta : {};
+      let rawRules = obj && obj.rules;
+      if (!rawRules && obj && obj.config && obj.config.block) rawRules = obj.config.block;
+      return { meta: meta2, rules: sanitizeSubRules(rawRules) };
+    }
+    const meta = {};
+    const buckets = {};
+    for (let line of t.split(/\r?\n/)) {
+      line = line.trim();
+      if (!line) continue;
+      if (line[0] === "!") {
+        const m = line.slice(1).match(/^\s*([a-zA-Z][\w-]*)\s*:\s*(.+)$/);
+        if (m) meta[m[1]] = m[2].trim();
+        continue;
+      }
+      line = line.replace(/\s+#.*$/, "").trim();
+      if (!line) continue;
+      const pm = !line.startsWith("/") && line.match(SUB_PREFIX_RE);
+      const dim = pm ? SUB_LINE_PREFIX[pm[1].toLowerCase()] : "keywords";
+      const val = pm ? pm[2].trim() : line;
+      (buckets[dim] = buckets[dim] || []).push(val);
+    }
+    return { meta, rules: sanitizeSubRules(buckets) };
+  }
+
   // src/config.ts
   var DEFAULT_CONFIG = {
     schemaVersion: SCHEMA_VERSION,
@@ -387,6 +446,7 @@
     // 规则 -> 累计命中次数（规则体检：过宽 / 从未命中）
     ruleStatsSince: 0,
     // 首次记账的时间戳（0=尚未开始统计）
+    onboarded: false,
     disabled: {},
     // 规则停用表（见 AppConfig.disabled / isRuleDisabled）
     // 规则订阅：每条 { url, name, enabled }。拉取到的规则数据另存于 SUB_STORE_KEY 缓存（不进 config，不外传）
@@ -648,7 +708,30 @@
       CONFIG.uidNames[k] = name;
     }
   }
-  var NON_PORTABLE = ["blockedCount", "uidNames", "enabled", "debug", "reviewMode", "subscriptions", "ruleStats", "ruleStatsSince", "disabled"];
+  var NON_PORTABLE = ["blockedCount", "uidNames", "enabled", "debug", "reviewMode", "subscriptions", "ruleStats", "ruleStatsSince", "disabled", "onboarded"];
+  function exportSubscription(title) {
+    const b = CONFIG.block;
+    const rules = {};
+    for (const dim of SUB_DIMS) {
+      const arr = b[dim];
+      if (Array.isArray(arr) && arr.length) rules[dim] = arr.filter((x) => typeof x === "string");
+    }
+    return JSON.stringify(
+      {
+        app: "biliHoyoFairy",
+        format: 1,
+        meta: {
+          title: title || "我的名单",
+          description: "由 biliHoyoFairy 导出。托管到公开 URL（GitHub raw / Gist raw）后，别人在「工具 → 规则订阅」填入即可。",
+          version: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+          expires: "1d"
+        },
+        rules
+      },
+      null,
+      2
+    );
+  }
   function exportConfig() {
     const c = structuredClone(CONFIG);
     NON_PORTABLE.forEach((k) => delete c[k]);
@@ -1025,65 +1108,6 @@
       }
     }
     return out;
-  }
-
-  // src/subscriptions/parse.ts
-  var SUB_DIMS = ["uids", "upNames", "keywords", "partitions", "tags", "upBio", "bvids"];
-  var SUB_LINE_PREFIX = { uid: "uids", up: "upNames", kw: "keywords", part: "partitions", tag: "tags", bio: "upBio", bv: "bvids" };
-  var SUB_PREFIX_RE = new RegExp("^(" + Object.keys(SUB_LINE_PREFIX).join("|") + ")\\s*:\\s*(.+)$", "i");
-  var SUB_CAP = { uids: 5e4, upNames: 5e4, bvids: 5e4 };
-  var SUB_CAP_DEFAULT = 5e3;
-  function migrateSub(obj) {
-    return obj || {};
-  }
-  function sanitizeSubRules(rawRules) {
-    const out = {};
-    for (const dim of SUB_DIMS) {
-      const arr = rawRules && rawRules[dim];
-      if (!Array.isArray(arr)) continue;
-      const max = SUB_CAP[dim] || SUB_CAP_DEFAULT;
-      const seen = /* @__PURE__ */ new Set();
-      const clean = [];
-      for (const x of arr) {
-        if (typeof x !== "string") continue;
-        const v = x.trim();
-        if (!v || seen.has(v)) continue;
-        seen.add(v);
-        clean.push(v);
-        if (clean.length >= max) break;
-      }
-      if (clean.length) out[dim] = clean;
-    }
-    return out;
-  }
-  function parseSubscription(text) {
-    const t = (text || "").trim();
-    if (!t) throw new Error("空内容");
-    if (t[0] === "{") {
-      const obj = migrateSub(JSON.parse(t));
-      const meta2 = obj && obj.meta && typeof obj.meta === "object" ? obj.meta : {};
-      let rawRules = obj && obj.rules;
-      if (!rawRules && obj && obj.config && obj.config.block) rawRules = obj.config.block;
-      return { meta: meta2, rules: sanitizeSubRules(rawRules) };
-    }
-    const meta = {};
-    const buckets = {};
-    for (let line of t.split(/\r?\n/)) {
-      line = line.trim();
-      if (!line) continue;
-      if (line[0] === "!") {
-        const m = line.slice(1).match(/^\s*([a-zA-Z][\w-]*)\s*:\s*(.+)$/);
-        if (m) meta[m[1]] = m[2].trim();
-        continue;
-      }
-      line = line.replace(/\s+#.*$/, "").trim();
-      if (!line) continue;
-      const pm = !line.startsWith("/") && line.match(SUB_PREFIX_RE);
-      const dim = pm ? SUB_LINE_PREFIX[pm[1].toLowerCase()] : "keywords";
-      const val = pm ? pm[2].trim() : line;
-      (buckets[dim] = buckets[dim] || []).push(val);
-    }
-    return { meta, rules: sanitizeSubRules(buckets) };
   }
 
   // src/subscriptions/store.ts
@@ -3360,6 +3384,7 @@
     #bfb-panel .chip .chip-toggle{text-decoration:none;font-size:10px}
     #bfb-panel .chip b:hover{opacity:1}
     #bfb-panel .empty{font-size:11px;color:#767676;margin-top:6px}
+    #bfb-panel .hint code{background:rgba(0,0,0,.06);border-radius:4px;padding:1px 5px;font-family:ui-monospace,Consolas,monospace;font-size:11px}
     #bfb-panel input[type=number]{width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:6px}
     #bfb-panel .hint{font-size:11px;color:#6e6e6e;margin-top:7px;line-height:1.7}
     #bfb-panel .toolbar{display:flex;gap:8px;flex-wrap:wrap}
@@ -3461,6 +3486,7 @@
       #bfb-panel .chip.group{background:rgba(124,92,255,.18);color:#c4b5fd;border-color:rgba(124,92,255,.4)}
       #bfb-panel .chip.off{background:rgba(255,255,255,.07);color:#8b8b93;border-color:rgba(255,255,255,.14)}
       #bfb-panel .sec.allow .chip.off{background:rgba(255,255,255,.07);color:#8b8b93;border-color:rgba(255,255,255,.14)}
+      #bfb-panel .hint code{background:rgba(255,255,255,.12)}
       #bfb-panel .chip.sel{background:rgba(251,114,153,.3)}
       #bfb-panel .sec.allow .chip.sel{background:rgba(39,174,96,.3)}
       #bfb-panel .field .chips{background:#232328;border-color:#34343a}
@@ -3499,6 +3525,7 @@
   }
 
   // src/ui/field.ts
+  var SYNTAX_CHEATSHEET = "<b>规则语法速查</b><br>· <code>原神</code> —— 普通词，<b>包含</b>即命中，忽略大小写与全角半角<br>· <code>/震惊.*竟然/</code> —— 以 <code>/</code> 包裹为<b>正则</b>，可加 <code>/…/i</code> 等标志<br>· <code>title:原神</code> / <code>up:营销号</code> / <code>part:资讯</code> —— 只匹配 标题 / UP 名 / 分区（不写前缀 = 三者都匹配）<br>· <code>原神 鸣潮</code> —— 仅「组合标签」字段：<b>同时</b>含这一组全部标签才屏蔽<br>· 一次可粘贴多条，用<b>换行</b>或<b>逗号</b>分隔；以 <code>/</code> 开头的行整行保留，不会被逗号拆断<br>· 拿不准就用「工具 → 🧪 正则测试器」先试，它会告诉你会不会被引擎拒收";
   var collapseState = {};
   var nameBudget = 0;
   var nameFlushTimer = null;
@@ -3545,9 +3572,20 @@
     if (o.inputTitle) input.title = o.inputTitle;
     const btn = document.createElement("button");
     btn.textContent = "添加";
+    const help = document.createElement("button");
+    help.type = "button";
+    help.className = "chip-search-x";
+    help.textContent = "?";
+    help.title = "规则语法速查";
     addrow.appendChild(input);
     addrow.appendChild(btn);
+    addrow.appendChild(help);
     body.appendChild(addrow);
+    const cheat = el("div", "hint");
+    cheat.style.display = "none";
+    cheat.innerHTML = SYNTAX_CHEATSHEET;
+    help.onclick = () => cheat.style.display = cheat.style.display === "none" ? "block" : "none";
+    body.appendChild(cheat);
     if (o.hint) {
       const h = el("div", "hint");
       h.style.marginTop = "6px";
@@ -4209,8 +4247,8 @@
       const io = document.createElement("div");
       io.className = "sec";
       io.innerHTML = `<label>规则配置导入 / 导出（备份、分享给他人）</label>
-      <div class="toolbar"><button class="act" id="bfb-export">⬇ 导出为文件</button><button class="act ghost" id="bfb-import">⬆ 从文件导入</button></div>
-      <div class="hint">导出你的全部过滤规则与开关（不含统计、缓存、个人偏好）。导入时规则列表取<b>并集</b>（不会丢失现有规则），开关以导入值为准。</div>`;
+      <div class="toolbar"><button class="act" id="bfb-export">⬇ 导出为文件</button><button class="act ghost" id="bfb-import">⬆ 从文件导入</button><button class="act ghost" id="bfb-export-sub">📤 导出为订阅名单</button></div>
+      <div class="hint">导出你的全部过滤规则与开关（不含统计、缓存、个人偏好）。导入时规则列表取<b>并集</b>（不会丢失现有规则），开关以导入值为准。<br>「导出为订阅名单」生成的是<b>订阅格式</b>文件（只含黑名单的 7 个可订阅维度）：传到 GitHub raw / Gist 之类的公开 URL，别人在「规则订阅」里填地址就能订阅你的名单并自动更新。</div>`;
       host.appendChild(io);
       q(io, "#bfb-export").onclick = () => {
         const blob = new Blob([exportConfig()], { type: "application/json" });
@@ -4220,6 +4258,19 @@
         a.click();
         setTimeout(() => URL.revokeObjectURL(a.href), 2e3);
         toast("已导出规则配置文件");
+      };
+      q(io, "#bfb-export-sub").onclick = () => {
+        promptModal("给这份名单起个标题（订阅者会看到）：", { title: "导出为订阅名单", placeholder: "如：抗黑潮公共名单", okText: "导出" }).then((input) => {
+          const title = (input || "").trim();
+          if (input === null) return;
+          const blob = new Blob([exportSubscription(title)], { type: "application/json" });
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = `biliHoyoFairy-blocklist-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.json`;
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(a.href), 2e3);
+          toast("已导出订阅名单文件，传到公开 URL 后即可被订阅", "success");
+        });
       };
       q(io, "#bfb-import").onclick = () => {
         const inp = document.createElement("input");
@@ -5279,6 +5330,11 @@ ${r.line}`, {
         const top = Object.entries(tallyLog()).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, v]) => `${k}×${v}`).join("、");
         toast(`🛡 本次加载已拦截 ${sessionBlocked} 个：${top}（点右下角🛡看明细 / 放行）`);
       }, STARTUP_SUMMARY_MS);
+      if (!CONFIG.onboarded) {
+        CONFIG.onboarded = true;
+        saveConfig();
+        toast("👋 已启用。点这里挑几组预置规则，一分钟配好", "success", { label: "去挑选", onClick: openPanel2 }, 15e3);
+      }
       GM_registerMenuCommand("打开设置面板", openPanel2);
       GM_registerMenuCommand("暂停/启用拦截", () => {
         CONFIG.enabled = !CONFIG.enabled;

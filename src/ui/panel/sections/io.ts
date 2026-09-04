@@ -7,6 +7,7 @@ import {
   CONFIG,
   saveConfig,
   exportConfig,
+  exportSubscription,
   mergeImport,
   migrateConfig,
   sanitizeConfigInput,
@@ -14,6 +15,7 @@ import {
 } from '../../../config';
 import { rescanAfterRuleChange } from '../../../dom';
 import { toast } from '../../toast';
+import { promptModal } from '../../confirm';
 import { q } from '../ctx';
 import type { PanelSection } from '../ctx';
 
@@ -23,8 +25,8 @@ export const ioSection: PanelSection = {
     const io = document.createElement('div');
     io.className = 'sec';
     io.innerHTML = `<label>规则配置导入 / 导出（备份、分享给他人）</label>
-      <div class="toolbar"><button class="act" id="bfb-export">⬇ 导出为文件</button><button class="act ghost" id="bfb-import">⬆ 从文件导入</button></div>
-      <div class="hint">导出你的全部过滤规则与开关（不含统计、缓存、个人偏好）。导入时规则列表取<b>并集</b>（不会丢失现有规则），开关以导入值为准。</div>`;
+      <div class="toolbar"><button class="act" id="bfb-export">⬇ 导出为文件</button><button class="act ghost" id="bfb-import">⬆ 从文件导入</button><button class="act ghost" id="bfb-export-sub">📤 导出为订阅名单</button></div>
+      <div class="hint">导出你的全部过滤规则与开关（不含统计、缓存、个人偏好）。导入时规则列表取<b>并集</b>（不会丢失现有规则），开关以导入值为准。<br>「导出为订阅名单」生成的是<b>订阅格式</b>文件（只含黑名单的 7 个可订阅维度）：传到 GitHub raw / Gist 之类的公开 URL，别人在「规则订阅」里填地址就能订阅你的名单并自动更新。</div>`;
     host.appendChild(io);
 
     q(io, '#bfb-export').onclick = () => {
@@ -35,6 +37,20 @@ export const ioSection: PanelSection = {
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 2000);
       toast('已导出规则配置文件');
+    };
+
+    q(io, '#bfb-export-sub').onclick = () => {
+      promptModal('给这份名单起个标题（订阅者会看到）：', { title: '导出为订阅名单', placeholder: '如：抗黑潮公共名单', okText: '导出' }).then((input) => {
+        const title = (input || '').trim();
+        if (input === null) return; // 取消
+        const blob = new Blob([exportSubscription(title)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `biliHoyoFairy-blocklist-${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+        toast('已导出订阅名单文件，传到公开 URL 后即可被订阅', 'success');
+      });
     };
 
     q(io, '#bfb-import').onclick = () => {

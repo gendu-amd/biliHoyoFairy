@@ -142,6 +142,14 @@ import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
       toast(`🛡 本次加载已拦截 ${sessionBlocked} 个：${top}（点右下角🛡看明细 / 放行）`);
     }, STARTUP_SUMMARY_MS);
 
+    // 首次安装引导：装完只看到一个角标，用户未必知道该点它，更不知道有预置规则库。
+    // 一次性、可忽略、不打断——但「最快上手」这一步该出现在产品里，而不是只写在 README 里。
+    if (!CONFIG.onboarded) {
+      CONFIG.onboarded = true;
+      saveConfig();
+      toast('👋 已启用。点这里挑几组预置规则，一分钟配好', 'success', { label: '去挑选', onClick: openPanel }, 15000);
+    }
+
     GM_registerMenuCommand('打开设置面板', openPanel);
     GM_registerMenuCommand('暂停/启用拦截', () => {
       CONFIG.enabled = !CONFIG.enabled;

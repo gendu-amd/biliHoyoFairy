@@ -5,6 +5,7 @@ import {
   deepMerge,
   mergeImport,
   exportConfig,
+  exportSubscription,
   sanitizeConfigInput,
   migrateConfig,
   installConfigSync,
@@ -18,6 +19,7 @@ import {
   restoreBackup,
   setConfigNotifier,
 } from '../src/config';
+import { parseSubscription } from '../src/subscriptions/parse';
 import { SCHEMA_VERSION, STATS_KEY, STORE_BACKUP_KEY, STORE_KEY, SYNC_COALESCE_MS } from '../src/constants';
 
 // 存档损坏这条路径只有把存储预置成坏数据才走得到（桩见 tests/setup.ts）。
@@ -481,5 +483,44 @@ describe('自动备份：事故之后还有得救', () => {
     restoreBackup(good);
     saveConfig(); // 恢复之后随便再存一次
     expect(JSON.parse(gmStore[STORE_KEY]).block.keywords).toEqual(['原神']);
+  });
+});
+
+describe('exportSubscription：把自己的黑名单导成订阅名单', () => {
+  beforeEach(() => {
+    gmClear();
+    Object.assign(CONFIG, structuredClone(DEFAULT_CONFIG));
+  });
+
+  it('只带订阅支持的黑名单维度，形状与 examples/blocklist.example.json 一致', () => {
+    CONFIG.block.keywords.push('原神');
+    CONFIG.block.uids.push('123');
+    CONFIG.allow.uids.push('999'); // 白名单不该出现
+    CONFIG.block.minViews = 5; // 数值阈值不该出现
+    const out = JSON.parse(exportSubscription('我的名单'));
+    expect(out.app).toBe('biliHoyoFairy');
+    expect(out.format).toBe(1);
+    expect(out.meta.title).toBe('我的名单');
+    expect(out.rules.keywords).toEqual(['原神']);
+    expect(out.rules.uids).toEqual(['123']);
+    expect(out.rules.minViews).toBeUndefined();
+    expect(JSON.stringify(out)).not.toContain('999');
+  });
+
+  it('空维度不写进去（订阅方按维度合并，空数组只是噪音）', () => {
+    CONFIG.block.keywords.push('原神');
+    const out = JSON.parse(exportSubscription(''));
+    expect(Object.keys(out.rules)).toEqual(['keywords']);
+    expect(out.meta.title).toBe('我的名单'); // 没填标题时的兜底
+  });
+
+  // 导出的文件必须能被自己的解析器收回来，否则「导出给别人订阅」这条链是断的。
+  it('导出的内容能被 parseSubscription 原样解析回来', () => {
+    CONFIG.block.keywords.push('原神', '/震惊.*/');
+    CONFIG.block.upBio.push('商务合作');
+    const parsed = parseSubscription(exportSubscription('往返测试'));
+    expect(parsed.meta.title).toBe('往返测试');
+    expect(parsed.rules.keywords).toEqual(['原神', '/震惊.*/']);
+    expect(parsed.rules.upBio).toEqual(['商务合作']);
   });
 });

@@ -40,6 +40,16 @@ export interface ListFieldOpts {
   isAllow?: boolean;
 }
 
+// 规则语法速查（写死的静态文案，不含用户数据，可直接 innerHTML）。
+const SYNTAX_CHEATSHEET =
+  '<b>规则语法速查</b><br>' +
+  '· <code>原神</code> —— 普通词，<b>包含</b>即命中，忽略大小写与全角半角<br>' +
+  '· <code>/震惊.*竟然/</code> —— 以 <code>/</code> 包裹为<b>正则</b>，可加 <code>/…/i</code> 等标志<br>' +
+  '· <code>title:原神</code> / <code>up:营销号</code> / <code>part:资讯</code> —— 只匹配 标题 / UP 名 / 分区（不写前缀 = 三者都匹配）<br>' +
+  '· <code>原神 鸣潮</code> —— 仅「组合标签」字段：<b>同时</b>含这一组全部标签才屏蔽<br>' +
+  '· 一次可粘贴多条，用<b>换行</b>或<b>逗号</b>分隔；以 <code>/</code> 开头的行整行保留，不会被逗号拆断<br>' +
+  '· 拿不准就用「工具 → 🧪 正则测试器」先试，它会告诉你会不会被引擎拒收';
+
 // 记住每个字段的折叠状态（renderPanel 重建时保留）。
 const collapseState: Record<string, boolean> = {};
 
@@ -95,9 +105,22 @@ export function renderListField(host: HTMLElement, o: ListFieldOpts): void {
   if (o.inputTitle) input.title = o.inputTitle;
   const btn = document.createElement('button');
   btn.textContent = '添加';
+  // 规则语法是自创 DSL（/正则/、title:/up:/part: 前缀、A+B 组合），此前只在 README 和
+  // 正则测试器里有说明——写规则的人不会为了一行前缀去翻文档。摊在输入框旁边，默认折叠。
+  const help = document.createElement('button');
+  help.type = 'button';
+  help.className = 'chip-search-x';
+  help.textContent = '?';
+  help.title = '规则语法速查';
   addrow.appendChild(input);
   addrow.appendChild(btn);
+  addrow.appendChild(help);
   body.appendChild(addrow);
+  const cheat = el('div', 'hint');
+  cheat.style.display = 'none';
+  cheat.innerHTML = SYNTAX_CHEATSHEET;
+  help.onclick = () => (cheat.style.display = cheat.style.display === 'none' ? 'block' : 'none');
+  body.appendChild(cheat);
   if (o.hint) {
     const h = el('div', 'hint');
     h.style.marginTop = '6px';
