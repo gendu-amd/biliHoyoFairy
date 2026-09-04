@@ -219,6 +219,32 @@ export const SYNC_DIMS: SyncDim[] = [
 
 // 联网维度（matchApi，按序短路）。source 数据缺失时跳过；active 用于 apiNeeds 推导。
 export const API_DIMS: ApiDim[] = [
+  // 点赞数（以及缺失的播放量）：原生 B 站的卡片 DOM 上根本不显示点赞数，DOM 层永远拿到 null，
+  // 于是「点赞数低于 N 屏蔽」在已渲染的卡片上毫无反应——用户只会觉得这个设置坏了。
+  // 开了「精确过滤」时用视频详情接口把它补上，让这条规则在所有页面都真的生效。
+  {
+    source: 'view',
+    needs: 'view',
+    active: () => {
+      const b = CONFIG.block;
+      return b.minLikes > 0 || b.maxLikes > 0 || b.spamLikeRatio > 0;
+    },
+    match: (info, ctx) => {
+      const st = ctx.view && ctx.view.stat;
+      if (!st) return null;
+      const b = CONFIG.block;
+      const likes = typeof st.like === 'number' ? st.like : null;
+      const views = typeof st.view === 'number' ? st.view : info.views;
+      if (likes == null) return null;
+      if (b.minLikes > 0 && likes < b.minLikes) return `点赞<${b.minLikes}`;
+      if (b.maxLikes > 0 && likes > b.maxLikes) return `点赞>${b.maxLikes}`;
+      // 营销号同理：DOM 层拿不到点赞数时这条也是死的，补齐后一并判。
+      if (b.spamLikeRatio > 0 && views && views >= b.spamMinViews * 1e4) {
+        if ((likes / views) * 100 < b.spamLikeRatio) return `营销号(赞率<${b.spamLikeRatio}%)`;
+      }
+      return null;
+    },
+  },
   {
     source: 'tag',
     needs: 'tag',

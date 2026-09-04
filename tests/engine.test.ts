@@ -205,3 +205,43 @@ describe('数值阈值：各自独立 + 双向', () => {
     expect(matchRule(card({ views: 5000000, duration: 600 }))).toBe('时长>60s');
   });
 });
+
+// 点赞数在原生 B 站的卡片 DOM 上根本不显示，DOM 层永远拿到 null。
+// 只有接口那一路有数据——所以开了「精确过滤」时要用视频详情接口把它补上，
+// 否则「点赞数低于 N 屏蔽」在已渲染的卡片上毫无反应，用户只会觉得这个设置坏了。
+describe('点赞数：精确过滤补齐数据', () => {
+  const card = (o: Partial<CardInfo> = {}): CardInfo =>
+    ({ title: '', up: '', uid: '', partition: '', bvid: 'BV1', duration: null, views: null, likes: null, isLive: false, isAd: false, ...o }) as CardInfo;
+
+  it('没有点赞类规则时不需要 view 接口（不白发请求）', () => {
+    CONFIG.apiFilters = true;
+    rebuildRules();
+    expect(apiNeeds().needView).toBe(false);
+  });
+
+  it('设了点赞阈值就需要 view 接口，并按返回的 stat 判定', () => {
+    CONFIG.block.minLikes = 100;
+    CONFIG.apiFilters = true;
+    rebuildRules();
+    expect(apiNeeds().needView).toBe(true);
+    expect(matchApi(card(), { stat: { like: 20, view: 10000 } }, [], null)).toBe('点赞<100');
+    expect(matchApi(card(), { stat: { like: 500, view: 10000 } }, [], null)).toBeNull();
+  });
+
+  it('营销号那条复合规则同样被补齐（DOM 层此前也是死的）', () => {
+    CONFIG.block.spamLikeRatio = 1; // 赞率低于 1%
+    CONFIG.block.spamMinViews = 10; // 且播放 ≥ 10 万
+    CONFIG.apiFilters = true;
+    rebuildRules();
+    expect(String(matchApi(card(), { stat: { like: 100, view: 1000000 } }, [], null))).toContain('营销号');
+    expect(matchApi(card(), { stat: { like: 50000, view: 1000000 } }, [], null)).toBeNull();
+  });
+
+  it('接口没返回 stat 时不误伤', () => {
+    CONFIG.block.minLikes = 100;
+    CONFIG.apiFilters = true;
+    rebuildRules();
+    expect(matchApi(card(), null, [], null)).toBeNull();
+    expect(matchApi(card(), { stat: {} }, [], null)).toBeNull();
+  });
+});

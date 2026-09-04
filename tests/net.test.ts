@@ -281,3 +281,30 @@ describe('FEED_HOOKS 注册表本身', () => {
   });
 });
 
+
+// 点赞数维度只有**接口**这一路拿得到数据（原生 B 站的卡片 DOM 上不显示点赞数）。
+// 所以它必须在拦截层生效——否则用户设了值却「毫无反应」，因为 DOM 层压根看不见这个字段。
+describe('点赞数阈值：走拦截层', () => {
+  // 样本三条的点赞数：21000 / 9000 / 300
+  it('低于阈值的项被删掉', () => {
+    CONFIG.block.minLikes = 10000;
+    rebuildRules();
+    const json = clone(rcmd);
+    expect(filterFeedJson(URLS.rcmd, json)).toBe(2); // 9000 与 300
+    expect(json.data.item.map((x: any) => x.bvid)).toEqual(['BV1aa411a1a1']);
+  });
+
+  it('高于阈值的项被删掉', () => {
+    CONFIG.block.maxLikes = 10000;
+    rebuildRules();
+    const json = clone(rcmd);
+    expect(filterFeedJson(URLS.rcmd, json)).toBe(1); // 只有 21000 那条
+  });
+
+  it('热门接口同样生效（stat.like 也在）', () => {
+    CONFIG.block.minLikes = 40000;
+    rebuildRules();
+    const json = clone(popular);
+    expect(filterFeedJson(URLS.popular, json)).toBe(1); // 30000 那条
+  });
+});

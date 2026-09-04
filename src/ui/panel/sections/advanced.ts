@@ -31,7 +31,7 @@ export const advancedSection: PanelSection = {
           <td><input type="number" id="bfb-dmax" min="0" step="1"><span class="u">秒</span></td>
         </tr>
       </table>
-      <div class="hint">留空或 0 = 该项不启用。三项<b>各自独立</b>，任一命中即屏蔽；同一行两端都填则表示「区间之外的屏蔽」。⚠ 点赞数只有少数版式提供，拿不到的卡片会自动跳过这一项。</div>`;
+      <div class="hint">留空或 0 = 该项不启用。三项<b>各自独立</b>，任一命中即屏蔽；同一行两端都填则表示「区间之外的屏蔽」。<br>⚠ <b>点赞数</b>：B 站的卡片上并不显示点赞数，只有接口才有。所以它在首页/热门这类由接口驱动的信息流里<b>刷新后</b>生效；要让它在所有页面、对已经显示出来的卡片也生效，请打开下方的<b>「精确过滤」</b>（会按需读取视频数据）。</div>`;
     host.appendChild(num);
     const numOpts = { number: true, after: rescanAfterRuleChange };
     bindControl(num, 'bfb-minviews', CONFIG.block, 'minViews', numOpts);
@@ -48,7 +48,7 @@ export const advancedSection: PanelSection = {
     spam.innerHTML = `<label>营销号识别</label>
       <div class="switch" style="font-weight:400">点赞率低于 <input type="number" id="bfb-spamratio" min="0" max="100" step="0.1" style="width:56px"> %
         <b>且</b> 播放量 ≥ <input type="number" id="bfb-spamviews" min="0" step="1" style="width:56px"> 万</div>
-      <div class="hint">两个条件<b>同时</b>成立才判为营销号——搬运号常表现为「高播放、极低赞」。填 0 不启用。同样只在拿得到点赞数时生效。</div>`;
+      <div class="hint">两个条件<b>同时</b>成立才判为营销号——搬运号常表现为「高播放、极低赞」。填 0 不启用。它同样依赖点赞数，生效条件与上面那条一致。</div>`;
     host.appendChild(spam);
     bindControl(spam, 'bfb-spamratio', CONFIG.block, 'spamLikeRatio', numOpts);
     bindControl(spam, 'bfb-spamviews', CONFIG.block, 'spamMinViews', { ...numOpts, int: true });
