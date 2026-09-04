@@ -59,6 +59,38 @@ function markCard(card: HTMLElement, reason: string, info: CardInfo) {
 }
 
 // DOM 兜底层：审查模式标记、否则直接隐藏漏网卡。主路径由网络拦截层在渲染前就删除。
+// 有些版式的列间距是靠 `:nth-child(odd){margin-right:Xpx}` 拼出来的（热门页就是这样）。
+// 而 display:none **不会重排 nth-child 的序号**：藏掉一项后，后面那项仍按原来的奇偶带着右边距，
+// 宽度差那几像素就挤不进空出来的格子 → 换行 → 留下一个补不上的洞。
+//
+// 修法是把列间距从「子项的奇偶」搬到「容器」上：容器加 column-gap、子项右边距清零，
+// 视觉一致但与位置无关。只在**确实发现这种拼法**时才动手——判据是「有的子项带右边距、有的不带」，
+// 那正是奇偶写法的签名；容器本来就有 gap 的（首页那种 grid）直接跳过。
+const gutterFixed = new WeakSet<Element>();
+function fixParityGutter(box: Element | null): void {
+  if (!box || gutterFixed.has(box)) return;
+  gutterFixed.add(box); // 无论修不修都只判一次：这是每次隐藏都会走的路
+  try {
+    const cs = getComputedStyle(box as HTMLElement);
+    if (!cs.display.includes('flex') || cs.flexWrap !== 'wrap') return;
+    if (cs.columnGap && cs.columnGap !== 'normal' && parseFloat(cs.columnGap) > 0) return;
+    let gutter = 0;
+    let sawZero = false;
+    for (const ch of Array.from(box.children)) {
+      const m = parseFloat(getComputedStyle(ch as HTMLElement).marginRight) || 0;
+      if (m > 0) gutter = gutter || m;
+      else sawZero = true;
+      if (gutter && sawZero) break;
+    }
+    if (!gutter || !sawZero) return; // 不是奇偶拼法，别乱动别人的布局
+    (box as HTMLElement).style.columnGap = gutter + 'px';
+    box.classList.add('bfb-gutter-fix');
+    log(() => `列间距改由容器提供（${gutter}px），避免隐藏后 nth-child 奇偶错位`);
+  } catch (e) {
+    /* 拿不到计算样式（极早期/异常环境）：放弃修正，不影响隐藏本身 */
+  }
+}
+
 export function blockVideo(card: HTMLElement, reason: string, info: CardInfo): void {
   if (CONFIG.reviewMode) {
     markCard(card, reason, info);
@@ -68,6 +100,7 @@ export function blockVideo(card: HTMLElement, reason: string, info: CardInfo): v
     const cell = cellOf(card) as HTMLElement;
     if (!isUnsafeHideTarget(cell)) cell.style.setProperty('display', 'none', 'important');
     card.style.setProperty('display', 'none', 'important');
+    fixParityGutter(cell.parentElement);
   }
   card.setAttribute(ATTR_BLOCKED, '1'); // 供「批量拉黑」扫描
   if (countedEls.has(card)) return;

@@ -2443,6 +2443,29 @@
     }
     card.appendChild(tag);
   }
+  var gutterFixed = /* @__PURE__ */ new WeakSet();
+  function fixParityGutter(box) {
+    if (!box || gutterFixed.has(box)) return;
+    gutterFixed.add(box);
+    try {
+      const cs = getComputedStyle(box);
+      if (!cs.display.includes("flex") || cs.flexWrap !== "wrap") return;
+      if (cs.columnGap && cs.columnGap !== "normal" && parseFloat(cs.columnGap) > 0) return;
+      let gutter = 0;
+      let sawZero = false;
+      for (const ch of Array.from(box.children)) {
+        const m = parseFloat(getComputedStyle(ch).marginRight) || 0;
+        if (m > 0) gutter = gutter || m;
+        else sawZero = true;
+        if (gutter && sawZero) break;
+      }
+      if (!gutter || !sawZero) return;
+      box.style.columnGap = gutter + "px";
+      box.classList.add("bfb-gutter-fix");
+      log(() => `列间距改由容器提供（${gutter}px），避免隐藏后 nth-child 奇偶错位`);
+    } catch (e) {
+    }
+  }
   function blockVideo(card, reason, info) {
     if (CONFIG.reviewMode) {
       markCard(card, reason, info);
@@ -2450,6 +2473,7 @@
       const cell = cellOf(card);
       if (!isUnsafeHideTarget(cell)) cell.style.setProperty("display", "none", "important");
       card.style.setProperty("display", "none", "important");
+      fixParityGutter(cell.parentElement);
     }
     card.setAttribute(ATTR_BLOCKED, "1");
     if (countedEls.has(card)) return;
@@ -3385,6 +3409,7 @@
 
   // src/ui/panel.styles.ts
   GM_addStyle(`
+    .bfb-gutter-fix > *{margin-right:0 !important}
     .bfb-review{outline:2px solid #fb7299 !important;outline-offset:-2px;border-radius:8px;position:relative !important}
     .bfb-tag{position:absolute;top:6px;left:6px;z-index:9;display:flex;align-items:center;gap:6px;background:rgba(251,114,153,.95);color:#fff;border-radius:8px;padding:3px 6px;font-size:11px;font-family:system-ui,Arial;box-shadow:0 2px 6px rgba(0,0,0,.25)}
     .bfb-tag .rs{white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis}
