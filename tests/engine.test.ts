@@ -161,3 +161,47 @@ describe('matchApi：联网维度', () => {
     expect(matchApi(card(), null, null, { card: { sign: '佛系UP' } })).toBe(null);
   });
 });
+
+// 数值阈值：每项独立，任一命中即拦（不是「同时满足」）；两端都填 = 区间外屏蔽。
+describe('数值阈值：各自独立 + 双向', () => {
+  const card = (o: Partial<CardInfo>): CardInfo =>
+    ({ title: '', up: '', uid: '', partition: '', bvid: '', duration: null, views: null, likes: null, isLive: false, isAd: false, ...o }) as CardInfo;
+
+  it('播放量支持「高于则屏蔽」，不只是低于', () => {
+    CONFIG.block.maxViews = 100; // 100 万以上屏蔽
+    rebuildRules();
+    expect(matchRule(card({ views: 2000000 }))).toBe('播放>100万');
+    expect(matchRule(card({ views: 500000 }))).toBeNull();
+  });
+
+  it('两端都填 = 区间外屏蔽', () => {
+    CONFIG.block.minViews = 1;
+    CONFIG.block.maxViews = 100;
+    rebuildRules();
+    expect(matchRule(card({ views: 5000 }))).toBe('播放<1万'); // 低于下界
+    expect(matchRule(card({ views: 2000000 }))).toBe('播放>100万'); // 高于上界
+    expect(matchRule(card({ views: 500000 }))).toBeNull(); // 区间内放行
+  });
+
+  it('点赞数是独立维度，与营销号那条复合规则互不干扰', () => {
+    CONFIG.block.minLikes = 100;
+    rebuildRules();
+    expect(matchRule(card({ likes: 20, views: 999 }))).toBe('点赞<100');
+    // 营销号没开，不该因为「低赞」被算成营销号
+    expect(matchRule(card({ likes: 200, views: 999 }))).toBeNull();
+  });
+
+  it('拿不到数据的卡片跳过该项，不误伤', () => {
+    CONFIG.block.minViews = 10;
+    CONFIG.block.minLikes = 100;
+    rebuildRules();
+    expect(matchRule(card({ views: null, likes: null }))).toBeNull();
+  });
+
+  it('各项之间是「或」：只要一项命中就屏蔽', () => {
+    CONFIG.block.minViews = 10; // 不命中
+    CONFIG.block.maxDuration = 60; // 命中
+    rebuildRules();
+    expect(matchRule(card({ views: 5000000, duration: 600 }))).toBe('时长>60s');
+  });
+});

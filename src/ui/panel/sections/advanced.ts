@@ -10,17 +10,48 @@ export const advancedSection: PanelSection = {
   render(host) {
     const num = document.createElement('div');
     num.className = 'sec';
-    num.innerHTML = `<label>播放量 / 时长</label>
-      <div class="switch" style="margin-top:4px;font-weight:400">播放量低于 <input type="number" id="bfb-minviews" min="0" step="0.1" style="width:64px"> 万则屏蔽（0 为不启用）</div>
-      <div class="switch" style="margin-top:8px;font-weight:400">时长　最短 <input type="number" id="bfb-dmin" min="0" style="width:64px"> 秒　最长 <input type="number" id="bfb-dmax" min="0" style="width:64px"> 秒</div>
-      <div class="switch" style="margin-top:8px;font-weight:400">营销号：点赞率低于 <input type="number" id="bfb-spamratio" min="0" max="100" step="0.1" style="width:56px"> % 且播放量≥ <input type="number" id="bfb-spamviews" min="0" step="1" style="width:56px"> 万则屏蔽</div>
-      <div class="hint">填 0 = 不启用。营销号常表现为「高播放、极低赞」；点赞率仅在接口返回点赞数时生效，其余卡片自动跳过。</div>`;
+    // 三项各自独立、互不依赖：任一命中即屏蔽，不是「同时满足」。
+    // 每行两端都可以只填一边（单向阈值），也可以两边都填（区间外屏蔽）。
+    num.innerHTML = `<label>数值阈值</label>
+      <table class="numgrid">
+        <tr><th></th><th>低于则屏蔽</th><th>高于则屏蔽</th></tr>
+        <tr>
+          <td>播放量</td>
+          <td><input type="number" id="bfb-minviews" min="0" step="0.1"><span class="u">万</span></td>
+          <td><input type="number" id="bfb-maxviews" min="0" step="0.1"><span class="u">万</span></td>
+        </tr>
+        <tr>
+          <td>点赞数</td>
+          <td><input type="number" id="bfb-minlikes" min="0" step="1"><span class="u"></span></td>
+          <td><input type="number" id="bfb-maxlikes" min="0" step="1"><span class="u"></span></td>
+        </tr>
+        <tr>
+          <td>时长</td>
+          <td><input type="number" id="bfb-dmin" min="0" step="1"><span class="u">秒</span></td>
+          <td><input type="number" id="bfb-dmax" min="0" step="1"><span class="u">秒</span></td>
+        </tr>
+      </table>
+      <div class="hint">留空或 0 = 该项不启用。三项<b>各自独立</b>，任一命中即屏蔽；同一行两端都填则表示「区间之外的屏蔽」。⚠ 点赞数只有少数版式提供，拿不到的卡片会自动跳过这一项。</div>`;
     host.appendChild(num);
-    bindControl(num, 'bfb-minviews', CONFIG.block, 'minViews', { number: true, after: rescanAfterRuleChange });
-    bindControl(num, 'bfb-dmin', CONFIG.block, 'minDuration', { number: true, int: true, after: rescanAfterRuleChange });
-    bindControl(num, 'bfb-dmax', CONFIG.block, 'maxDuration', { number: true, int: true, after: rescanAfterRuleChange });
-    bindControl(num, 'bfb-spamratio', CONFIG.block, 'spamLikeRatio', { number: true, after: rescanAfterRuleChange });
-    bindControl(num, 'bfb-spamviews', CONFIG.block, 'spamMinViews', { number: true, int: true, after: rescanAfterRuleChange });
+    const numOpts = { number: true, after: rescanAfterRuleChange };
+    bindControl(num, 'bfb-minviews', CONFIG.block, 'minViews', numOpts);
+    bindControl(num, 'bfb-maxviews', CONFIG.block, 'maxViews', numOpts);
+    bindControl(num, 'bfb-minlikes', CONFIG.block, 'minLikes', { ...numOpts, int: true });
+    bindControl(num, 'bfb-maxlikes', CONFIG.block, 'maxLikes', { ...numOpts, int: true });
+    bindControl(num, 'bfb-dmin', CONFIG.block, 'minDuration', { ...numOpts, int: true });
+    bindControl(num, 'bfb-dmax', CONFIG.block, 'maxDuration', { ...numOpts, int: true });
+
+    const spam = document.createElement('div');
+    spam.className = 'sec';
+    // 营销号是**复合**条件（低赞率 + 高播放同时成立），跟上面那张表的「各自独立」语义不同，
+    // 混在一起会让人以为那些行之间也是「且」。单独一块，语义自明。
+    spam.innerHTML = `<label>营销号识别</label>
+      <div class="switch" style="font-weight:400">点赞率低于 <input type="number" id="bfb-spamratio" min="0" max="100" step="0.1" style="width:56px"> %
+        <b>且</b> 播放量 ≥ <input type="number" id="bfb-spamviews" min="0" step="1" style="width:56px"> 万</div>
+      <div class="hint">两个条件<b>同时</b>成立才判为营销号——搬运号常表现为「高播放、极低赞」。填 0 不启用。同样只在拿得到点赞数时生效。</div>`;
+    host.appendChild(spam);
+    bindControl(spam, 'bfb-spamratio', CONFIG.block, 'spamLikeRatio', numOpts);
+    bindControl(spam, 'bfb-spamviews', CONFIG.block, 'spamMinViews', { ...numOpts, int: true });
 
     const feed = document.createElement('div');
     feed.className = 'sec';

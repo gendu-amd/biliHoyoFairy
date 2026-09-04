@@ -155,10 +155,23 @@ export interface ApiDim {
 export const SYNC_DIMS: SyncDim[] = [
   { match: (i) => (CONFIG.hideAd && i.isAd ? '广告卡' : null) },
   { match: (i) => (CONFIG.hideLiveCard && i.isLive ? '直播卡' : null) },
+  // 数值阈值：每项独立，任一命中即拦（不是「同时满足」）。两端都填 = 区间外屏蔽。
   {
     match: (i) => {
       const b = CONFIG.block;
-      return b.minViews > 0 && i.views != null && i.views < b.minViews * 1e4 ? `播放<${b.minViews}万` : null;
+      if (i.views == null) return null;
+      if (b.minViews > 0 && i.views < b.minViews * 1e4) return `播放<${b.minViews}万`;
+      if (b.maxViews > 0 && i.views > b.maxViews * 1e4) return `播放>${b.maxViews}万`;
+      return null;
+    },
+  },
+  {
+    match: (i) => {
+      const b = CONFIG.block;
+      if (i.likes == null) return null; // 多数版式拿不到点赞数，拿不到就跳过
+      if (b.minLikes > 0 && i.likes < b.minLikes) return `点赞<${b.minLikes}`;
+      if (b.maxLikes > 0 && i.likes > b.maxLikes) return `点赞>${b.maxLikes}`;
+      return null;
     },
   },
   // 营销号/搬运号：高播放却极低赞（点赞率异常）。仅在拿得到点赞数(feed 层)时判定。

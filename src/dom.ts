@@ -21,13 +21,13 @@ const countedEls = new WeakSet<Element>(); // DOM 兜底「已计数」去重
 
 // 撤销 DOM 层对某卡的隐藏 / 审查标记（规则变更后重扫时调用）。
 function clearVisual(card: HTMLElement) {
-  card.style.removeProperty('display'); // 隐藏时带了 important，得整条删掉才还原得回去
+  card.classList.remove('bfb-hidden');
   card.classList.remove('bfb-review');
   const t = card.querySelector(':scope > .bfb-tag');
   if (t) t.remove();
   card.removeAttribute(ATTR_BLOCKED);
   const cell = cellOf(card) as HTMLElement;
-  if (cell !== card) cell.style.removeProperty('display');
+  if (cell !== card) cell.classList.remove('bfb-hidden');
 }
 
 // 审查模式：不隐藏，给卡片打醒目标记 + 原因 + 就地「放行」按钮，便于核对防误伤。
@@ -124,11 +124,12 @@ export function blockVideo(card: HTMLElement, reason: string, info: CardInfo): v
   if (CONFIG.reviewMode) {
     markCard(card, reason, info);
   } else {
-    // 用 important：B 站各版式的组件样式里带 `display:… !important` 的不在少数，
-    // 普通内联赋值压不过它——隐藏静默失效，卡片照旧占着位。评论那边早就踩过同一个坑。
+    // 走 .bfb-hidden 类而不是内联 display：加删类不碰站点自己的样式，天生可逆。
+    // 内联那条路要用 !important 才压得过组件样式，而「恢复」时的 removeProperty
+    // 会把站点原本写在那儿的 display 一并删掉——自定义元素退回 inline，布局直接塌。
     const cell = cellOf(card) as HTMLElement;
-    if (!isUnsafeHideTarget(cell)) cell.style.setProperty('display', 'none', 'important');
-    card.style.setProperty('display', 'none', 'important');
+    if (!isUnsafeHideTarget(cell)) cell.classList.add('bfb-hidden');
+    card.classList.add('bfb-hidden');
     fixParityGutter(cell.parentElement);
   }
   card.setAttribute(ATTR_BLOCKED, '1'); // 供「批量拉黑」扫描

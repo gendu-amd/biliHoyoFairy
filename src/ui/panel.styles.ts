@@ -1,5 +1,8 @@
 // 设置面板样式：作为 import 的副作用注入（与 v0.0.5 一致——启动即注入，不等面板打开）。
   GM_addStyle(`
+    /* 统一的隐藏方式。绝不动元素自己的内联 display——removeProperty 会把站点写在那儿的值
+       一并删掉，自定义元素退回 display:inline 后布局直接塌掉（评论区就这么消失过）。 */
+    .bfb-hidden{display:none !important}
     .bfb-gutter-fix > *{margin-right:0 !important}
     .bfb-review{outline:2px solid #fb7299 !important;outline-offset:-2px;border-radius:8px;position:relative !important}
     .bfb-tag{position:absolute;top:6px;left:6px;z-index:9;display:flex;align-items:center;gap:6px;background:rgba(251,114,153,.95);color:#fff;border-radius:8px;padding:3px 6px;font-size:11px;font-family:system-ui,Arial;box-shadow:0 2px 6px rgba(0,0,0,.25)}
@@ -60,6 +63,13 @@
     #bfb-panel .bfb-finder input:focus{border-color:#fb7299}
     #bfb-panel .bfb-finder button{flex:none;padding:6px 10px;border:1px solid #e3e3e6;border-radius:9px;background:#fafafa;color:#6e6e6e;cursor:pointer;font-size:12px}
     #bfb-panel .bfb-finder .fst{flex:none;font-size:11px;color:#8a8a8a;text-align:right}
+    #bfb-panel .numgrid{width:100%;border-collapse:collapse;margin-top:6px}
+    #bfb-panel .numgrid th{font-size:11px;font-weight:500;color:#8a8a8a;text-align:left;padding:0 0 4px}
+    #bfb-panel .numgrid td{padding:3px 0;font-size:12px;vertical-align:middle}
+    #bfb-panel .numgrid td:first-child{width:4.5em;color:#444}
+    #bfb-panel .numgrid input{width:76px;padding:5px 8px;border:1px solid #e3e3e6;border-radius:7px;font-size:12px}
+    #bfb-panel .numgrid input:focus{outline:none;border-color:#fb7299}
+    #bfb-panel .numgrid .u{margin-left:5px;color:#8a8a8a;font-size:11px}
     #bfb-panel .empty{font-size:11px;color:#767676;margin-top:6px}
     #bfb-panel .hint code{background:rgba(0,0,0,.06);border-radius:4px;padding:1px 5px;font-family:ui-monospace,Consolas,monospace;font-size:11px}
     #bfb-panel input[type=number]{width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:6px}
@@ -166,6 +176,8 @@
       #bfb-panel .hint code{background:rgba(255,255,255,.12)}
       #bfb-panel .bfb-finder{border-bottom-color:#2c2c32}
       #bfb-panel .bfb-finder input,#bfb-panel .bfb-finder button{background:#2e2e34;border-color:#45454d;color:#e8e8ea}
+      #bfb-panel .numgrid input{background:#2e2e34;border-color:#45454d;color:#e8e8ea}
+      #bfb-panel .numgrid td:first-child{color:#c8c8cc}
       #bfb-panel .chip.sel{background:rgba(251,114,153,.3)}
       #bfb-panel .sec.allow .chip.sel{background:rgba(39,174,96,.3)}
       #bfb-panel .field .chips{background:#232328;border-color:#34343a}

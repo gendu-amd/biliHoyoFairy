@@ -384,7 +384,9 @@
       minDuration: 0,
       maxDuration: 0,
       minViews: 0,
-      // 万；>0 时播放量低于此值的视频被拦
+      maxViews: 0,
+      minLikes: 0,
+      maxLikes: 0,
       spamLikeRatio: 0,
       // %；>0 时，点赞率(点赞/播放)低于此值且播放≥下方阈值的视频判为营销号/搬运号（仅 feed 有点赞数据时生效）
       spamMinViews: 10,
@@ -1253,10 +1255,23 @@
   var SYNC_DIMS = [
     { match: (i) => CONFIG.hideAd && i.isAd ? "广告卡" : null },
     { match: (i) => CONFIG.hideLiveCard && i.isLive ? "直播卡" : null },
+    // 数值阈值：每项独立，任一命中即拦（不是「同时满足」）。两端都填 = 区间外屏蔽。
     {
       match: (i) => {
         const b = CONFIG.block;
-        return b.minViews > 0 && i.views != null && i.views < b.minViews * 1e4 ? `播放<${b.minViews}万` : null;
+        if (i.views == null) return null;
+        if (b.minViews > 0 && i.views < b.minViews * 1e4) return `播放<${b.minViews}万`;
+        if (b.maxViews > 0 && i.views > b.maxViews * 1e4) return `播放>${b.maxViews}万`;
+        return null;
+      }
+    },
+    {
+      match: (i) => {
+        const b = CONFIG.block;
+        if (i.likes == null) return null;
+        if (b.minLikes > 0 && i.likes < b.minLikes) return `点赞<${b.minLikes}`;
+        if (b.maxLikes > 0 && i.likes > b.maxLikes) return `点赞>${b.maxLikes}`;
+        return null;
       }
     },
     // 营销号/搬运号：高播放却极低赞（点赞率异常）。仅在拿得到点赞数(feed 层)时判定。
@@ -2034,8 +2049,7 @@
     if (txt) txt.textContent = (expanded ? "已展开 · 命中：" : "已折叠 · 命中：") + reason;
     if (act) act.textContent = expanded ? "点击收起 ▴" : "点击展开 ▾";
     ph.style.opacity = expanded ? ".6" : "";
-    if (expanded) host.style.removeProperty("display");
-    else host.style.setProperty("display", "none", "important");
+    host.classList.toggle("bfb-hidden", !expanded);
   }
   function collapseComment(host, reason) {
     if (host.__bfbCmtPh && host.__bfbCmtPh.isConnected) {
@@ -2044,7 +2058,7 @@
     }
     const parent = host.parentNode;
     if (!parent) {
-      host.style.setProperty("display", "none", "important");
+      host.classList.add("bfb-hidden");
       return;
     }
     const ph = document.createElement("div");
@@ -2079,15 +2093,15 @@
         removeCmtPlaceholder(host);
         host.style.setProperty("outline", "2px solid #fb7299", "important");
         host.title = "[biliHoyoFairy] 命中：" + reason;
-        host.style.removeProperty("display");
+        host.classList.remove("bfb-hidden");
       } else if (CONFIG.comment.collapse) {
         collapseComment(host, reason);
       } else if (host.__bfbCmtExpanded) {
         removeCmtPlaceholder(host);
-        host.style.removeProperty("display");
+        host.classList.remove("bfb-hidden");
       } else {
         removeCmtPlaceholder(host);
-        host.style.setProperty("display", "none", "important");
+        host.classList.add("bfb-hidden");
       }
       if (!host.__bfbCmtHit) {
         host.__bfbCmtHit = true;
@@ -2095,7 +2109,7 @@
       }
     } else {
       removeCmtPlaceholder(host);
-      host.style.removeProperty("display");
+      host.classList.remove("bfb-hidden");
       host.style.removeProperty("outline");
       host.removeAttribute("title");
       host.__bfbCmtHit = false;
@@ -2106,9 +2120,9 @@
     for (const root of shadowRoots) {
       const host = hostOf(root);
       if (!host || !isCommentTag(host.tagName)) continue;
-      if (host.__bfbCmtHit || host.__bfbCmtPh || host.style.display === "none" || host.style.outline) {
+      if (host.__bfbCmtHit || host.__bfbCmtPh || host.classList.contains("bfb-hidden") || host.style.outline) {
         removeCmtPlaceholder(host);
-        host.style.removeProperty("display");
+        host.classList.remove("bfb-hidden");
         host.style.removeProperty("outline");
         host.removeAttribute("title");
         host.__bfbCmtHit = false;
@@ -2410,13 +2424,13 @@
   // src/dom.ts
   var countedEls = /* @__PURE__ */ new WeakSet();
   function clearVisual(card) {
-    card.style.removeProperty("display");
+    card.classList.remove("bfb-hidden");
     card.classList.remove("bfb-review");
     const t = card.querySelector(":scope > .bfb-tag");
     if (t) t.remove();
     card.removeAttribute(ATTR_BLOCKED);
     const cell = cellOf(card);
-    if (cell !== card) cell.style.removeProperty("display");
+    if (cell !== card) cell.classList.remove("bfb-hidden");
   }
   function markCard(card, reason, info) {
     card.classList.add("bfb-review");
@@ -2495,8 +2509,8 @@
       markCard(card, reason, info);
     } else {
       const cell = cellOf(card);
-      if (!isUnsafeHideTarget(cell)) cell.style.setProperty("display", "none", "important");
-      card.style.setProperty("display", "none", "important");
+      if (!isUnsafeHideTarget(cell)) cell.classList.add("bfb-hidden");
+      card.classList.add("bfb-hidden");
       fixParityGutter(cell.parentElement);
     }
     card.setAttribute(ATTR_BLOCKED, "1");
@@ -3433,6 +3447,9 @@
 
   // src/ui/panel.styles.ts
   GM_addStyle(`
+    /* 统一的隐藏方式。绝不动元素自己的内联 display——removeProperty 会把站点写在那儿的值
+       一并删掉，自定义元素退回 display:inline 后布局直接塌掉（评论区就这么消失过）。 */
+    .bfb-hidden{display:none !important}
     .bfb-gutter-fix > *{margin-right:0 !important}
     .bfb-review{outline:2px solid #fb7299 !important;outline-offset:-2px;border-radius:8px;position:relative !important}
     .bfb-tag{position:absolute;top:6px;left:6px;z-index:9;display:flex;align-items:center;gap:6px;background:rgba(251,114,153,.95);color:#fff;border-radius:8px;padding:3px 6px;font-size:11px;font-family:system-ui,Arial;box-shadow:0 2px 6px rgba(0,0,0,.25)}
@@ -3493,6 +3510,13 @@
     #bfb-panel .bfb-finder input:focus{border-color:#fb7299}
     #bfb-panel .bfb-finder button{flex:none;padding:6px 10px;border:1px solid #e3e3e6;border-radius:9px;background:#fafafa;color:#6e6e6e;cursor:pointer;font-size:12px}
     #bfb-panel .bfb-finder .fst{flex:none;font-size:11px;color:#8a8a8a;text-align:right}
+    #bfb-panel .numgrid{width:100%;border-collapse:collapse;margin-top:6px}
+    #bfb-panel .numgrid th{font-size:11px;font-weight:500;color:#8a8a8a;text-align:left;padding:0 0 4px}
+    #bfb-panel .numgrid td{padding:3px 0;font-size:12px;vertical-align:middle}
+    #bfb-panel .numgrid td:first-child{width:4.5em;color:#444}
+    #bfb-panel .numgrid input{width:76px;padding:5px 8px;border:1px solid #e3e3e6;border-radius:7px;font-size:12px}
+    #bfb-panel .numgrid input:focus{outline:none;border-color:#fb7299}
+    #bfb-panel .numgrid .u{margin-left:5px;color:#8a8a8a;font-size:11px}
     #bfb-panel .empty{font-size:11px;color:#767676;margin-top:6px}
     #bfb-panel .hint code{background:rgba(0,0,0,.06);border-radius:4px;padding:1px 5px;font-family:ui-monospace,Consolas,monospace;font-size:11px}
     #bfb-panel input[type=number]{width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:6px}
@@ -3599,6 +3623,8 @@
       #bfb-panel .hint code{background:rgba(255,255,255,.12)}
       #bfb-panel .bfb-finder{border-bottom-color:#2c2c32}
       #bfb-panel .bfb-finder input,#bfb-panel .bfb-finder button{background:#2e2e34;border-color:#45454d;color:#e8e8ea}
+      #bfb-panel .numgrid input{background:#2e2e34;border-color:#45454d;color:#e8e8ea}
+      #bfb-panel .numgrid td:first-child{color:#c8c8cc}
       #bfb-panel .chip.sel{background:rgba(251,114,153,.3)}
       #bfb-panel .sec.allow .chip.sel{background:rgba(39,174,96,.3)}
       #bfb-panel .field .chips{background:#232328;border-color:#34343a}
@@ -4122,17 +4148,43 @@
     render(host) {
       const num = document.createElement("div");
       num.className = "sec";
-      num.innerHTML = `<label>播放量 / 时长</label>
-      <div class="switch" style="margin-top:4px;font-weight:400">播放量低于 <input type="number" id="bfb-minviews" min="0" step="0.1" style="width:64px"> 万则屏蔽（0 为不启用）</div>
-      <div class="switch" style="margin-top:8px;font-weight:400">时长　最短 <input type="number" id="bfb-dmin" min="0" style="width:64px"> 秒　最长 <input type="number" id="bfb-dmax" min="0" style="width:64px"> 秒</div>
-      <div class="switch" style="margin-top:8px;font-weight:400">营销号：点赞率低于 <input type="number" id="bfb-spamratio" min="0" max="100" step="0.1" style="width:56px"> % 且播放量≥ <input type="number" id="bfb-spamviews" min="0" step="1" style="width:56px"> 万则屏蔽</div>
-      <div class="hint">填 0 = 不启用。营销号常表现为「高播放、极低赞」；点赞率仅在接口返回点赞数时生效，其余卡片自动跳过。</div>`;
+      num.innerHTML = `<label>数值阈值</label>
+      <table class="numgrid">
+        <tr><th></th><th>低于则屏蔽</th><th>高于则屏蔽</th></tr>
+        <tr>
+          <td>播放量</td>
+          <td><input type="number" id="bfb-minviews" min="0" step="0.1"><span class="u">万</span></td>
+          <td><input type="number" id="bfb-maxviews" min="0" step="0.1"><span class="u">万</span></td>
+        </tr>
+        <tr>
+          <td>点赞数</td>
+          <td><input type="number" id="bfb-minlikes" min="0" step="1"><span class="u"></span></td>
+          <td><input type="number" id="bfb-maxlikes" min="0" step="1"><span class="u"></span></td>
+        </tr>
+        <tr>
+          <td>时长</td>
+          <td><input type="number" id="bfb-dmin" min="0" step="1"><span class="u">秒</span></td>
+          <td><input type="number" id="bfb-dmax" min="0" step="1"><span class="u">秒</span></td>
+        </tr>
+      </table>
+      <div class="hint">留空或 0 = 该项不启用。三项<b>各自独立</b>，任一命中即屏蔽；同一行两端都填则表示「区间之外的屏蔽」。⚠ 点赞数只有少数版式提供，拿不到的卡片会自动跳过这一项。</div>`;
       host.appendChild(num);
-      bindControl(num, "bfb-minviews", CONFIG.block, "minViews", { number: true, after: rescanAfterRuleChange });
-      bindControl(num, "bfb-dmin", CONFIG.block, "minDuration", { number: true, int: true, after: rescanAfterRuleChange });
-      bindControl(num, "bfb-dmax", CONFIG.block, "maxDuration", { number: true, int: true, after: rescanAfterRuleChange });
-      bindControl(num, "bfb-spamratio", CONFIG.block, "spamLikeRatio", { number: true, after: rescanAfterRuleChange });
-      bindControl(num, "bfb-spamviews", CONFIG.block, "spamMinViews", { number: true, int: true, after: rescanAfterRuleChange });
+      const numOpts = { number: true, after: rescanAfterRuleChange };
+      bindControl(num, "bfb-minviews", CONFIG.block, "minViews", numOpts);
+      bindControl(num, "bfb-maxviews", CONFIG.block, "maxViews", numOpts);
+      bindControl(num, "bfb-minlikes", CONFIG.block, "minLikes", { ...numOpts, int: true });
+      bindControl(num, "bfb-maxlikes", CONFIG.block, "maxLikes", { ...numOpts, int: true });
+      bindControl(num, "bfb-dmin", CONFIG.block, "minDuration", { ...numOpts, int: true });
+      bindControl(num, "bfb-dmax", CONFIG.block, "maxDuration", { ...numOpts, int: true });
+      const spam = document.createElement("div");
+      spam.className = "sec";
+      spam.innerHTML = `<label>营销号识别</label>
+      <div class="switch" style="font-weight:400">点赞率低于 <input type="number" id="bfb-spamratio" min="0" max="100" step="0.1" style="width:56px"> %
+        <b>且</b> 播放量 ≥ <input type="number" id="bfb-spamviews" min="0" step="1" style="width:56px"> 万</div>
+      <div class="hint">两个条件<b>同时</b>成立才判为营销号——搬运号常表现为「高播放、极低赞」。填 0 不启用。同样只在拿得到点赞数时生效。</div>`;
+      host.appendChild(spam);
+      bindControl(spam, "bfb-spamratio", CONFIG.block, "spamLikeRatio", numOpts);
+      bindControl(spam, "bfb-spamviews", CONFIG.block, "spamMinViews", { ...numOpts, int: true });
       const feed = document.createElement("div");
       feed.className = "sec";
       feed.innerHTML = `<label>信息流加载</label>

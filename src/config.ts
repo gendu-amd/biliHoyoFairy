@@ -23,7 +23,10 @@ export interface BlockConfig {
   bvids: string[];
   minDuration: number;
   maxDuration: number;
-  minViews: number;
+  minViews: number; // 万；低于则屏蔽（0=不启用）
+  maxViews: number; // 万；高于则屏蔽
+  minLikes: number; // 低于则屏蔽
+  maxLikes: number; // 高于则屏蔽
   spamLikeRatio: number;
   spamMinViews: number;
   tags: string[];
@@ -113,7 +116,10 @@ export const DEFAULT_CONFIG: AppConfig = {
     bvids: [],
     minDuration: 0,
     maxDuration: 0,
-    minViews: 0, // 万；>0 时播放量低于此值的视频被拦
+    minViews: 0,
+    maxViews: 0,
+    minLikes: 0,
+    maxLikes: 0,
     spamLikeRatio: 0, // %；>0 时，点赞率(点赞/播放)低于此值且播放≥下方阈值的视频判为营销号/搬运号（仅 feed 有点赞数据时生效）
     spamMinViews: 10, // 万；营销号识别的最低播放门槛（避免冤枉小/新视频）
     // —— 以下为需要读取接口数据的维度（仅在开启「精确过滤」后生效）——
