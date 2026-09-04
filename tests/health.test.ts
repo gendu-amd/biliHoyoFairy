@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { health, healthReport, healthNotes, healthSummary, healthDegraded, markHealthReady, timed, timingReport, setTimingEnabled } from '../src/health';
+import { health, likesDataWarning, healthReport, healthNotes, healthSummary, healthDegraded, markHealthReady, timed, timingReport, setTimingEnabled } from '../src/health';
 
 function reset() {
   health.apiSeen = 0;
@@ -9,6 +9,7 @@ function reset() {
   health.feedItems = 0;
   health.cardsSeen = 0;
   health.signedSkipped = 0;
+  health.feedLikes = 0;
 }
 
 describe('health.noteRequest', () => {
@@ -193,5 +194,33 @@ describe('timed / timingReport', () => {
     timed('a', () => 1);
     setTimingEnabled(false);
     expect(timingReport()).toEqual([]);
+  });
+});
+
+// 点赞类规则死掉是完全静默的：接口不给 stat.like，规则照常存在、页面照常渲染，只是什么都不拦。
+describe('likesDataWarning：点赞数据缺失要报出来', () => {
+  beforeEach(reset);
+
+  it('设了点赞规则、判定过数据、却一条都没带点赞数 → 报警', () => {
+    health.feedItems = 30;
+    health.feedLikes = 0;
+    expect(likesDataWarning(true)).toContain('没有一条带点赞数');
+  });
+
+  it('接口给了点赞数 → 不报', () => {
+    health.feedItems = 30;
+    health.feedLikes = 12;
+    expect(likesDataWarning(true)).toBeNull();
+  });
+
+  it('没设点赞类规则 → 不报（拿不到也无所谓）', () => {
+    health.feedItems = 30;
+    health.feedLikes = 0;
+    expect(likesDataWarning(false)).toBeNull();
+  });
+
+  it('还没判定过任何数据 → 不报（首屏 SSR 时下结论全是误报）', () => {
+    health.feedItems = 0;
+    expect(likesDataWarning(true)).toBeNull();
   });
 });

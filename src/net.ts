@@ -79,7 +79,8 @@ export function filterFeedJson(url: string, json: any): number {
   for (let i = arr.length - 1; i >= 0; i--) {
     try {
       const info = (hook.norm || normFeedItem)(arr[i]);
-      if (!info) continue; // 白名单由 matchRule 内部短路，无需在此重复判断
+      if (!info) continue;
+      if (info.likes != null) health.feedLikes++; // 白名单由 matchRule 内部短路，无需在此重复判断
       const reason = matchRule(info);
       if (reason) {
         recordBlock(reason, info, 'NET');

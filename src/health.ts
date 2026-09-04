@@ -21,6 +21,8 @@ export const health = {
   feedMatched: 0, // 命中 FEED_HOOKS 的响应数
   feedParsed: 0, // 命中后又成功取出可过滤列表的响应数
   feedItems: 0, // 累计经过拦截层判定的列表项数
+  feedLikes: 0, // 其中**带到了点赞数**的条数。点赞类规则的命根子：接口不给这个字段，
+  // 那些规则在信息流上就是死的，而这种失效完全无声——正是要靠计数器才看得出来。
   cardsSeen: 0, // DOM 兜底层识别到的视频卡数
   signedSkipped: 0, // 因携带 WBI 签名(w_rid)而放弃改写的请求数（见 net.ts SIGNED_RE）
   noteRequest(url: string): void {
@@ -107,6 +109,13 @@ export function healthReport(): string[] {
   return w;
 }
 
+// 点赞类规则设了、却一条数据都没拿到 —— 由调用方传入「有没有设这类规则」，
+// 因为 health 不能反过来依赖 config（config 已经为了 timed 依赖了 health）。
+export function likesDataWarning(hasLikeRule: boolean): string | null {
+  if (!hasLikeRule || health.feedItems === 0 || health.feedLikes > 0) return null;
+  return `已判定 ${health.feedItems} 条信息流数据，但**没有一条带点赞数**——B 站这些接口这次没返回该字段，所以「点赞数」与「营销号识别」在信息流上不会生效。要让它们真正生效，请打开「进阶 → 精确过滤」（会按需读取视频详情补齐点赞数）。`;
+}
+
 // 中性说明（不是警告，不进控制台报警）：解释「为什么某些计数是 0」，免得用户误以为坏了。
 export function healthNotes(): string[] {
   const n: string[] = [];
@@ -121,6 +130,7 @@ export function healthSummary(): string {
   return (
     `页面 ${pageType()} · 接口请求 ${health.apiSeen}（形似推荐流 ${health.feedLike}）· 命中推荐接口 ${health.feedMatched} · 解析出列表 ${health.feedParsed}（${health.feedItems} 项）· 识别卡片 ${health.cardsSeen}` +
     // 常态是 0，只有开了改写类功能且撞上已签名接口才非 0——恒显示只会变成没人看的噪音。
+    ` · 其中带点赞数 ${health.feedLikes}` +
     (health.signedSkipped ? ` · 因 WBI 签名放弃改写 ${health.signedSkipped}` : '')
   );
 }

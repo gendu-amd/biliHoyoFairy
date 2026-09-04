@@ -31,7 +31,7 @@ export const advancedSection: PanelSection = {
           <td><input type="number" id="bfb-dmax" min="0" step="1"><span class="u">秒</span></td>
         </tr>
       </table>
-      <div class="hint">留空或 0 = 该项不启用。三项<b>各自独立</b>，任一命中即屏蔽；同一行两端都填则表示「区间之外的屏蔽」。<br>⚠ <b>点赞数</b>：B 站的卡片上并不显示点赞数，只有接口才有。所以它在首页/热门这类由接口驱动的信息流里<b>刷新后</b>生效；要让它在所有页面、对已经显示出来的卡片也生效，请打开下方的<b>「精确过滤」</b>（会按需读取视频数据）。</div>`;
+      <div class="hint">留空或 0 = 该项不启用。三项<b>各自独立</b>，任一命中即屏蔽；同一行两端都填则表示「区间之外的屏蔽」。<br>⚠ <b>点赞数</b>需要额外说明：B 站的卡片上并不显示点赞数。信息流接口<b>有时</b>会带这个字段、有时不带（各接口不一，也会变），带的时候刷新后即可生效；<b>不带的时候这两条规则在信息流上是不生效的</b>。要让它们稳定生效，请打开下方的<b>「精确过滤」</b>——它会按需读取视频详情把点赞数补齐，对所有页面、包括已经显示出来的卡片都有效。当前接口到底给没给，看「工具 → 🩺 运行自检」里的「其中带点赞数 N」。</div>`;
     host.appendChild(num);
     const numOpts = { number: true, after: rescanAfterRuleChange };
     bindControl(num, 'bfb-minviews', CONFIG.block, 'minViews', numOpts);

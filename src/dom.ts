@@ -14,6 +14,7 @@ import { scanComments } from './comments';
 import { addToList } from './rules';
 import { log, logErr, safe } from './logging';
 import { health, timed } from './health';
+import { hideEl, showEl } from './hide';
 import { toast } from './ui/toast';
 import { refreshPanelIfOpen } from './ui/hooks';
 
@@ -21,13 +22,13 @@ const countedEls = new WeakSet<Element>(); // DOM 兜底「已计数」去重
 
 // 撤销 DOM 层对某卡的隐藏 / 审查标记（规则变更后重扫时调用）。
 function clearVisual(card: HTMLElement) {
-  card.classList.remove('bfb-hidden');
+  showEl(card);
   card.classList.remove('bfb-review');
   const t = card.querySelector(':scope > .bfb-tag');
   if (t) t.remove();
   card.removeAttribute(ATTR_BLOCKED);
   const cell = cellOf(card) as HTMLElement;
-  if (cell !== card) cell.classList.remove('bfb-hidden');
+  if (cell !== card) showEl(cell);
 }
 
 // 审查模式：不隐藏，给卡片打醒目标记 + 原因 + 就地「放行」按钮，便于核对防误伤。
@@ -124,12 +125,11 @@ export function blockVideo(card: HTMLElement, reason: string, info: CardInfo): v
   if (CONFIG.reviewMode) {
     markCard(card, reason, info);
   } else {
-    // 走 .bfb-hidden 类而不是内联 display：加删类不碰站点自己的样式，天生可逆。
-    // 内联那条路要用 !important 才压得过组件样式，而「恢复」时的 removeProperty
-    // 会把站点原本写在那儿的 display 一并删掉——自定义元素退回 inline，布局直接塌。
+    // 隐藏统一走 hide.ts：文档级 class 到不了影子树（评论宿主、界面替换类扩展的卡片都在里面），
+    // 而直接 removeProperty 恢复会删掉站点自己的 display。详见该文件。
     const cell = cellOf(card) as HTMLElement;
-    if (!isUnsafeHideTarget(cell)) cell.classList.add('bfb-hidden');
-    card.classList.add('bfb-hidden');
+    if (!isUnsafeHideTarget(cell)) hideEl(cell);
+    hideEl(card);
     fixParityGutter(cell.parentElement);
   }
   card.setAttribute(ATTR_BLOCKED, '1'); // 供「批量拉黑」扫描

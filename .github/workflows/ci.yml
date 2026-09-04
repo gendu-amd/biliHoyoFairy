@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # refactor 也要跑：长期开发分支上积累了几十个 commit，产物漂移一路没人拦——
+    # 「装了脚本却测的是旧代码」这种事排查起来最费时间，而它本该被 CI 当场挡下。
+    branches: [main, refactor]
   pull_request:
     branches: [main]
 

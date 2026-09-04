@@ -7,6 +7,7 @@ import { COMMENT_BOTS, COMMENT_AD_RE } from './constants';
 import { lc, textHit } from './match/normalize';
 import { M, ruleVersion } from './match/engine';
 import { commentRoots, shadowRoots } from './shadow';
+import { hideEl, showEl, isHidden } from './hide';
 import { recordBlock } from './stats';
 import { log, safe } from './logging';
 import { COMMENT_TAGS, isCommentTag } from './selectors';
@@ -137,7 +138,8 @@ function renderPlaceholder(ph: HTMLElement, host: CommentHost, reason: string) {
   if (txt) txt.textContent = (expanded ? '已展开 · 命中：' : '已折叠 · 命中：') + reason;
   if (act) act.textContent = expanded ? '点击收起 ▴' : '点击展开 ▾';
   ph.style.opacity = expanded ? '.6' : '';
-  host.classList.toggle('bfb-hidden', !expanded);
+  if (expanded) showEl(host);
+  else hideEl(host);
 }
 
 function collapseComment(host: CommentHost, reason: string) {
@@ -147,7 +149,7 @@ function collapseComment(host: CommentHost, reason: string) {
   }
   const parent = host.parentNode;
   if (!parent) {
-    host.classList.add('bfb-hidden');
+    hideEl(host);
     return;
   }
   const ph = document.createElement('div');
@@ -228,7 +230,7 @@ const processComment = safe('processComment', function (host: CommentHost, isSub
   if (reason) {
     if (CONFIG.reviewMode) {
       removeCmtPlaceholder(host);
-      host.classList.remove('bfb-hidden');
+      showEl(host);
       markComment(host, reason); // 与视频卡一致：看得见的标签 + 原因，而不是一条看不见的描边
     } else if (CONFIG.comment.collapse) {
       removeCmtMark(host);
@@ -239,11 +241,11 @@ const processComment = safe('processComment', function (host: CommentHost, isSub
       // 非折叠模式下用户展开过：保持可见，不再隐藏
       removeCmtPlaceholder(host);
       removeCmtMark(host);
-      host.classList.remove('bfb-hidden');
+      showEl(host);
     } else {
       removeCmtPlaceholder(host);
       removeCmtMark(host);
-      host.classList.add('bfb-hidden');
+      hideEl(host);
     }
     if (!host.__bfbCmtHit) {
       host.__bfbCmtHit = true;
@@ -253,7 +255,7 @@ const processComment = safe('processComment', function (host: CommentHost, isSub
     // 不命中：撤销之前可能的隐藏/折叠/标记（规则放宽后恢复）
     removeCmtPlaceholder(host);
     removeCmtMark(host);
-    host.classList.remove('bfb-hidden');
+    showEl(host);
     host.style.removeProperty('outline');
     host.removeAttribute('title');
     host.__bfbCmtHit = false;
@@ -266,10 +268,10 @@ function revertComments() {
   for (const root of shadowRoots) {
     const host = hostOf(root);
     if (!host || !isCommentTag(host.tagName)) continue;
-    if (host.__bfbCmtHit || host.__bfbCmtPh || host.__bfbCmtMk || host.classList.contains('bfb-hidden') || host.style.outline) {
+    if (host.__bfbCmtHit || host.__bfbCmtPh || host.__bfbCmtMk || isHidden(host) || host.style.outline) {
       removeCmtPlaceholder(host);
       removeCmtMark(host);
-      host.classList.remove('bfb-hidden');
+      showEl(host);
       host.style.removeProperty('outline');
       host.removeAttribute('title');
       host.__bfbCmtHit = false;

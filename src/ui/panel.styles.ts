@@ -1,8 +1,5 @@
 // 设置面板样式：作为 import 的副作用注入（与 v0.0.5 一致——启动即注入，不等面板打开）。
   GM_addStyle(`
-    /* 统一的隐藏方式。绝不动元素自己的内联 display——removeProperty 会把站点写在那儿的值
-       一并删掉，自定义元素退回 display:inline 后布局直接塌掉（评论区就这么消失过）。 */
-    .bfb-hidden{display:none !important}
     .bfb-gutter-fix > *{margin-right:0 !important}
     .bfb-review{outline:2px solid #fb7299 !important;outline-offset:-2px;border-radius:8px;position:relative !important}
     .bfb-tag{position:absolute;top:6px;left:6px;z-index:9;display:flex;align-items:center;gap:6px;background:rgba(251,114,153,.95);color:#fff;border-radius:8px;padding:3px 6px;font-size:11px;font-family:system-ui,Arial;box-shadow:0 2px 6px rgba(0,0,0,.25)}

@@ -67,6 +67,7 @@ src/
 ├─ ui/field.ts          门面 → ui/field/{types,models,list,controls}.ts
 ├─ ui/listfilter.ts     名单搜索的判定部分（纯函数：普通词=包含、/.../ =正则；与渲染分开以便单测）
 ├─ ui/menu.ts           门面 → ui/menu/{locate,context,hover,shared}.ts
+├─ hide.ts              隐藏/恢复元素的唯一入口（内联 + 原值存档；文档级 CSS 到不了影子树）
 └─ ui/panel/            设置面板
    ├─ index.ts          面板外壳：Tab 骨架 + 分区注册表 SECTIONS（数组顺序=显示顺序）+ 开关/重渲
    ├─ ctx.ts            分区契约 PanelSection/PanelCtx（叶子：不 import 任何 section，也不 import index）

@@ -227,6 +227,9 @@
     // 命中后又成功取出可过滤列表的响应数
     feedItems: 0,
     // 累计经过拦截层判定的列表项数
+    feedLikes: 0,
+    // 其中**带到了点赞数**的条数。点赞类规则的命根子：接口不给这个字段，
+    // 那些规则在信息流上就是死的，而这种失效完全无声——正是要靠计数器才看得出来。
     cardsSeen: 0,
     // DOM 兜底层识别到的视频卡数
     signedSkipped: 0,
@@ -287,6 +290,10 @@
     }
     return w;
   }
+  function likesDataWarning(hasLikeRule) {
+    if (!hasLikeRule || health.feedItems === 0 || health.feedLikes > 0) return null;
+    return `已判定 ${health.feedItems} 条信息流数据，但**没有一条带点赞数**——B 站这些接口这次没返回该字段，所以「点赞数」与「营销号识别」在信息流上不会生效。要让它们真正生效，请打开「进阶 → 精确过滤」（会按需读取视频详情补齐点赞数）。`;
+  }
   function healthNotes() {
     const n = [];
     if (health.feedMatched === 0 && health.feedLike === 0) {
@@ -295,8 +302,7 @@
     return n;
   }
   function healthSummary() {
-    return `页面 ${pageType()} · 接口请求 ${health.apiSeen}（形似推荐流 ${health.feedLike}）· 命中推荐接口 ${health.feedMatched} · 解析出列表 ${health.feedParsed}（${health.feedItems} 项）· 识别卡片 ${health.cardsSeen}` + // 常态是 0，只有开了改写类功能且撞上已签名接口才非 0——恒显示只会变成没人看的噪音。
-    (health.signedSkipped ? ` · 因 WBI 签名放弃改写 ${health.signedSkipped}` : "");
+    return `页面 ${pageType()} · 接口请求 ${health.apiSeen}（形似推荐流 ${health.feedLike}）· 命中推荐接口 ${health.feedMatched} · 解析出列表 ${health.feedParsed}（${health.feedItems} 项）· 识别卡片 ${health.cardsSeen} · 其中带点赞数 ${health.feedLikes}` + (health.signedSkipped ? ` · 因 WBI 签名放弃改写 ${health.signedSkipped}` : "");
   }
 
   // src/subscriptions/parse.ts
@@ -1617,6 +1623,7 @@
       try {
         const info = (hook.norm || normFeedItem)(arr[i]);
         if (!info) continue;
+        if (info.likes != null) health.feedLikes++;
         const reason = matchRule(info);
         if (reason) {
           recordBlock(reason, info, "NET");
@@ -2016,6 +2023,29 @@
     );
   }
 
+  // src/hide.ts
+  function hideEl(el) {
+    const h = el;
+    if (!h.__bfbDisp) {
+      h.__bfbDisp = { value: h.style.getPropertyValue("display"), priority: h.style.getPropertyPriority("display") };
+    }
+    h.style.setProperty("display", "none", "important");
+  }
+  function showEl(el) {
+    const h = el;
+    const saved = h.__bfbDisp;
+    h.__bfbDisp = null;
+    if (!saved) {
+      if (h.style.getPropertyValue("display") === "none") h.style.removeProperty("display");
+      return;
+    }
+    if (saved.value) h.style.setProperty("display", saved.value, saved.priority);
+    else h.style.removeProperty("display");
+  }
+  function isHidden(el) {
+    return el.style.getPropertyValue("display") === "none";
+  }
+
   // src/comments.ts
   function hostOf(root) {
     return root.host;
@@ -2074,7 +2104,8 @@
     if (txt) txt.textContent = (expanded ? "已展开 · 命中：" : "已折叠 · 命中：") + reason;
     if (act) act.textContent = expanded ? "点击收起 ▴" : "点击展开 ▾";
     ph.style.opacity = expanded ? ".6" : "";
-    host.classList.toggle("bfb-hidden", !expanded);
+    if (expanded) showEl(host);
+    else hideEl(host);
   }
   function collapseComment(host, reason) {
     if (host.__bfbCmtPh && host.__bfbCmtPh.isConnected) {
@@ -2083,7 +2114,7 @@
     }
     const parent = host.parentNode;
     if (!parent) {
-      host.classList.add("bfb-hidden");
+      hideEl(host);
       return;
     }
     const ph = document.createElement("div");
@@ -2145,7 +2176,7 @@
     if (reason) {
       if (CONFIG.reviewMode) {
         removeCmtPlaceholder(host);
-        host.classList.remove("bfb-hidden");
+        showEl(host);
         markComment(host, reason);
       } else if (CONFIG.comment.collapse) {
         removeCmtMark(host);
@@ -2153,11 +2184,11 @@
       } else if (host.__bfbCmtExpanded) {
         removeCmtPlaceholder(host);
         removeCmtMark(host);
-        host.classList.remove("bfb-hidden");
+        showEl(host);
       } else {
         removeCmtPlaceholder(host);
         removeCmtMark(host);
-        host.classList.add("bfb-hidden");
+        hideEl(host);
       }
       if (!host.__bfbCmtHit) {
         host.__bfbCmtHit = true;
@@ -2166,7 +2197,7 @@
     } else {
       removeCmtPlaceholder(host);
       removeCmtMark(host);
-      host.classList.remove("bfb-hidden");
+      showEl(host);
       host.style.removeProperty("outline");
       host.removeAttribute("title");
       host.__bfbCmtHit = false;
@@ -2177,10 +2208,10 @@
     for (const root of shadowRoots) {
       const host = hostOf(root);
       if (!host || !isCommentTag(host.tagName)) continue;
-      if (host.__bfbCmtHit || host.__bfbCmtPh || host.__bfbCmtMk || host.classList.contains("bfb-hidden") || host.style.outline) {
+      if (host.__bfbCmtHit || host.__bfbCmtPh || host.__bfbCmtMk || isHidden(host) || host.style.outline) {
         removeCmtPlaceholder(host);
         removeCmtMark(host);
-        host.classList.remove("bfb-hidden");
+        showEl(host);
         host.style.removeProperty("outline");
         host.removeAttribute("title");
         host.__bfbCmtHit = false;
@@ -2482,13 +2513,13 @@
   // src/dom.ts
   var countedEls = /* @__PURE__ */ new WeakSet();
   function clearVisual(card) {
-    card.classList.remove("bfb-hidden");
+    showEl(card);
     card.classList.remove("bfb-review");
     const t = card.querySelector(":scope > .bfb-tag");
     if (t) t.remove();
     card.removeAttribute(ATTR_BLOCKED);
     const cell = cellOf(card);
-    if (cell !== card) cell.classList.remove("bfb-hidden");
+    if (cell !== card) showEl(cell);
   }
   function markCard(card, reason, info) {
     card.classList.add("bfb-review");
@@ -2567,8 +2598,8 @@
       markCard(card, reason, info);
     } else {
       const cell = cellOf(card);
-      if (!isUnsafeHideTarget(cell)) cell.classList.add("bfb-hidden");
-      card.classList.add("bfb-hidden");
+      if (!isUnsafeHideTarget(cell)) hideEl(cell);
+      hideEl(card);
       fixParityGutter(cell.parentElement);
     }
     card.setAttribute(ATTR_BLOCKED, "1");
@@ -3505,9 +3536,6 @@
 
   // src/ui/panel.styles.ts
   GM_addStyle(`
-    /* 统一的隐藏方式。绝不动元素自己的内联 display——removeProperty 会把站点写在那儿的值
-       一并删掉，自定义元素退回 display:inline 后布局直接塌掉（评论区就这么消失过）。 */
-    .bfb-hidden{display:none !important}
     .bfb-gutter-fix > *{margin-right:0 !important}
     .bfb-review{outline:2px solid #fb7299 !important;outline-offset:-2px;border-radius:8px;position:relative !important}
     .bfb-tag{position:absolute;top:6px;left:6px;z-index:9;display:flex;align-items:center;gap:6px;background:rgba(251,114,153,.95);color:#fff;border-radius:8px;padding:3px 6px;font-size:11px;font-family:system-ui,Arial;box-shadow:0 2px 6px rgba(0,0,0,.25)}
@@ -4225,7 +4253,7 @@
           <td><input type="number" id="bfb-dmax" min="0" step="1"><span class="u">秒</span></td>
         </tr>
       </table>
-      <div class="hint">留空或 0 = 该项不启用。三项<b>各自独立</b>，任一命中即屏蔽；同一行两端都填则表示「区间之外的屏蔽」。<br>⚠ <b>点赞数</b>：B 站的卡片上并不显示点赞数，只有接口才有。所以它在首页/热门这类由接口驱动的信息流里<b>刷新后</b>生效；要让它在所有页面、对已经显示出来的卡片也生效，请打开下方的<b>「精确过滤」</b>（会按需读取视频数据）。</div>`;
+      <div class="hint">留空或 0 = 该项不启用。三项<b>各自独立</b>，任一命中即屏蔽；同一行两端都填则表示「区间之外的屏蔽」。<br>⚠ <b>点赞数</b>需要额外说明：B 站的卡片上并不显示点赞数。信息流接口<b>有时</b>会带这个字段、有时不带（各接口不一，也会变），带的时候刷新后即可生效；<b>不带的时候这两条规则在信息流上是不生效的</b>。要让它们稳定生效，请打开下方的<b>「精确过滤」</b>——它会按需读取视频详情把点赞数补齐，对所有页面、包括已经显示出来的卡片都有效。当前接口到底给没给，看「工具 → 🩺 运行自检」里的「其中带点赞数 N」。</div>`;
       host.appendChild(num);
       const numOpts = { number: true, after: rescanAfterRuleChange };
       bindControl(num, "bfb-minviews", CONFIG.block, "minViews", numOpts);
@@ -5031,7 +5059,9 @@
         sumEl.textContent = healthSummary();
         const t = timingReport();
         timeEl.innerHTML = t.length ? '<label style="margin-top:8px">⏱ 耗时采样（调试模式）</label>' + t.map((x) => `<div class="stat">${escapeHtml(x)}</div>`).join("") + '<div class="hint">「共」是累计，「峰」是单次最慢——卡顿看峰值，写放大看次数。关闭调试模式即清零。</div>' : "";
-        const w = healthReport();
+        const b = CONFIG.block;
+        const likeWarn = likesDataWarning(b.minLikes > 0 || b.maxLikes > 0 || b.spamLikeRatio > 0);
+        const w = healthReport().concat(likeWarn && !CONFIG.apiFilters ? [likeWarn] : []);
         if (w.length) {
           warnEl.innerHTML = w.map((x) => `<div class="hint" style="color:#e74c3c">⚠ ${escapeHtml(x)}</div>`).join("");
           return;
