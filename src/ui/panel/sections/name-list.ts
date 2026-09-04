@@ -2,6 +2,7 @@
 // 归到「导入/导出」一族，注册顺序紧跟 io section。
 import { CONFIG, saveConfig } from '../../../config';
 import { doBlacklistMany, importAccountBlacklist, REL_ERR } from '../../../blacklist';
+import { riskGuard } from '../../../api';
 import type { BlockResult, BlockProgress } from '../../../blacklist';
 import { rescanAfterRuleChange } from '../../../dom';
 import { pushUnique } from '../../../rules';
@@ -114,8 +115,11 @@ export const nameListSection: PanelSection = {
           toast(r.added ? `已从账号黑名单导回 ${r.added} 条` : '本地名单已与账号黑名单一致', r.truncated ? 'warn' : 'success');
           ctx.rerender();
         },
-        (done, total) => {
-          listStatus.textContent = `读取中 ${done}${total ? '/' + total : ''}…`;
+        (done, total, paused) => {
+          // 风控退避时如实说，不然界面会「卡在某个数字不动」，看着像挂了
+          listStatus.textContent = paused
+            ? `⚠ 触发风控，已暂停约 ${Math.ceil(riskGuard.remaining() / 1000)}s 后自动继续 · 已读 ${done}${total ? '/' + total : ''}`
+            : `读取中 ${done}${total ? '/' + total : ''}…`;
         }
       );
     };

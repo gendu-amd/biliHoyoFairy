@@ -2649,11 +2649,15 @@
     cb?.(false);
   }
   var BLACKS_PAGE_SIZE = 50;
+  var BLACKS_DELAY = 400;
+  var BLACKS_JITTER = 300;
+  var BLACKS_RETRY_MAX = 4;
   var BLACKS_MAX_PAGES = 400;
   function importAccountBlacklist(cb, onProgress) {
     const uids = [];
     const names = {};
     let total = 0;
+    let retries = 0;
     const finish = (truncated) => {
       const added = pushUnique(CONFIG.block.uids, uids);
       for (const uid of Object.keys(names)) setUidName(uid, names[uid]);
@@ -2665,6 +2669,11 @@
     };
     const page = (pn) => {
       if (pn > BLACKS_MAX_PAGES) return finish(true);
+      if (riskGuard.blocked()) {
+        onProgress?.(uids.length, total, true);
+        setTimeout(() => page(pn), riskGuard.remaining() + 50);
+        return;
+      }
       const sent = gmRequest({
         method: "GET",
         url: `https://api.bilibili.com/x/relation/blacks?re_version=0&ps=${BLACKS_PAGE_SIZE}&pn=${pn}`,
@@ -2676,8 +2685,16 @@
             j = JSON.parse(r.responseText);
           } catch (e) {
           }
-          riskGuard.note(j && j.code);
-          if (!j || j.code !== 0 || !j.data) return cb(null);
+          const code = j && typeof j.code === "number" ? j.code : null;
+          riskGuard.note(code);
+          if (code !== null && RISK_CODES.has(code)) {
+            if (++retries > BLACKS_RETRY_MAX) return finish(true);
+            onProgress?.(uids.length, total, true);
+            setTimeout(() => page(pn), riskGuard.remaining() + 50);
+            return;
+          }
+          if (!j || code !== 0 || !j.data) return cb(null);
+          retries = 0;
           const list = Array.isArray(j.data.list) ? j.data.list : [];
           total = typeof j.data.total === "number" ? j.data.total : total;
           for (const it of list) {
@@ -2686,8 +2703,8 @@
             uids.push(uid);
             if (it.uname) names[uid] = String(it.uname);
           }
-          onProgress?.(uids.length, total);
-          if (list.length >= BLACKS_PAGE_SIZE) setTimeout(() => page(pn + 1), 300);
+          onProgress?.(uids.length, total, false);
+          if (list.length >= BLACKS_PAGE_SIZE) setTimeout(() => page(pn + 1), BLACKS_DELAY + Math.random() * BLACKS_JITTER);
           else finish(false);
         },
         onerror: () => cb(null),
@@ -4264,8 +4281,8 @@
             toast(r.added ? `已从账号黑名单导回 ${r.added} 条` : "本地名单已与账号黑名单一致", r.truncated ? "warn" : "success");
             ctx.rerender();
           },
-          (done, total) => {
-            listStatus.textContent = `读取中 ${done}${total ? "/" + total : ""}…`;
+          (done, total, paused) => {
+            listStatus.textContent = paused ? `⚠ 触发风控，已暂停约 ${Math.ceil(riskGuard.remaining() / 1e3)}s 后自动继续 · 已读 ${done}${total ? "/" + total : ""}` : `读取中 ${done}${total ? "/" + total : ""}…`;
           }
         );
       };

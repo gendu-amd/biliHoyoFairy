@@ -4,6 +4,7 @@
 // 本模块的返回值形状是**跨层契约**（面板的批量拉黑 / 名单批量处理都按它渲染进度与结果），
 // 所以下面的 interface 是导出的：调用方不该再各自猜一遍形状——猜错了不报错，只是进度条数字不对。
 import { fetchView, riskGuard } from './api';
+import { RISK_CODES } from './constants';
 import { getCookie } from './util';
 import { gmRequest } from './gm';
 import { CONFIG, saveConfig, setUidName } from './config';
@@ -340,15 +341,25 @@ export interface ImportBlacksResult {
 }
 
 const BLACKS_PAGE_SIZE = 50;
+// 翻页节奏：只读 GET，比批量拉黑（写账号）宽松，但仍要留抖动。3000 人 = 60 页，
+// 按下面的节奏约 35 秒——慢一点换不触发风控，划算得多。
+const BLACKS_DELAY = 400;
+const BLACKS_JITTER = 300;
+// 同一页因风控最多重试几次。超了就带着已读到的部分收工，而不是无限转下去。
+const BLACKS_RETRY_MAX = 4;
 // 页数上限：纯粹防「接口一直返回满页」时死循环，不是业务限制，所以要开得比任何真实名单都大。
 // 上一版设成 40（= 2000 人）并把停下来报成 cancelled——名单上千的人会被静默截断，
 // 而界面上只显示「共 N 人，新增 M 条」，看不出少了一半。宁可多转几圈也不能悄悄少导。
 const BLACKS_MAX_PAGES = 400;
 
-export function importAccountBlacklist(cb: (r: ImportBlacksResult | null) => void, onProgress?: (done: number, total: number) => void): void {
+export function importAccountBlacklist(
+  cb: (r: ImportBlacksResult | null) => void,
+  onProgress?: (done: number, total: number, paused: boolean) => void
+): void {
   const uids: string[] = [];
   const names: Record<string, string> = {};
   let total = 0;
+  let retries = 0;
 
   const finish = (truncated: boolean) => {
     // 一次性写入 + 一次重扫：逐页写会让大名单期间页面反复重扫。
@@ -363,6 +374,13 @@ export function importAccountBlacklist(cb: (r: ImportBlacksResult | null) => voi
 
   const page = (pn: number) => {
     if (pn > BLACKS_MAX_PAGES) return finish(true);
+    // 熔断中先等：旁边的批量拉黑一直是这么做的，这条新路当初漏了检查——
+    // 结果是第 5 页触发风控后，第 6…60 页照旧一头撞上去，把退避窗口撑得更长。
+    if (riskGuard.blocked()) {
+      onProgress?.(uids.length, total, true);
+      setTimeout(() => page(pn), riskGuard.remaining() + 50);
+      return;
+    }
     const sent = gmRequest({
       method: 'GET',
       url: `https://api.bilibili.com/x/relation/blacks?re_version=0&ps=${BLACKS_PAGE_SIZE}&pn=${pn}`,
@@ -375,10 +393,20 @@ export function importAccountBlacklist(cb: (r: ImportBlacksResult | null) => voi
         } catch (e) {
           /* 不是 JSON（风控页/网关错误）：按失败处理 */
         }
-        riskGuard.note(j && j.code);
-        // 未登录（-101）与风控都属于「这次拿不到」，如实返回 null 让调用方说人话，
+        const code = j && typeof j.code === 'number' ? j.code : null;
+        riskGuard.note(code);
+        // 风控码是**可重试**的，不是「这次导入失败了」。已经读到的几十页不该因为撞上一次退避
+        // 就整批扔掉——等退避结束重试同一页即可，riskGuard 会自己指数退避。
+        if (code !== null && RISK_CODES.has(code)) {
+          if (++retries > BLACKS_RETRY_MAX) return finish(true); // 反复撞墙：带着已读到的部分收工
+          onProgress?.(uids.length, total, true);
+          setTimeout(() => page(pn), riskGuard.remaining() + 50);
+          return;
+        }
+        // 未登录（-101）这类是确定性失败，重试没意义；如实返回 null 让调用方说人话，
         // 而不是把空名单当成「你的黑名单是空的」——那会让用户以为账号那边也没了。
-        if (!j || j.code !== 0 || !j.data) return cb(null);
+        if (!j || code !== 0 || !j.data) return cb(null);
+        retries = 0;
         const list: any[] = Array.isArray(j.data.list) ? j.data.list : [];
         total = typeof j.data.total === 'number' ? j.data.total : total;
         for (const it of list) {
@@ -387,9 +415,9 @@ export function importAccountBlacklist(cb: (r: ImportBlacksResult | null) => voi
           uids.push(uid);
           if (it.uname) names[uid] = String(it.uname);
         }
-        onProgress?.(uids.length, total);
+        onProgress?.(uids.length, total, false);
         // 拿满一页就还有下一页；不足一页说明到底了。不看 has_more——各接口对它的语义并不一致。
-        if (list.length >= BLACKS_PAGE_SIZE) setTimeout(() => page(pn + 1), 300);
+        if (list.length >= BLACKS_PAGE_SIZE) setTimeout(() => page(pn + 1), BLACKS_DELAY + Math.random() * BLACKS_JITTER);
         else finish(false);
       },
       onerror: () => cb(null),
