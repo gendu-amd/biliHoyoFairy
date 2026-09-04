@@ -9,7 +9,7 @@ import { healthReport } from './health';
 import { configureCardDetect } from './cardinfo';
 import { pageType } from './page';
 import { installNetworkHooks } from './net';
-import { shadowRoots, harvestShadowRoots } from './shadow';
+import { addShadowRoot, harvestShadowRoots } from './shadow';
 import { sessionBlocked, tallyLog, setStatsListener } from './stats';
 import { updateBadge, toast } from './ui/toast';
 import { setPanelHooks } from './ui/hooks';
@@ -75,7 +75,7 @@ import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
     const wrapped: MarkedAttachShadow = function (this: Element, init: ShadowRootInit): ShadowRoot {
       const root = orig.call(this, init);
       try {
-        shadowRoots.add(root);
+        addShadowRoot(root);
         if (isCommentTag(this.tagName)) scheduleCommentScan();
       } catch (e) {
         logErr('attachShadow.hook', e); // 记录但不吞掉原生行为：下面照常返回 root

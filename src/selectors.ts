@@ -20,6 +20,10 @@ export const VIDEO_CARD_SELECTORS = [
   'div.bili-dyn-list__item', // 动态信息流（t.bilibili.com）
   'div.floor-card.single-card', // 首页信息流里的「直播推荐」单卡（链向 live.bilibili.com）
 ];
+// 注：BewlyCat（把整个首页换成自己 Vue 界面的扩展）的卡片内层类名恰好也是 `.video-card`，
+// 上面那条「综合热门 / 每周必看」的选择器已经能命中它，不必另加。下面 CARD_* 里几条带
+// BewlyCat 标注的选择器补的是它的字段类名——否则卡认得出、标题和 UP 名却抠不到，
+// 会被 processCard 当成「还没渲染完的骨架卡」，每轮重扫白抠一遍且什么都拦不到。
 
 // —— 播放页「当前视频的 UP 主」信息区 ——
 // ⚠ 故意**不**放进 VIDEO_CARD_SELECTORS：那是扫描器的输入，把 UP 信息区当成卡片会被判定、被隐藏。
@@ -44,6 +48,9 @@ export const CELL_CONTAINERS = [
   'div.feed-card', // 首页信息流网格项（.container 的直接子元素，必须优先）
   'div.floor-single-card', // 首页「直播推荐」单卡的带宽高占位外层，只隐内层会留黑框
   'div.bili-feed-card', // 兜底：无外层 .feed-card 的场景（旧版式/其它信息流）
+  // 放最后：原生选择器优先。BewlyCat 的网格项是 .video-card-container（内层才是 .video-card），
+  // 不登记的话隐藏内层会在它的网格里留下一个空洞。该类名在原生 B 站不存在，无回归风险。
+  'div.video-card-container',
 ];
 // 护栏名单：这些是页面级大容器，隐藏它们会连带删掉无限滚动的加载哨兵。
 export const UNSAFE_HIDE_CONTAINERS = '.container, .feed2, .bili-feed4, #i_cecream, #app, .bili-header';
@@ -59,6 +66,7 @@ export const CARD_TITLE_SELECTORS = [
   '.bili-dyn-card-video__title', // 动态内视频标题
   '.dyn-card-opus__title', // 动态专栏/图文标题
   '.bili-dyn-content__orig__desc', // 动态正文（文字动态，便于关键词命中）
+  '.video-card-title', // BewlyCat 卡片标题
 ];
 export const CARD_UP_SELECTORS = [
   '.bili-video-card__info--author',
@@ -67,6 +75,7 @@ export const CARD_UP_SELECTORS = [
   '.bili-video-card__info--owner span',
   '.upname .name',
   '.bili-dyn-title__text', // 动态发布者
+  '.channel-name', // BewlyCat 的 UP 名（其作者链接仍是 //space.bilibili.com/{mid}，UID 照常抠得到）
 ];
 export const CARD_PARTITION_SELECTORS = ['.bili-video-card__info--tag', '.rcmd-tag'];
 export const CARD_DURATION_SELECTORS = ['.bili-video-card__stats__duration', '.duration', '.bili-dyn-card-video__duration'];

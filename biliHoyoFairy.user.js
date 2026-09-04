@@ -361,8 +361,11 @@
     // 首页信息流网格项（.container 的直接子元素，必须优先）
     "div.floor-single-card",
     // 首页「直播推荐」单卡的带宽高占位外层，只隐内层会留黑框
-    "div.bili-feed-card"
+    "div.bili-feed-card",
     // 兜底：无外层 .feed-card 的场景（旧版式/其它信息流）
+    // 放最后：原生选择器优先。BewlyCat 的网格项是 .video-card-container（内层才是 .video-card），
+    // 不登记的话隐藏内层会在它的网格里留下一个空洞。该类名在原生 B 站不存在，无回归风险。
+    "div.video-card-container"
   ];
   var UNSAFE_HIDE_CONTAINERS = ".container, .feed2, .bili-feed4, #i_cecream, #app, .bili-header";
   var SWIPE_BANNER = ".recommended-swipe";
@@ -375,8 +378,10 @@
     // 动态内视频标题
     ".dyn-card-opus__title",
     // 动态专栏/图文标题
-    ".bili-dyn-content__orig__desc"
+    ".bili-dyn-content__orig__desc",
     // 动态正文（文字动态，便于关键词命中）
+    ".video-card-title"
+    // BewlyCat 卡片标题
   ];
   var CARD_UP_SELECTORS = [
     ".bili-video-card__info--author",
@@ -384,8 +389,10 @@
     ".up-name",
     ".bili-video-card__info--owner span",
     ".upname .name",
-    ".bili-dyn-title__text"
+    ".bili-dyn-title__text",
     // 动态发布者
+    ".channel-name"
+    // BewlyCat 的 UP 名（其作者链接仍是 //space.bilibili.com/{mid}，UID 照常抠得到）
   ];
   var CARD_PARTITION_SELECTORS = [".bili-video-card__info--tag", ".rcmd-tag"];
   var CARD_DURATION_SELECTORS = [".bili-video-card__stats__duration", ".duration", ".bili-dyn-card-video__duration"];
@@ -1390,13 +1397,22 @@
 
   // src/shadow.ts
   var shadowRoots = /* @__PURE__ */ new Set();
+  var onRoot = () => {
+  };
+  function setShadowRootHandler(fn) {
+    onRoot = fn;
+    for (const r of shadowRoots) fn(r);
+  }
+  function addShadowRoot(root) {
+    if (!root || shadowRoots.has(root)) return;
+    shadowRoots.add(root);
+    onRoot(root);
+  }
   function harvestShadowRoots(root) {
     if (!root || !root.querySelectorAll) return;
     try {
       for (const el of root.querySelectorAll("*")) {
-        if (el.shadowRoot && el.id !== "bfb-overlay-host" && !shadowRoots.has(el.shadowRoot)) {
-          shadowRoots.add(el.shadowRoot);
-        }
+        if (el.shadowRoot && el.id !== "bfb-overlay-host") addShadowRoot(el.shadowRoot);
       }
     } catch (e) {
     }
@@ -2140,7 +2156,7 @@
           for (const n of m.addedNodes) {
             const el = n;
             if (n.nodeType === 1 && el.shadowRoot && el.id !== "bfb-overlay-host") {
-              shadowRoots.add(el.shadowRoot);
+              addShadowRoot(el.shadowRoot);
               sawShadowHost = true;
             }
           }
@@ -2154,6 +2170,12 @@
       })
     );
     observer.observe(document, { childList: true, subtree: true });
+    setShadowRootHandler((root) => {
+      try {
+        observer.observe(root, { childList: true, subtree: true });
+      } catch (e) {
+      }
+    });
     scanAll();
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", () => scheduler.toSteadyState(), { once: true });
@@ -4573,7 +4595,7 @@ ${r.line}`, {
       const wrapped = function(init) {
         const root = orig.call(this, init);
         try {
-          shadowRoots.add(root);
+          addShadowRoot(root);
           if (isCommentTag(this.tagName)) scheduleCommentScan();
         } catch (e) {
           logErr("attachShadow.hook", e);

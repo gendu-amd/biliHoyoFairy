@@ -16,7 +16,7 @@
 // 退化成「不过滤」而不是「看不见内容」——失败方向必须是安全的那一侧。
 
 import { scanAll } from './dom';
-import { shadowRoots, harvestShadowRoots } from './shadow';
+import { addShadowRoot, harvestShadowRoots, setShadowRootHandler } from './shadow';
 import { safe } from './logging';
 
 export interface ScanScheduler {
@@ -91,7 +91,7 @@ export function startScanner(): void {
         for (const n of m.addedNodes) {
           const el = n as Element;
           if (n.nodeType === 1 && el.shadowRoot && el.id !== 'bfb-overlay-host') {
-            shadowRoots.add(el.shadowRoot);
+            addShadowRoot(el.shadowRoot);
             sawShadowHost = true;
           }
         }
@@ -108,6 +108,20 @@ export function startScanner(): void {
   // documentElement 在极早的注入点也可能还没建好。观察 Document 节点没有这个前提，
   // 连 <html> 的插入都看得见——避免「元素还没生成 → 观察器没装上 → DOM 层整层静默失效」。
   observer.observe(document, { childList: true, subtree: true });
+
+  // 每个 shadow root 都要**单独**观察：影子树内部的 DOM 变动不会冒泡到 document 级观察器。
+  // 少了这一步，影子树里新增的卡就永远不触发重扫，只能靠光 DOM 的某次变动偶然捎带——
+  // 表现为「有的拦了有的没拦」「滚一会儿就不拦了」。B 站自己的 shadow 组件、以及把整个界面
+  // 挂进 shadow root 的界面替换类扩展（BewlyCat 等）都吃这个亏。
+  // 注册这一步要在任何采集之前，且 setShadowRootHandler 会对已收集的 root 补跑（main 里的
+  // attachShadow 钩子先于本函数安装，可能已经收到过 root）。
+  setShadowRootHandler((root) => {
+    try {
+      observer.observe(root, { childList: true, subtree: true });
+    } catch (e) {
+      /* 个别 root 观察失败不影响其它 */
+    }
+  });
 
   // 装好时可能已经解析出一些卡（脚本注入点之前的那部分 HTML），先扫一遍。
   scanAll();
