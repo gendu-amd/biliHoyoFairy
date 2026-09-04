@@ -197,3 +197,73 @@ export function installDocument(body: El, documentElement?: El): () => void {
     g.document = prev;
   };
 }
+
+// —— 从 HTML 片段建树 ——
+//
+// 目的是把**真实页面的卡片 HTML**固化成契约测试的样本：B 站改类名是这个脚本最常见的失效路径，
+// 而它一旦发生，脚本照常运行、只是什么都不再拦——单测里手搓 h() 树复现不出这种漂移。
+// 不引 jsdom：仓库刻意只保留 esbuild + vitest + eslint + typescript 四个依赖，
+// 而这里需要的只是「把一段静态 HTML 变成上面这棵替身树」，一个够用的解析器比一个浏览器实现划算。
+// 支持：标签、属性（双/单引号或裸值）、自闭合、注释、文本；不支持隐式闭合标签与实体解码——
+// 固化样本时把它们规避掉即可（fixtures 是我们自己裁剪的，不是任意网页）。
+const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
+
+export function parseHtml(html: string): El {
+  const root = new El('div');
+  const stack: El[] = [root];
+  const top = (): El => stack[stack.length - 1];
+  let i = 0;
+  while (i < html.length) {
+    const lt = html.indexOf('<', i);
+    if (lt < 0) {
+      top().own += html.slice(i);
+      break;
+    }
+    if (lt > i) {
+      const text = html.slice(i, lt);
+      if (text.trim()) top().own += text.trim();
+    }
+    if (html.startsWith('<!--', lt)) {
+      const end = html.indexOf('-->', lt);
+      i = end < 0 ? html.length : end + 3;
+      continue;
+    }
+    const gt = html.indexOf('>', lt);
+    if (gt < 0) break;
+    const raw = html.slice(lt + 1, gt).trim();
+    if (raw.startsWith('/')) {
+      const name = raw.slice(1).trim().toLowerCase();
+      // 就近闭合：碰到不匹配的结束标签就忽略，样本裁剪出错时不至于整棵树错位
+      for (let s = stack.length - 1; s > 0; s--) {
+        if (stack[s].tag === name) {
+          stack.length = s;
+          break;
+        }
+      }
+      i = gt + 1;
+      continue;
+    }
+    const selfClose = raw.endsWith('/');
+    const body = selfClose ? raw.slice(0, -1) : raw;
+    const m = body.match(/^([\w-]+)\s*([\s\S]*)$/);
+    if (!m) {
+      i = gt + 1;
+      continue;
+    }
+    const el = new El(m[1]);
+    for (const a of m[2].matchAll(/([\w:.-]+)(?:\s*=\s*("([^"]*)"|'([^']*)'|([^\s]+)))?/g)) {
+      el.attrs[a[1]] = a[3] ?? a[4] ?? a[5] ?? '';
+    }
+    top().appendChild(el);
+    if (!selfClose && !VOID_TAGS.has(el.tag)) stack.push(el);
+    i = gt + 1;
+  }
+  return root;
+}
+
+/** 解析 HTML 并返回第一个匹配选择器的元素（fixtures 的常用入口）。 */
+export function fromHtml(html: string, selector: string): El {
+  const el = parseHtml(html).querySelector(selector);
+  if (!el) throw new Error('样本里找不到 ' + selector);
+  return el;
+}
