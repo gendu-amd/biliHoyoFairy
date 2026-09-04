@@ -11,6 +11,7 @@ import {
   CARD_TITLE_SELECTORS,
   CARD_UP_SELECTORS,
   CARD_VIEWS_SELECTORS,
+  CARD_LIKES_SELECTORS,
   LIVE_CARD_SELECTOR,
 } from './selectors';
 
@@ -108,6 +109,16 @@ export function extractCardInfo(card: Element, deepUid = true): CardInfo {
     const statEl = card.querySelector(sel);
     if (statEl) {
       info.views = parseCount(statEl.textContent);
+      break;
+    }
+  }
+
+  // 点赞数：只有少数版式会在卡面上显示它（如 BewlyCat 的封面统计条）。取不到就保持 null，
+  // 营销号维度自己会跳过——那条规则的语义本来就是「拿得到点赞数时才判」。
+  for (const sel of CARD_LIKES_SELECTORS) {
+    const el = card.querySelector(sel);
+    if (el) {
+      info.likes = parseCount(el.textContent);
       break;
     }
   }

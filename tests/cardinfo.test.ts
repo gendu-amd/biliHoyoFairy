@@ -144,3 +144,71 @@ describe('extractCardInfo：DOM 抽取', () => {
     expect(i.isAd).toBe(false);
   });
 });
+
+// BewlyCat（把整个首页换成自己 Vue 界面的扩展）的卡片版式。类名取自它的源码 + 实测 DOM。
+// 锁住的是「同一套抽取逻辑对两种版式都成立」——将来谁改了共用的选择器顺序，
+// 原生和它两边会同时报错，而不是悄悄只坏一边。
+describe('extractCardInfo：BewlyCat 版式', () => {
+  const stat = (kind: string, v: string) =>
+    h('span', 'video-card-cover-stats__item ' + kind, {}, h('span', 'video-card-cover-stats__value', {}, v));
+  const bewlyCard = () => {
+    const container = h(
+      'div',
+      'video-card-container',
+      {},
+      h(
+        'div',
+        'video-card group',
+        {},
+        h(
+          'a',
+          '',
+          { href: 'https://www.bilibili.com/video/BV1ETug6DEj7/' },
+          h(
+            'div',
+            'video-card-cover-stats',
+            {},
+            h(
+              'div',
+              'video-card-cover-stats__items',
+              {},
+              stat('cover-stat-view', '24.5 万'),
+              stat('cover-stat-danmaku', '816'),
+              stat('cover-stat-like', '1.9 万'),
+              stat('video-card-cover-stats__item--duration', '08:51')
+            )
+          )
+        ),
+        h('div', 'keep-two-lines video-card-title text-base', {}, '你甚至可以在星穹铁道里学佛法'),
+        h('a', 'channel-name', { href: '//space.bilibili.com/503302' }, '高原守Channel')
+      )
+    );
+    return container.querySelector('.video-card')!; // 扫描器匹配的是内层这张，外层只用于 cellOf
+  };
+
+  it('标题 / UP 名 / UID / BV 都抠得出来', () => {
+    const info = extractCardInfo(bewlyCard() as any);
+    expect(info.title).toBe('你甚至可以在星穹铁道里学佛法');
+    expect(info.up).toBe('高原守Channel');
+    expect(info.uid).toBe('503302');
+    expect(info.bvid).toBe('BV1ETug6DEj7');
+  });
+
+  // 播放/弹幕/点赞/时长四项**共用** .video-card-cover-stats__value 这一个类名。
+  // 不带父级 cover-stat-* 限定的话就会按文档序取第一个——谁排在前面取决于用户的显示设置，
+  // 于是「按播放量屏蔽」时灵时不灵，而且不报任何错。
+  it('播放量取的是播放那一项，不会串到弹幕/点赞上', () => {
+    const info = extractCardInfo(bewlyCard() as any);
+    expect(info.views).toBe(245000);
+    expect(info.likes).toBe(19000);
+    expect(info.duration).toBe(531); // 08:51
+  });
+
+  it('卡面不显示统计时三项保持 null，营销号维度自会跳过', () => {
+    const bare = h('div', 'video-card', {}, h('div', 'video-card-title', {}, '无统计'));
+    const info = extractCardInfo(bare as any);
+    expect(info.views).toBeNull();
+    expect(info.likes).toBeNull();
+    expect(info.duration).toBeNull();
+  });
+});

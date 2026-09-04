@@ -78,8 +78,23 @@ export const CARD_UP_SELECTORS = [
   '.channel-name', // BewlyCat 的 UP 名（其作者链接仍是 //space.bilibili.com/{mid}，UID 照常抠得到）
 ];
 export const CARD_PARTITION_SELECTORS = ['.bili-video-card__info--tag', '.rcmd-tag'];
-export const CARD_DURATION_SELECTORS = ['.bili-video-card__stats__duration', '.duration', '.bili-dyn-card-video__duration'];
-export const CARD_VIEWS_SELECTORS = ['.bili-video-card__stats--item', '.play-text'];
+export const CARD_DURATION_SELECTORS = [
+  '.bili-video-card__stats__duration',
+  '.duration',
+  '.bili-dyn-card-video__duration',
+  '.video-card-cover-stats__item--duration', // BewlyCat
+];
+// ⚠ 必须带上父级的 cover-stat-* 限定：BewlyCat 的播放/弹幕/点赞/时长四项**共用**
+// .video-card-cover-stats__value 这一个类名，只写子类名会按文档序取到第一个，
+// 谁排在前面全看它的显示设置——「按播放量屏蔽」会时灵时不灵，且不报错。
+export const CARD_VIEWS_SELECTORS = [
+  '.bili-video-card__stats--item',
+  '.play-text',
+  '.cover-stat-view .video-card-cover-stats__value', // BewlyCat
+];
+// 点赞数（营销号识别用）。接口那一路从 stat.like 拿；DOM 这一路此前完全没有来源，
+// 于是「低赞率」维度在纯 DOM 场景恒不生效。BewlyCat 恰好把它显示在封面上，就接上。
+export const CARD_LIKES_SELECTORS = ['.cover-stat-like .video-card-cover-stats__value'];
 // UID 兜底：DOM 上可能携带 mid 的自定义属性。
 export const CARD_MID_ATTR_SELECTOR = '[data-mid],[data-up-mid],[data-user-id]';
 export const CARD_MID_ATTRS = ['data-mid', 'data-up-mid', 'data-user-id'];

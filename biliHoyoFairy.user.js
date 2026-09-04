@@ -545,8 +545,20 @@
     // BewlyCat 的 UP 名（其作者链接仍是 //space.bilibili.com/{mid}，UID 照常抠得到）
   ];
   var CARD_PARTITION_SELECTORS = [".bili-video-card__info--tag", ".rcmd-tag"];
-  var CARD_DURATION_SELECTORS = [".bili-video-card__stats__duration", ".duration", ".bili-dyn-card-video__duration"];
-  var CARD_VIEWS_SELECTORS = [".bili-video-card__stats--item", ".play-text"];
+  var CARD_DURATION_SELECTORS = [
+    ".bili-video-card__stats__duration",
+    ".duration",
+    ".bili-dyn-card-video__duration",
+    ".video-card-cover-stats__item--duration"
+    // BewlyCat
+  ];
+  var CARD_VIEWS_SELECTORS = [
+    ".bili-video-card__stats--item",
+    ".play-text",
+    ".cover-stat-view .video-card-cover-stats__value"
+    // BewlyCat
+  ];
+  var CARD_LIKES_SELECTORS = [".cover-stat-like .video-card-cover-stats__value"];
   var CARD_MID_ATTR_SELECTOR = "[data-mid],[data-up-mid],[data-user-id]";
   var CARD_MID_ATTRS = ["data-mid", "data-up-mid", "data-user-id"];
   var LIVE_CARD_SELECTOR = '.bili-live-card, [class*="live-card"]';
@@ -759,6 +771,13 @@
       const statEl = card.querySelector(sel);
       if (statEl) {
         info.views = parseCount(statEl.textContent);
+        break;
+      }
+    }
+    for (const sel of CARD_LIKES_SELECTORS) {
+      const el = card.querySelector(sel);
+      if (el) {
+        info.likes = parseCount(el.textContent);
         break;
       }
     }
