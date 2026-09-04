@@ -141,15 +141,13 @@ function renderPanel(p: HTMLElement) {
     };
   });
 
-  // —— 全局设置搜索 ——
-  // 14 个分区散在 6 个 Tab 里，「营销号那个阈值在哪」得靠一个个点开翻。
-  // 搜索直接在**已渲染的 DOM** 上按文本过滤 .sec 块，而不是另建一份「设置项索引」——
-  // 索引会与分区各自的文案漂移（改了文案忘了改索引，搜不到且不报错），而 DOM 就是唯一真相。
+  // 全局设置搜索：直接在已渲染的 DOM 上按文本过滤 .sec 块，不另建「设置项索引」——
+  // 索引会与各分区的文案漂移（改了文案忘了改索引，搜不到还不报错），而 DOM 就是唯一真相。
   const finder = document.createElement('div');
   finder.className = 'bfb-finder';
   const fInput = document.createElement('input');
   fInput.type = 'text';
-  fInput.placeholder = '搜索设置项（如：营销、评论等级、备份）';
+  fInput.placeholder = '搜索设置项…';
   const fClear = document.createElement('button');
   fClear.textContent = '✕';
   fClear.title = '清除';
@@ -181,10 +179,12 @@ function renderPanel(p: HTMLElement) {
     applyFinder();
     const kw = fInput.value.trim();
     fStat.textContent = kw ? (total ? `${total} 项` : '无匹配') : '';
+    fClear.style.display = kw ? '' : 'none'; // 空的时候不摆一个没用的 ✕
     tabBar.style.display = kw ? 'none' : '';
     p.scrollTop = 0;
   };
   fInput.value = finderQuery; // 重渲后保留搜索词（与 activeTab 同理）
+  fClear.style.display = finderQuery ? '' : 'none';
   fInput.addEventListener('input', () => {
     finderQuery = fInput.value;
     runFinder();

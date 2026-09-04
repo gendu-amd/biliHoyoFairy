@@ -24,13 +24,11 @@ import { onContextMenu, onCardHover, hideHoverBtn } from './ui/menu';
 import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
 /*
  * 架构（拦截优先 + DOM 兜底）：
- *   1. 拦截层（主）：document-start 时 hook fetch / XHR，被动过滤 B 站自身请求的 JSON 列表
- *      （首页推荐 / 排行榜 / 热门 / 播放页相关推荐），命中规则的项直接从数组删掉，
- *      页面只渲染保留项 → 无遮罩、无留白、无闪烁，且不重发请求、不需 WBI、不触发风控。
- *   2. DOM 兜底（薄）：处理拦截层覆盖不到的部分——首屏 SSR 漏网、需联网取数的进阶维度
- *      （标签 / UP简介 / 等级）、搜索热搜词。命中即安全隐藏整张卡（不留洞）。
- *   3. 同一套规则：拦截层与 DOM 层共用 matchRule + 维度注册表，数据源不同、判定一致。
- *   4. 彻底移除：一键拉黑写入账号黑名单，刷新后不再被推荐。
+ *   1. 拦截层（主）：document-start hook fetch/XHR，把命中规则的项从响应 JSON 里删掉——
+ *      页面只渲染保留项，无遮罩、无闪烁，且不重发请求、不需 WBI、不触发风控。
+ *   2. DOM 兜底（薄）：首屏 SSR 漏网、需联网取数的进阶维度、搜索热搜词。
+ *   3. 两层共用同一套 matchRule + 维度注册表，数据源不同、判定一致。
+ *   4. 一键拉黑写入账号黑名单，刷新后不再被推荐。
  */
 (function () {
   'use strict';
@@ -69,9 +67,8 @@ import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
   });
 
   /* ===================== 2. shadow 钩子（依赖 comments/shadow，故留在 bootstrap） ===================== */
-  // hook Element.prototype.attachShadow：把页面创建的每个开放 shadowRoot 收进注册表（评论组件定位、卡片穿透共用）。
-  // 必须在 document-start 安装，先于 B 站构建评论 Web Component。借鉴 bilibili-cleaner Shadow.hook。
-  // 打过的补丁带个标记：脚本被装两遍（TM 与油猴脚本管理器共存、SPA 重入）时不会把自己套娃 hook。
+  // hook attachShadow，把每个开放 shadowRoot 收进注册表。必须在 document-start 装，
+  // 先于 B 站构建评论组件（借鉴 bilibili-cleaner）。补丁带标记，装两遍时不会套娃 hook。
   type AttachShadow = (this: Element, init: ShadowRootInit) => ShadowRoot;
   type MarkedAttachShadow = AttachShadow & { __bfb?: boolean };
   function installShadowHook() {

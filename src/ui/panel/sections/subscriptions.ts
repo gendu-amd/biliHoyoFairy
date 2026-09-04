@@ -17,7 +17,7 @@ export const subscriptionsSection: PanelSection = {
     subSec.innerHTML = `<label>规则订阅（从 URL 自动拉取并合并黑名单）</label>
       <div class="addrow"><input type="text" id="bfb-sub-url" placeholder="订阅 URL（JSON 或文本，如 GitHub raw）"></div>
       <div class="addrow" style="margin-top:6px"><input type="text" id="bfb-sub-name" placeholder="备注名（可选）"><button id="bfb-sub-add">添加</button></div>
-      <div class="hint">订阅只并入<b>黑名单</b>（UID、UP 主名、关键词、分区、标签、简介、BV 号），不影响你的白名单与开关；启用后按声明周期自动刷新。自建 / 共享名单见仓库 examples/ 模板。</div>
+      <div class="hint">订阅只并入<b>黑名单</b>的 7 个维度，不影响白名单与开关，按声明周期自动刷新。想自己维护一份，用「工具 → 导出为订阅名单」。</div>
       <div class="toolbar" style="margin-top:8px"><button class="act ghost" id="bfb-sub-refresh">🔄 全部刷新</button></div>
       <div id="bfb-sub-list" style="margin-top:8px"></div>`;
     host.appendChild(subSec);

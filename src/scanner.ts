@@ -1,19 +1,8 @@
-// 「何时扫描」的调度策略。与「扫描什么」（dom.ts）分开：后者是判定逻辑，本模块只管时机。
-//
-// 为什么需要一个策略而不是一个固定节流值——两个阶段的诉求根本不同：
-//
-//   1. 首屏解析中（document-start → DOMContentLoaded）
-//      B 站首页首屏是 **SSR**：HTML 里直接带着渲染好的卡，拦截层（改 JSON）完全够不着，
-//      只能靠 DOM 层。而卡片正被解析器一张张吐出来，必须赶在**这一帧绘制前**判定隐藏，
-//      否则用户会看到该屏蔽的视频先闪一下再消失。这里用 rAF 合批——「每帧一次、绘制前」
-//      正是浏览器为这件事提供的原语，不是拍脑袋选的间隔。
-//
-//   2. 首屏之后
-//      只有无限滚动会新增卡，晚几十毫秒隐藏没人看得出，继续用 250ms 节流省开销。
-//
-// 这里刻意**不**采用「先用 CSS 把整个 feed 蒙住、判完再放出来」的做法：那要赌脚本不出错，
-// 一旦本层抛异常用户就对着永久空白的首页。本策略只隐藏**肯定命中**的卡，脚本挂掉就什么都不隐藏，
-// 退化成「不过滤」而不是「看不见内容」——失败方向必须是安全的那一侧。
+// 「何时扫描」的调度策略（「扫描什么」在 dom.ts）。两个阶段诉求不同：
+//   首屏解析中：首页是 SSR，卡片由解析器一张张吐出来，必须赶在这一帧绘制前判定，否则会先闪再消失 → rAF 合批
+//   首屏之后：只有无限滚动新增卡，晚几十毫秒无人察觉 → 250ms 节流
+// 刻意不用「先 CSS 蒙住 feed、判完再放出来」：那要赌脚本不出错，本层一抛异常用户就对着空白首页。
+// 现方案只隐藏肯定命中的卡，脚本挂掉退化成「不过滤」而非「看不见内容」。
 
 import { scanAll } from './dom';
 import { addShadowRoot, pruneShadowRoots, setShadowRootHandler } from './shadow';
@@ -72,8 +61,7 @@ export function createScanScheduler(deps: SchedulerDeps): ScanScheduler {
 
 let installed = false;
 
-// 在 document-start 装观察器。必须这么早：首屏 SSR 的卡是解析器一张张吐出来的，
-// 等到 DOMContentLoaded 再看，它们早就画在屏幕上了（曾经的行为——用户会看到该屏蔽的视频闪一下）。
+// 必须在 document-start 装：等到 DOMContentLoaded 再看，首屏 SSR 的卡早就画在屏幕上了。
 export function startScanner(): void {
   if (installed) return;
   installed = true;
@@ -92,23 +80,20 @@ export function startScanner(): void {
         touched = true;
         for (const n of m.addedNodes) {
           const el = n as Element;
-          // 插入时已挂着 shadowRoot 的节点（先 attachShadow 后 append 这种顺序）
+          // 插入时已挂着 shadowRoot 的节点（先 attachShadow 后 append）
           if (n.nodeType === 1 && el.shadowRoot && el.id !== 'bfb-overlay-host') addShadowRoot(el.shadowRoot);
         }
       }
       if (!touched) return;
-      // 不在这里做全文档 harvest：attachShadow 已被 hook，新建的 root 当场入表；
-      // 注入之前就存在的 root 由 main 在 DOMContentLoaded 采集一次即可。
+      // 不在这里做全文档 harvest：attachShadow 已被 hook，新建的 root 当场入表。
       scheduler.request();
     })
   );
-  // 观察 document 本身，而不是 <html>/<body>：document-start 时 body 一定不存在，
-  // documentElement 在极早的注入点也可能还没建好。观察 Document 节点没有这个前提，
-  // 连 <html> 的插入都看得见——避免「元素还没生成 → 观察器没装上 → DOM 层整层静默失效」。
+  // 观察 document 本身而非 <html>/<body>：document-start 时 body 一定不存在，
+  // 观察 Document 节点没有这个前提，避免「元素还没生成 → 观察器没装上 → DOM 层整层静默失效」。
   observer.observe(document, { childList: true, subtree: true });
 
-  // 每个 shadow root 单独观察：影子树内部的变动不冒泡到 document 级观察器，少了这步
-  // 影子树里新增的卡永远不触发重扫（表现为「滚一会儿就不拦了」）。
+  // 每个 shadow root 单独观察：影子树内部的变动不冒泡到 document 级观察器。
   // 注册要在任何采集之前——setShadowRootHandler 会对已收集的 root 补跑。
   // 评论影子树走自己的观察器：评论里没有视频卡，挂卡片观察器等于它每次懒加载都触发全页重扫；
   // 但也不能不挂——评论宿主常先入 DOM、数据后到，未渲染的评论要靠下一轮 mutation 才会被评估。

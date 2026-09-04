@@ -26,7 +26,7 @@ export const ioSection: PanelSection = {
     io.className = 'sec';
     io.innerHTML = `<label>规则配置导入 / 导出（备份、分享给他人）</label>
       <div class="toolbar"><button class="act" id="bfb-export">⬇ 导出为文件</button><button class="act ghost" id="bfb-import">⬆ 从文件导入</button><button class="act ghost" id="bfb-export-sub">📤 导出为订阅名单</button></div>
-      <div class="hint">导出你的全部过滤规则与开关（不含统计、缓存、个人偏好）。导入时规则列表取<b>并集</b>（不会丢失现有规则），开关以导入值为准。<br>「导出为订阅名单」生成的是<b>订阅格式</b>文件（只含黑名单的 7 个可订阅维度）：传到 GitHub raw / Gist 之类的公开 URL，别人在「规则订阅」里填地址就能订阅你的名单并自动更新。</div>`;
+      <div class="hint">导出全部规则与开关（不含统计与个人偏好）；导入时规则取<b>并集</b>，开关以导入值为准。<br>「导出为订阅名单」生成订阅格式文件——传到公开 URL，别人填进「规则订阅」即可订阅并自动更新。</div>`;
     host.appendChild(io);
 
     q(io, '#bfb-export').onclick = () => {

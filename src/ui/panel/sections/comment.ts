@@ -13,7 +13,7 @@ export const commentSection: PanelSection = {
     cmt.innerHTML = `
       <label>💬 评论区过滤</label>
       <div class="switch"><input type="checkbox" id="bfb-cmt"> <b>启用评论区过滤</b></div>
-      <div class="hint">读取评论数据后隐藏命中的评论，仅在含评论的页面（播放页、动态、空间等）生效。以下规则与视频黑名单相互独立。</div>
+      <div class="hint">仅在含评论的页面生效；以下规则与视频黑名单相互独立。</div>
       <div id="bfb-cmt-body" style="margin-top:6px">
         <div class="switch" style="font-weight:400">评论者等级低于 <input type="number" id="bfb-cmt-level" min="0" max="6" style="width:56px"> 级则隐藏（0=不启用）</div>
         <div class="switch"><input type="checkbox" id="bfb-cmt-noface"> 隐藏 默认头像且非会员（疑似小号、水军）</div>

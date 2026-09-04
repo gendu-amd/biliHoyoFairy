@@ -31,7 +31,7 @@ export const nameListSection: PanelSection = {
         <button class="act ghost" id="bfb-list-block" style="color:#e74c3c">⛔ 拉黑（写账号黑名单）</button>
         <button class="act ghost" id="bfb-list-stop" style="display:none;color:#e67e22">⏹ 停止</button>
       </div>
-      <div class="hint">「⬇ 从账号黑名单导回」把你 B 站账号里已拉黑的人重新填进本地名单（账号那份才是权威，本地这份只是镜像，丢了随时可以这样重建）。「仅屏蔽」只在本地隐藏；「拉黑」会写入账号黑名单（限速执行、触发风控自动续传、<b>不可一键撤销</b>、执行前确认）。仅有名称、无 UID 的条目将降级为本地屏蔽。</div>
+      <div class="hint">「仅屏蔽」只在本地隐藏；「拉黑」会写入账号黑名单，<b>不可一键撤销</b>。「从账号黑名单导回」把账号里已拉黑的人重新填进本地名单——账号那份才是权威。仅有名称无 UID 的条目降级为本地屏蔽。</div>
       <div id="bfb-list-status" class="stat" style="margin-top:6px;min-height:1.2em"></div>`;
     host.appendChild(listSec);
 

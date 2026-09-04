@@ -7,9 +7,8 @@ export const VERSION: string =
 export const STORE_KEY = 'bfb_config_v2';
 // 存档解析失败时原始内容另存到这里等人工抢救。不带版本号——它本来就没有可信的结构版本。
 export const STORE_BACKUP_KEY = 'bfb_config_corrupt_backup';
-// 高频后台数据（拦截计数 / 规则命中数 / UID→名 缓存）单独一个键。
-// 跟着 saveConfig 走的话，一个计数器自增就会重写全部规则，而重写用的是本页那份可能过期的快照——
-// 后台标签页刷首页就能冲掉你刚加的规则。高频写与低频写不共用一把锁。
+// 高频后台数据（计数/命中数/UID→名缓存）单独一个键：跟着 saveConfig 走的话，
+// 一个计数器自增就会用本页那份可能过期的快照重写全部规则。
 export const STATS_KEY = 'bfb_stats_v1';
 // 配置快照（自动备份），滚动保留最近几份。独立于 STORE_KEY——备份得能在规则那份被写坏之后读出来。
 export const BACKUP_KEY = 'bfb_backups_v1';
@@ -44,9 +43,8 @@ export const COMMENT_AD_RE = /(bili2233\.cn|b23\.tv)\/(mall-|cm-)|领券|gaoneng
 export const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 // —— 预算与时序 ——
-// 单独成组是因为这几个数要**放在一起**权衡：存盘太频伤磁盘、太疏丢配置；
-// 会话日志留太多吃内存、太少看不到刚才拦了什么；启动汇总弹太早统计还没跑完、太晚用户已经在滑了。
-// 分散在各模块里时没人能一眼看到这份预算（各模块自己的缓存上限仍留在原地，那是实现细节不是预算）。
+// 放在一起是因为要一起权衡：存盘太频伤磁盘、太疏丢配置；日志留太多吃内存、太少看不到刚才拦了什么。
+// 各模块自己的缓存上限仍留在原地（那是实现细节，不是预算）。
 export const BLOCKED_LOG_MAX = 300; // 本次会话屏蔽记录条数上限
 export const SAVE_DEBOUNCE_MS = 1200; // 配置存盘防抖
 // 多标签页同步：收到别的标签页写入后，等这么久再整份采纳（对面连改几条规则时只重载一次）。
@@ -54,8 +52,7 @@ export const SAVE_DEBOUNCE_MS = 1200; // 配置存盘防抖
 export const SYNC_COALESCE_MS = 300;
 export const STARTUP_SUMMARY_MS = 3500; // 首屏稳定后弹「本次拦截」汇总 + 跑运行自检的延时
 export const LIST_SEARCH_MIN = 8; // 名单超过这么多条才显示搜索框（三五条时肉眼就够，多一个框只是噪音）
-// 一次最多渲染多少个 chip（名单可达几千条，全量建 DOM 会卡住面板）。
-// 截断的只是显示，批量操作仍作用于全部筛选结果，并在提示里写明。
+// 一次最多渲染多少个 chip（名单可达几千条）。截断的只是显示，批量操作仍作用于全部筛选结果。
 export const CHIP_RENDER_MAX = 300;
 // 每次渲染最多为多少个缺名字的 UID 请求 UP 名。不限的话开一次面板就是几百个请求换一轮风控。
 export const NAME_RESOLVE_MAX = 20;

@@ -22,7 +22,7 @@ export const backupsSection: PanelSection = {
     const sec = document.createElement('div');
     sec.className = 'sec';
     sec.innerHTML = `<label>🗂 配置备份（自动，最近 5 份）</label>
-      <div class="hint">脚本升级前、以及规则条数发生骤降时会自动存一份，供出岔子时回滚。这是本地兜底，<b>不能替代</b>「⬇ 导出为文件」——存储被整个清掉时它也会一起没。</div>
+      <div class="hint">升级前、规则条数骤降前会自动存一份，供出岔子时回滚。本地兜底，<b>不能替代</b>「导出为文件」。</div>
       <div id="bfb-bk-list" style="margin-top:6px"></div>`;
     host.appendChild(sec);
     const listEl = q(sec, '#bfb-bk-list');

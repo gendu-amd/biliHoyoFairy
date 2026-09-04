@@ -7,9 +7,12 @@
     #bfb-badge{position:fixed;right:18px;bottom:18px;z-index:99999;background:#fb7299;color:#fff;border-radius:24px;padding:8px 14px;font-size:13px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.2);font-family:system-ui,Arial;user-select:none}
     #bfb-badge.off{background:#999}
     #bfb-badge.warn{background:#e67e22}
-    .bfb-card-ph{display:flex;align-items:center;gap:8px;margin:4px 0;padding:6px 10px;border-radius:8px;background:rgba(251,114,153,.08);border:1px dashed rgba(251,114,153,.45);font-size:12px;color:#9499a0;cursor:pointer;user-select:none;line-height:1.5}
+    .bfb-card-ph{display:flex;align-items:center;gap:8px;margin:0 0 4px;padding:6px 10px;border-radius:8px;background:rgba(251,114,153,.08);border:1px dashed rgba(251,114,153,.45);font-size:12px;color:#9499a0;cursor:pointer;user-select:none;line-height:1.5}
     .bfb-card-ph .tx{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .bfb-card-ph .ac{color:#fb7299;flex:none}
+    /* 折叠态：格子本身留在原位（不占额外格），只把它原有的内容藏起来 */
+    .bfb-collapsed > *:not(.bfb-card-ph){display:none !important}
+    .bfb-collapsed{min-height:0 !important;height:auto !important}
     #bfb-ctxmenu{position:fixed;z-index:100002;background:#fff;border:1px solid #ffd5e2;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.22);overflow:hidden;min-width:210px;font-family:system-ui,Arial}
     .bfb-ctx-item{padding:10px 14px;font-size:13px;color:#333;cursor:pointer;white-space:nowrap}
     .bfb-ctx-item:hover{background:#fff0f5;color:#fb7299}
@@ -57,10 +60,11 @@
     #bfb-panel .sec.allow .chip.off{background:#f2f2f4;color:#8a8a8a;border-color:#e0e0e4}
     #bfb-panel .chip .chip-toggle{text-decoration:none;font-size:10px}
     #bfb-panel .chip b:hover{opacity:1}
-    #bfb-panel .bfb-finder{display:flex;align-items:center;gap:6px;margin:8px 0 4px}
-    #bfb-panel .bfb-finder input{flex:1;padding:5px 9px;border:1px solid #ddd;border-radius:8px;font-size:12px}
-    #bfb-panel .bfb-finder button{padding:4px 9px;border:1px solid #ddd;border-radius:8px;background:#fff;cursor:pointer;font-size:12px}
-    #bfb-panel .bfb-finder .fst{font-size:11px;color:#6e6e6e;min-width:3em}
+    #bfb-panel .bfb-finder{display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid #f0f0f0}
+    #bfb-panel .bfb-finder input{flex:1;min-width:0;padding:7px 11px;border:1px solid #e3e3e6;border-radius:9px;font-size:12px;outline:none}
+    #bfb-panel .bfb-finder input:focus{border-color:#fb7299}
+    #bfb-panel .bfb-finder button{flex:none;padding:6px 10px;border:1px solid #e3e3e6;border-radius:9px;background:#fafafa;color:#6e6e6e;cursor:pointer;font-size:12px}
+    #bfb-panel .bfb-finder .fst{flex:none;font-size:11px;color:#8a8a8a;text-align:right}
     #bfb-panel .empty{font-size:11px;color:#767676;margin-top:6px}
     #bfb-panel .hint code{background:rgba(0,0,0,.06);border-radius:4px;padding:1px 5px;font-family:ui-monospace,Consolas,monospace;font-size:11px}
     #bfb-panel input[type=number]{width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:6px}
@@ -165,6 +169,7 @@
       #bfb-panel .chip.off{background:rgba(255,255,255,.07);color:#8b8b93;border-color:rgba(255,255,255,.14)}
       #bfb-panel .sec.allow .chip.off{background:rgba(255,255,255,.07);color:#8b8b93;border-color:rgba(255,255,255,.14)}
       #bfb-panel .hint code{background:rgba(255,255,255,.12)}
+      #bfb-panel .bfb-finder{border-bottom-color:#2c2c32}
       #bfb-panel .bfb-finder input,#bfb-panel .bfb-finder button{background:#2e2e34;border-color:#45454d;color:#e8e8ea}
       #bfb-panel .chip.sel{background:rgba(251,114,153,.3)}
       #bfb-panel .sec.allow .chip.sel{background:rgba(39,174,96,.3)}

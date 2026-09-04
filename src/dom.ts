@@ -22,11 +22,11 @@ const countedEls = new WeakSet<Element>(); // DOM 兜底「已计数」去重
 // 撤销 DOM 层对某卡的隐藏 / 审查标记（规则变更后重扫时调用）。
 function clearVisual(card: HTMLElement) {
   card.style.display = '';
-  // 折叠占位条挂在格子外层的前面，随规则变更一并撤掉，否则改了规则会留下一排孤儿灰条。
-  const cell0 = cellOf(card) as HTMLElement;
-  for (const h of [cell0, card]) {
-    const p = h.previousElementSibling;
-    if (p && p.classList && p.classList.contains('bfb-card-ph')) p.remove();
+  // 折叠状态随规则变更一并撤掉，否则改了规则会留下一排孤儿灰条。
+  for (const h of [cellOf(card) as HTMLElement, card]) {
+    h.classList.remove('bfb-collapsed');
+    const p = h.querySelector(':scope > .bfb-card-ph');
+    if (p) p.remove();
   }
   card.classList.remove('bfb-review');
   const t = card.querySelector(':scope > .bfb-tag');
@@ -42,29 +42,31 @@ function clearVisual(card: HTMLElement) {
 function collapseCard(card: HTMLElement, reason: string, info: CardInfo) {
   const cell = cellOf(card) as HTMLElement;
   const host = isUnsafeHideTarget(cell) ? card : cell;
-  let ph = host.previousElementSibling as HTMLElement | null;
-  if (!ph || !ph.classList || !ph.classList.contains('bfb-card-ph')) {
-    ph = document.createElement('div');
-    ph.className = 'bfb-card-ph';
-    const txt = document.createElement('span');
-    txt.className = 'tx';
-    const act = document.createElement('span');
-    act.className = 'ac';
-    ph.append(txt, act);
-    let open = false;
-    const apply = () => {
-      txt.textContent = (open ? '已展开 · ' : '已折叠 · ') + reason + (info.title ? ' · ' + info.title.slice(0, 30) : '');
-      act.textContent = open ? '收起 ▴' : '展开 ▾';
-      host.style.display = open ? '' : 'none';
-      if (host !== card) card.style.display = '';
-    };
-    ph.onclick = () => {
-      open = !open;
-      apply();
-    };
-    host.parentNode?.insertBefore(ph, host);
+  if (host.querySelector(':scope > .bfb-card-ph')) return; // 已折叠
+  // 灰条放在格子**内部**，靠一个类隐藏格子里原有的内容。
+  // 曾经是插成格子的同级兄弟——而首页 .container 是 display:grid，那样灰条自己会占掉一个格子：
+  // 折叠时占 1 格、展开时灰条 + 卡片占 2 格，看起来就像动了两张卡。
+  const ph = document.createElement('div');
+  ph.className = 'bfb-card-ph';
+  const txt = document.createElement('span');
+  txt.className = 'tx';
+  const act = document.createElement('span');
+  act.className = 'ac';
+  ph.append(txt, act);
+  const apply = () => {
+    const open = !host.classList.contains('bfb-collapsed');
+    txt.textContent = (open ? '已展开 · ' : '已折叠 · ') + reason + (info.title ? ' · ' + info.title.slice(0, 30) : '');
+    act.textContent = open ? '收起 ▴' : '展开 ▾';
+  };
+  ph.onclick = () => {
+    host.classList.toggle('bfb-collapsed');
     apply();
-  }
+  };
+  host.classList.add('bfb-collapsed');
+  host.insertBefore(ph, host.firstChild);
+  host.style.display = '';
+  card.style.display = '';
+  apply();
 }
 
 // 审查模式：不隐藏，给卡片打醒目标记 + 原因 + 就地「放行」按钮，便于核对防误伤。

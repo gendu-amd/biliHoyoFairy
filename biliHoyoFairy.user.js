@@ -2391,10 +2391,10 @@
   var countedEls = /* @__PURE__ */ new WeakSet();
   function clearVisual(card) {
     card.style.display = "";
-    const cell0 = cellOf(card);
-    for (const h of [cell0, card]) {
-      const p = h.previousElementSibling;
-      if (p && p.classList && p.classList.contains("bfb-card-ph")) p.remove();
+    for (const h of [cellOf(card), card]) {
+      h.classList.remove("bfb-collapsed");
+      const p = h.querySelector(":scope > .bfb-card-ph");
+      if (p) p.remove();
     }
     card.classList.remove("bfb-review");
     const t = card.querySelector(":scope > .bfb-tag");
@@ -2406,29 +2406,28 @@
   function collapseCard(card, reason, info) {
     const cell = cellOf(card);
     const host = isUnsafeHideTarget(cell) ? card : cell;
-    let ph = host.previousElementSibling;
-    if (!ph || !ph.classList || !ph.classList.contains("bfb-card-ph")) {
-      ph = document.createElement("div");
-      ph.className = "bfb-card-ph";
-      const txt = document.createElement("span");
-      txt.className = "tx";
-      const act = document.createElement("span");
-      act.className = "ac";
-      ph.append(txt, act);
-      let open = false;
-      const apply = () => {
-        txt.textContent = (open ? "已展开 · " : "已折叠 · ") + reason + (info.title ? " · " + info.title.slice(0, 30) : "");
-        act.textContent = open ? "收起 ▴" : "展开 ▾";
-        host.style.display = open ? "" : "none";
-        if (host !== card) card.style.display = "";
-      };
-      ph.onclick = () => {
-        open = !open;
-        apply();
-      };
-      host.parentNode?.insertBefore(ph, host);
+    if (host.querySelector(":scope > .bfb-card-ph")) return;
+    const ph = document.createElement("div");
+    ph.className = "bfb-card-ph";
+    const txt = document.createElement("span");
+    txt.className = "tx";
+    const act = document.createElement("span");
+    act.className = "ac";
+    ph.append(txt, act);
+    const apply = () => {
+      const open = !host.classList.contains("bfb-collapsed");
+      txt.textContent = (open ? "已展开 · " : "已折叠 · ") + reason + (info.title ? " · " + info.title.slice(0, 30) : "");
+      act.textContent = open ? "收起 ▴" : "展开 ▾";
+    };
+    ph.onclick = () => {
+      host.classList.toggle("bfb-collapsed");
       apply();
-    }
+    };
+    host.classList.add("bfb-collapsed");
+    host.insertBefore(ph, host.firstChild);
+    host.style.display = "";
+    card.style.display = "";
+    apply();
   }
   function markCard(card, reason, info) {
     card.classList.add("bfb-review");
@@ -3406,9 +3405,12 @@
     #bfb-badge{position:fixed;right:18px;bottom:18px;z-index:99999;background:#fb7299;color:#fff;border-radius:24px;padding:8px 14px;font-size:13px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.2);font-family:system-ui,Arial;user-select:none}
     #bfb-badge.off{background:#999}
     #bfb-badge.warn{background:#e67e22}
-    .bfb-card-ph{display:flex;align-items:center;gap:8px;margin:4px 0;padding:6px 10px;border-radius:8px;background:rgba(251,114,153,.08);border:1px dashed rgba(251,114,153,.45);font-size:12px;color:#9499a0;cursor:pointer;user-select:none;line-height:1.5}
+    .bfb-card-ph{display:flex;align-items:center;gap:8px;margin:0 0 4px;padding:6px 10px;border-radius:8px;background:rgba(251,114,153,.08);border:1px dashed rgba(251,114,153,.45);font-size:12px;color:#9499a0;cursor:pointer;user-select:none;line-height:1.5}
     .bfb-card-ph .tx{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .bfb-card-ph .ac{color:#fb7299;flex:none}
+    /* 折叠态：格子本身留在原位（不占额外格），只把它原有的内容藏起来 */
+    .bfb-collapsed > *:not(.bfb-card-ph){display:none !important}
+    .bfb-collapsed{min-height:0 !important;height:auto !important}
     #bfb-ctxmenu{position:fixed;z-index:100002;background:#fff;border:1px solid #ffd5e2;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.22);overflow:hidden;min-width:210px;font-family:system-ui,Arial}
     .bfb-ctx-item{padding:10px 14px;font-size:13px;color:#333;cursor:pointer;white-space:nowrap}
     .bfb-ctx-item:hover{background:#fff0f5;color:#fb7299}
@@ -3456,10 +3458,11 @@
     #bfb-panel .sec.allow .chip.off{background:#f2f2f4;color:#8a8a8a;border-color:#e0e0e4}
     #bfb-panel .chip .chip-toggle{text-decoration:none;font-size:10px}
     #bfb-panel .chip b:hover{opacity:1}
-    #bfb-panel .bfb-finder{display:flex;align-items:center;gap:6px;margin:8px 0 4px}
-    #bfb-panel .bfb-finder input{flex:1;padding:5px 9px;border:1px solid #ddd;border-radius:8px;font-size:12px}
-    #bfb-panel .bfb-finder button{padding:4px 9px;border:1px solid #ddd;border-radius:8px;background:#fff;cursor:pointer;font-size:12px}
-    #bfb-panel .bfb-finder .fst{font-size:11px;color:#6e6e6e;min-width:3em}
+    #bfb-panel .bfb-finder{display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid #f0f0f0}
+    #bfb-panel .bfb-finder input{flex:1;min-width:0;padding:7px 11px;border:1px solid #e3e3e6;border-radius:9px;font-size:12px;outline:none}
+    #bfb-panel .bfb-finder input:focus{border-color:#fb7299}
+    #bfb-panel .bfb-finder button{flex:none;padding:6px 10px;border:1px solid #e3e3e6;border-radius:9px;background:#fafafa;color:#6e6e6e;cursor:pointer;font-size:12px}
+    #bfb-panel .bfb-finder .fst{flex:none;font-size:11px;color:#8a8a8a;text-align:right}
     #bfb-panel .empty{font-size:11px;color:#767676;margin-top:6px}
     #bfb-panel .hint code{background:rgba(0,0,0,.06);border-radius:4px;padding:1px 5px;font-family:ui-monospace,Consolas,monospace;font-size:11px}
     #bfb-panel input[type=number]{width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:6px}
@@ -3564,6 +3567,7 @@
       #bfb-panel .chip.off{background:rgba(255,255,255,.07);color:#8b8b93;border-color:rgba(255,255,255,.14)}
       #bfb-panel .sec.allow .chip.off{background:rgba(255,255,255,.07);color:#8b8b93;border-color:rgba(255,255,255,.14)}
       #bfb-panel .hint code{background:rgba(255,255,255,.12)}
+      #bfb-panel .bfb-finder{border-bottom-color:#2c2c32}
       #bfb-panel .bfb-finder input,#bfb-panel .bfb-finder button{background:#2e2e34;border-color:#45454d;color:#e8e8ea}
       #bfb-panel .chip.sel{background:rgba(251,114,153,.3)}
       #bfb-panel .sec.allow .chip.sel{background:rgba(39,174,96,.3)}
@@ -4018,7 +4022,7 @@
       <div class="switch"><input type="checkbox" id="bfb-fuzzy"> 反绕过模糊匹配（「原 神」「原.神」同样拦截；隐形字符始终拦截）</div>
       <div class="switch"><input type="checkbox" id="bfb-trad"> 简繁归一（规则写「原神」也能拦住繁体标题；单向繁→简）</div>
       <div class="switch"><input type="checkbox" id="bfb-debug"> 调试模式（控制台逐卡打印拦截 / 放行原因；并在「工具 → 运行自检」里记录耗时）</div>
-      <div class="hint">所有开关与规则均<b>即时生效</b>，无需保存。<b>审查模式</b>与<b>折叠模式</b>都会让拦截层停止在数据层删项（否则你只会看到一部分被折叠、另一部分凭空消失），代价是失去「从头就不出现」的无闪烁效果，切换后建议<b>刷新页面</b>。如需让视频真正从推荐流中消失，请使用<b>拉黑</b>。</div>`;
+      <div class="hint">所有开关与规则<b>即时生效</b>，无需保存。<b>审查</b>与<b>折叠</b>模式会让拦截层停止在数据层删项（否则你只会看到一部分被折叠、另一部分凭空消失），切换后建议刷新页面。想让视频真正从推荐流消失请用<b>拉黑</b>。</div>`;
       host.appendChild(sw);
       bindControl(sw, "bfb-enabled", CONFIG, "enabled", {
         after: () => {
@@ -4046,7 +4050,7 @@
       <div class="switch"><input type="checkbox" id="bfb-ad"> 屏蔽广告 / 推广卡片</div>
       <div class="switch"><input type="checkbox" id="bfb-live"> 屏蔽信息流中的直播推荐卡</div>
       <div class="switch"><input type="checkbox" id="bfb-hotsearch"> 屏蔽搜索框热搜词</div>
-      <div class="hint">广告由脚本自动识别，偶有误差，可在下方「屏蔽记录」核对实际拦截的内容。直播卡指首页与动态中指向直播间的推荐卡。</div>`;
+      <div class="hint">广告为自动识别，偶有误差，可在「屏蔽记录」核对。直播卡指信息流里指向直播间的推荐卡。</div>`;
       host.appendChild(ct);
       bindControl(ct, "bfb-ad", CONFIG, "hideAd", { after: rescanAfterRuleChange });
       bindControl(ct, "bfb-live", CONFIG, "hideLiveCard", { after: rescanAfterRuleChange });
@@ -4094,7 +4098,7 @@
       <div class="switch" style="margin-top:4px;font-weight:400">播放量低于 <input type="number" id="bfb-minviews" min="0" step="0.1" style="width:64px"> 万则屏蔽（0 为不启用）</div>
       <div class="switch" style="margin-top:8px;font-weight:400">时长　最短 <input type="number" id="bfb-dmin" min="0" style="width:64px"> 秒　最长 <input type="number" id="bfb-dmax" min="0" style="width:64px"> 秒</div>
       <div class="switch" style="margin-top:8px;font-weight:400">营销号：点赞率低于 <input type="number" id="bfb-spamratio" min="0" max="100" step="0.1" style="width:56px"> % 且播放量≥ <input type="number" id="bfb-spamviews" min="0" step="1" style="width:56px"> 万则屏蔽</div>
-      <div class="hint">填 0 表示该项不启用。营销号、搬运号常表现为「高播放、极低赞」。⚠ 点赞率<b>仅在接口返回点赞数时生效（主要为首页推荐流）</b>，其余卡片会自动跳过此项。</div>`;
+      <div class="hint">填 0 = 不启用。营销号常表现为「高播放、极低赞」；点赞率仅在接口返回点赞数时生效，其余卡片自动跳过。</div>`;
       host.appendChild(num);
       bindControl(num, "bfb-minviews", CONFIG.block, "minViews", { number: true, after: rescanAfterRuleChange });
       bindControl(num, "bfb-dmin", CONFIG.block, "minDuration", { number: true, int: true, after: rescanAfterRuleChange });
@@ -4105,8 +4109,7 @@
       feed.className = "sec";
       feed.innerHTML = `<label>信息流加载</label>
       <div class="switch"><input type="checkbox" id="bfb-boost"> 增大首页推荐每批加载数量</div>
-      <div class="hint">拦截层会删除命中项，开启后每批多取一些视频，删除后信息流更饱满。下次加载或刷新生效。
-      ⚠ B 站的推荐接口大多已带 <b>WBI 签名</b>（签名覆盖全部请求参数，改动会被判为校验失败），这类接口上本功能<b>不会生效</b>——脚本会跳过改写而不是把请求改坏，具体次数见「工具 → 🩺 运行自检」。</div>`;
+      <div class="hint">每批多取一些视频，删除命中项后信息流更饱满，下次加载生效。<br>⚠ B 站推荐接口大多已带 <b>WBI 签名</b>（签名覆盖全部参数），这类接口上本功能<b>不会生效</b>——脚本跳过改写而不是把请求改坏。</div>`;
       host.appendChild(feed);
       bindControl(feed, "bfb-boost", CONFIG, "boostFeedLoad");
       const api = document.createElement("div");
@@ -4114,7 +4117,7 @@
       api.innerHTML = `
       <label>🛰 精确过滤</label>
       <div class="switch"><input type="checkbox" id="bfb-api"> <b>启用精确过滤</b></div>
-      <div class="hint">开启后会按需读取视频标签、UP 简介等数据来判断，命中时卡片会略有延迟才被隐藏；不开启则完全不联网。</div>
+      <div class="hint">按需读取视频标签、UP 简介等数据来判断，命中时会略有延迟；不开启则完全不联网。</div>
       <div id="bfb-api-body" style="margin-top:6px">
         <div class="switch"><input type="checkbox" id="bfb-charging"> 屏蔽充电专属视频</div>
       </div>`;
@@ -4144,7 +4147,7 @@
       cmt.innerHTML = `
       <label>💬 评论区过滤</label>
       <div class="switch"><input type="checkbox" id="bfb-cmt"> <b>启用评论区过滤</b></div>
-      <div class="hint">读取评论数据后隐藏命中的评论，仅在含评论的页面（播放页、动态、空间等）生效。以下规则与视频黑名单相互独立。</div>
+      <div class="hint">仅在含评论的页面生效；以下规则与视频黑名单相互独立。</div>
       <div id="bfb-cmt-body" style="margin-top:6px">
         <div class="switch" style="font-weight:400">评论者等级低于 <input type="number" id="bfb-cmt-level" min="0" max="6" style="width:56px"> 级则隐藏（0=不启用）</div>
         <div class="switch"><input type="checkbox" id="bfb-cmt-noface"> 隐藏 默认头像且非会员（疑似小号、水军）</div>
@@ -4337,7 +4340,7 @@
       io.className = "sec";
       io.innerHTML = `<label>规则配置导入 / 导出（备份、分享给他人）</label>
       <div class="toolbar"><button class="act" id="bfb-export">⬇ 导出为文件</button><button class="act ghost" id="bfb-import">⬆ 从文件导入</button><button class="act ghost" id="bfb-export-sub">📤 导出为订阅名单</button></div>
-      <div class="hint">导出你的全部过滤规则与开关（不含统计、缓存、个人偏好）。导入时规则列表取<b>并集</b>（不会丢失现有规则），开关以导入值为准。<br>「导出为订阅名单」生成的是<b>订阅格式</b>文件（只含黑名单的 7 个可订阅维度）：传到 GitHub raw / Gist 之类的公开 URL，别人在「规则订阅」里填地址就能订阅你的名单并自动更新。</div>`;
+      <div class="hint">导出全部规则与开关（不含统计与个人偏好）；导入时规则取<b>并集</b>，开关以导入值为准。<br>「导出为订阅名单」生成订阅格式文件——传到公开 URL，别人填进「规则订阅」即可订阅并自动更新。</div>`;
       host.appendChild(io);
       q(io, "#bfb-export").onclick = () => {
         const blob = new Blob([exportConfig()], { type: "application/json" });
@@ -4409,7 +4412,7 @@
       const sec = document.createElement("div");
       sec.className = "sec";
       sec.innerHTML = `<label>🗂 配置备份（自动，最近 5 份）</label>
-      <div class="hint">脚本升级前、以及规则条数发生骤降时会自动存一份，供出岔子时回滚。这是本地兜底，<b>不能替代</b>「⬇ 导出为文件」——存储被整个清掉时它也会一起没。</div>
+      <div class="hint">升级前、规则条数骤降前会自动存一份，供出岔子时回滚。本地兜底，<b>不能替代</b>「导出为文件」。</div>
       <div id="bfb-bk-list" style="margin-top:6px"></div>`;
       host.appendChild(sec);
       const listEl = q(sec, "#bfb-bk-list");
@@ -4505,7 +4508,7 @@
         <button class="act ghost" id="bfb-list-block" style="color:#e74c3c">⛔ 拉黑（写账号黑名单）</button>
         <button class="act ghost" id="bfb-list-stop" style="display:none;color:#e67e22">⏹ 停止</button>
       </div>
-      <div class="hint">「⬇ 从账号黑名单导回」把你 B 站账号里已拉黑的人重新填进本地名单（账号那份才是权威，本地这份只是镜像，丢了随时可以这样重建）。「仅屏蔽」只在本地隐藏；「拉黑」会写入账号黑名单（限速执行、触发风控自动续传、<b>不可一键撤销</b>、执行前确认）。仅有名称、无 UID 的条目将降级为本地屏蔽。</div>
+      <div class="hint">「仅屏蔽」只在本地隐藏；「拉黑」会写入账号黑名单，<b>不可一键撤销</b>。「从账号黑名单导回」把账号里已拉黑的人重新填进本地名单——账号那份才是权威。仅有名称无 UID 的条目降级为本地屏蔽。</div>
       <div id="bfb-list-status" class="stat" style="margin-top:6px;min-height:1.2em"></div>`;
       host.appendChild(listSec);
       const listTa = q(listSec, "#bfb-list-input");
@@ -4668,7 +4671,7 @@
       subSec.innerHTML = `<label>规则订阅（从 URL 自动拉取并合并黑名单）</label>
       <div class="addrow"><input type="text" id="bfb-sub-url" placeholder="订阅 URL（JSON 或文本，如 GitHub raw）"></div>
       <div class="addrow" style="margin-top:6px"><input type="text" id="bfb-sub-name" placeholder="备注名（可选）"><button id="bfb-sub-add">添加</button></div>
-      <div class="hint">订阅只并入<b>黑名单</b>（UID、UP 主名、关键词、分区、标签、简介、BV 号），不影响你的白名单与开关；启用后按声明周期自动刷新。自建 / 共享名单见仓库 examples/ 模板。</div>
+      <div class="hint">订阅只并入<b>黑名单</b>的 7 个维度，不影响白名单与开关，按声明周期自动刷新。想自己维护一份，用「工具 → 导出为订阅名单」。</div>
       <div class="toolbar" style="margin-top:8px"><button class="act ghost" id="bfb-sub-refresh">🔄 全部刷新</button></div>
       <div id="bfb-sub-list" style="margin-top:8px"></div>`;
       host.appendChild(subSec);
@@ -5302,7 +5305,7 @@ ${r.line}`, {
     finder.className = "bfb-finder";
     const fInput = document.createElement("input");
     fInput.type = "text";
-    fInput.placeholder = "搜索设置项（如：营销、评论等级、备份）";
+    fInput.placeholder = "搜索设置项…";
     const fClear = document.createElement("button");
     fClear.textContent = "✕";
     fClear.title = "清除";
@@ -5332,10 +5335,12 @@ ${r.line}`, {
       applyFinder();
       const kw = fInput.value.trim();
       fStat.textContent = kw ? total ? `${total} 项` : "无匹配" : "";
+      fClear.style.display = kw ? "" : "none";
       tabBar.style.display = kw ? "none" : "";
       p.scrollTop = 0;
     };
     fInput.value = finderQuery;
+    fClear.style.display = finderQuery ? "" : "none";
     fInput.addEventListener("input", () => {
       finderQuery = fInput.value;
       runFinder();
