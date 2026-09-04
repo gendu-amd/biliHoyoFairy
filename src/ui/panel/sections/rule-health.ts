@@ -14,6 +14,9 @@ import { q } from '../ctx';
 import type { PanelSection } from '../ctx';
 
 const HOT_N = 5;
+// 死规则一次最多列这么多。从账号黑名单导回几千个 UID 后，观察期一到它们大多会被判成
+// 「从未命中」——全列出来既卡面板，也没人会去逐条看。列一批 + 说清还有多少，比列完更有用。
+const DEAD_N = 50;
 
 export const ruleHealthSection: PanelSection = {
   tab: 'tools',
@@ -84,7 +87,7 @@ export const ruleHealthSection: PanelSection = {
       deadEl.appendChild(title);
       const list = document.createElement('div');
       list.style.cssText = 'max-height:180px;overflow:auto;overscroll-behavior:contain;margin-top:4px;font-size:12px';
-      h.dead.forEach((r) => {
+      h.dead.slice(0, DEAD_N).forEach((r) => {
         const row = document.createElement('div');
         row.className = 'log-row';
         const tx = document.createElement('span');
@@ -131,6 +134,12 @@ export const ruleHealthSection: PanelSection = {
         row.appendChild(del);
         list.appendChild(row);
       });
+      if (h.dead.length > DEAD_N) {
+        const more = document.createElement('div');
+        more.className = 'hint';
+        more.textContent = `⋯ 另有 ${h.dead.length - DEAD_N} 条未列出（共 ${h.dead.length} 条）。UID 类规则数量大时这很正常——它们只是还没轮到被推荐，不代表写错了。`;
+        list.appendChild(more);
+      }
       deadEl.appendChild(list);
     };
 

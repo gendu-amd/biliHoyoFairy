@@ -61,6 +61,13 @@ export const SAVE_DEBOUNCE_MS = 1200; // 配置存盘防抖
 export const SYNC_COALESCE_MS = 300;
 export const STARTUP_SUMMARY_MS = 3500; // 首屏稳定后弹「本次拦截」汇总 + 跑运行自检的延时
 export const LIST_SEARCH_MIN = 8; // 名单超过这么多条才显示搜索框（三五条时肉眼就够，多一个框只是噪音）
+// 一次最多渲染多少个 chip。名单可能有几千条（从账号黑名单导回时尤其），全量建 DOM 会让面板
+// 卡住好几秒。超出的部分不渲染，但**批量操作仍作用于全部筛选结果**，且在提示里写明——
+// 悄悄只显示一部分、批量却动了全部，才是真正会出事的组合。
+export const CHIP_RENDER_MAX = 300;
+// 每次渲染最多为多少个缺名字的 UID 去请求 UP 名。不限的话，打开一次面板就会为几百个 UID
+// 各发一个请求——纯展示需求换来一轮风控，不值。剩下的照常显示 UID，搜索时也搜得到数字。
+export const NAME_RESOLVE_MAX = 20;
 
 // B 站风控返回码：触发后全局退避保护账号（校验失败/被拦截/请求过频）。
 export const RISK_CODES = new Set<number>([-352, -412, -509, -799]);

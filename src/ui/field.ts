@@ -7,7 +7,7 @@ import { fetchCard } from '../api';
 import { toast } from './toast';
 import { confirmModal } from './confirm';
 import { filterBy } from './listfilter';
-import { LIST_SEARCH_MIN } from '../constants';
+import { CHIP_RENDER_MAX, LIST_SEARCH_MIN, NAME_RESOLVE_MAX } from '../constants';
 
 /** 名单里的一条。key 是勾选集的身份（UP 字段把名称与 UID 放在同一列，故加 n:/u: 前缀区分）。 */
 export interface FieldEntry {
@@ -42,6 +42,10 @@ export interface ListFieldOpts {
 
 // 记住每个字段的折叠状态（renderPanel 重建时保留）。
 const collapseState: Record<string, boolean> = {};
+
+// 本次渲染还能为多少个缺名字的 UID 发请求。renderChips 每次开头重置；upModel.decorate 消费。
+// 放模块级而不是穿参：decorate 的签名是 FieldModel 的公共契约，为一个内部限流去改它不划算。
+let nameBudget = 0;
 
 export function renderListField(host: HTMLElement, o: ListFieldOpts): void {
   const model = o.model;
@@ -206,7 +210,12 @@ export function renderListField(host: HTMLElement, o: ListFieldOpts): void {
       renderBar();
       return;
     }
-    list.forEach((entry) => {
+    // 渲染上限：几千条 chip 全量建 DOM 会把面板卡死好几秒。截断的是**显示**，不是数据——
+    // 批量操作照旧作用于全部筛选结果（见下面的提示文案），不能让「看到 300 条、删掉 3000 条」
+    // 这种事发生在用户没被告知的情况下。
+    nameBudget = NAME_RESOLVE_MAX;
+    const shown = list.slice(0, CHIP_RENDER_MAX);
+    shown.forEach((entry) => {
       const chip = el('span', 'chip' + (manage && selected.has(entry.key) ? ' sel' : ''));
       const txt = document.createElement('span');
       model.decorate(entry, chip, txt, renderChips);
@@ -258,6 +267,11 @@ export function renderListField(host: HTMLElement, o: ListFieldOpts): void {
       }
       chips.appendChild(chip);
     });
+    if (list.length > shown.length) {
+      const more = el('div', 'empty');
+      more.textContent = `⋯ 还有 ${list.length - shown.length} 条未显示（共 ${list.length} 条）。用上面的搜索框查找具体条目；批量操作仍作用于全部 ${list.length} 条。`;
+      chips.appendChild(more);
+    }
     renderBar();
   };
   // 改搜索词就清空勾选，保证「勾选集 ⊆ 屏幕上看得见的」这条不变式。否则用户搜 A 勾三条、
@@ -361,8 +375,9 @@ export function upModel(names: string[], uids: string[], namePath?: string, uidP
       const nm = CONFIG.uidNames[String(entry.value)];
       txt.textContent = nm || entry.value;
       chip.classList.add('uidchip');
-      chip.title = 'UID ' + entry.value + (nm ? '' : '（正在解析名称…）');
-      if (!nm) {
+      chip.title = 'UID ' + entry.value + (nm ? '' : nameBudget > 0 ? '（正在解析名称…）' : '（名单过长，本次未解析名称）');
+      if (!nm && nameBudget > 0) {
+        nameBudget--;
         fetchCard(entry.value, (d) => {
           const name = d && d.card && d.card.name;
           if (name) {

@@ -79,6 +79,8 @@
   var SYNC_COALESCE_MS = 300;
   var STARTUP_SUMMARY_MS = 3500;
   var LIST_SEARCH_MIN = 8;
+  var CHIP_RENDER_MAX = 300;
+  var NAME_RESOLVE_MAX = 20;
   var RISK_CODES = /* @__PURE__ */ new Set([-352, -412, -509, -799]);
 
   // src/config.ts
@@ -2647,19 +2649,19 @@
     cb?.(false);
   }
   var BLACKS_PAGE_SIZE = 50;
-  var BLACKS_MAX_PAGES = 40;
+  var BLACKS_MAX_PAGES = 400;
   function importAccountBlacklist(cb, onProgress) {
     const uids = [];
     const names = {};
     let total = 0;
-    const finish = (cancelled) => {
+    const finish = (truncated) => {
       const added = pushUnique(CONFIG.block.uids, uids);
       for (const uid of Object.keys(names)) setUidName(uid, names[uid]);
       if (added || Object.keys(names).length) {
         saveConfig();
         emitRulesChanged();
       }
-      cb({ total, added, cancelled });
+      cb({ total, fetched: uids.length, added, truncated });
     };
     const page = (pn) => {
       if (pn > BLACKS_MAX_PAGES) return finish(true);
@@ -3354,6 +3356,7 @@
 
   // src/ui/field.ts
   var collapseState = {};
+  var nameBudget = 0;
   function renderListField(host, o) {
     const model = o.model;
     const el = (t, c) => {
@@ -3504,7 +3507,9 @@
         renderBar();
         return;
       }
-      list.forEach((entry) => {
+      nameBudget = NAME_RESOLVE_MAX;
+      const shown = list.slice(0, CHIP_RENDER_MAX);
+      shown.forEach((entry) => {
         const chip = el("span", "chip" + (manage && selected.has(entry.key) ? " sel" : ""));
         const txt = document.createElement("span");
         model.decorate(entry, chip, txt, renderChips);
@@ -3552,6 +3557,11 @@
         }
         chips.appendChild(chip);
       });
+      if (list.length > shown.length) {
+        const more = el("div", "empty");
+        more.textContent = `⋯ 还有 ${list.length - shown.length} 条未显示（共 ${list.length} 条）。用上面的搜索框查找具体条目；批量操作仍作用于全部 ${list.length} 条。`;
+        chips.appendChild(more);
+      }
       renderBar();
     };
     const setQuery = (v) => {
@@ -3644,8 +3654,9 @@
         const nm = CONFIG.uidNames[String(entry.value)];
         txt.textContent = nm || entry.value;
         chip.classList.add("uidchip");
-        chip.title = "UID " + entry.value + (nm ? "" : "（正在解析名称…）");
-        if (!nm) {
+        chip.title = "UID " + entry.value + (nm ? "" : nameBudget > 0 ? "（正在解析名称…）" : "（名单过长，本次未解析名称）");
+        if (!nm && nameBudget > 0) {
+          nameBudget--;
           fetchCard(entry.value, (d) => {
             const name = d && d.card && d.card.name;
             if (name) {
@@ -4248,8 +4259,9 @@
               toast("读取账号黑名单失败（未登录 / 网络 / 风控）", "error");
               return;
             }
-            listStatus.textContent = `✅ 账号黑名单共 ${r.total} 人，本地新增 ${r.added} 条${r.added < r.total ? `（其余 ${r.total - r.added} 条本地已有）` : ""}`;
-            toast(r.added ? `已从账号黑名单导回 ${r.added} 条` : "本地名单已与账号黑名单一致", "success");
+            const dup = r.fetched - r.added;
+            listStatus.textContent = `✅ 账号黑名单共 ${r.total} 人，本次读到 ${r.fetched} 条，本地新增 ${r.added} 条` + (dup > 0 ? `（${dup} 条本地已有）` : "") + (r.truncated ? " ⚠ 达到单次读取上限，可能未读完，请再点一次继续" : "");
+            toast(r.added ? `已从账号黑名单导回 ${r.added} 条` : "本地名单已与账号黑名单一致", r.truncated ? "warn" : "success");
             ctx.rerender();
           },
           (done, total) => {
@@ -4616,6 +4628,7 @@
 
   // src/ui/panel/sections/rule-health.ts
   var HOT_N = 5;
+  var DEAD_N = 50;
   var ruleHealthSection = {
     tab: "tools",
     render(host, ctx) {
@@ -4669,7 +4682,7 @@
         deadEl.appendChild(title);
         const list = document.createElement("div");
         list.style.cssText = "max-height:180px;overflow:auto;overscroll-behavior:contain;margin-top:4px;font-size:12px";
-        h.dead.forEach((r) => {
+        h.dead.slice(0, DEAD_N).forEach((r) => {
           const row = document.createElement("div");
           row.className = "log-row";
           const tx = document.createElement("span");
@@ -4715,6 +4728,12 @@ ${r.line}`, {
           row.appendChild(del);
           list.appendChild(row);
         });
+        if (h.dead.length > DEAD_N) {
+          const more = document.createElement("div");
+          more.className = "hint";
+          more.textContent = `⋯ 另有 ${h.dead.length - DEAD_N} 条未列出（共 ${h.dead.length} 条）。UID 类规则数量大时这很正常——它们只是还没轮到被推荐，不代表写错了。`;
+          list.appendChild(more);
+        }
         deadEl.appendChild(list);
       };
       q(sec, "#bfb-rh-refresh").onclick = render;

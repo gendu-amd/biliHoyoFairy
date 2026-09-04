@@ -104,8 +104,14 @@ export const nameListSection: PanelSection = {
             toast('读取账号黑名单失败（未登录 / 网络 / 风控）', 'error');
             return;
           }
-          listStatus.textContent = `✅ 账号黑名单共 ${r.total} 人，本地新增 ${r.added} 条${r.added < r.total ? `（其余 ${r.total - r.added} 条本地已有）` : ''}`;
-          toast(r.added ? `已从账号黑名单导回 ${r.added} 条` : '本地名单已与账号黑名单一致', 'success');
+          // 如实拆成三个数：账号里有多少、这次读到多少、本地新增多少。合并成一句话看着简洁，
+          // 但「读到的比账号里少」这种情况就被抹掉了，而那恰恰是最需要被看见的。
+          const dup = r.fetched - r.added;
+          listStatus.textContent =
+            `✅ 账号黑名单共 ${r.total} 人，本次读到 ${r.fetched} 条，本地新增 ${r.added} 条` +
+            (dup > 0 ? `（${dup} 条本地已有）` : '') +
+            (r.truncated ? ' ⚠ 达到单次读取上限，可能未读完，请再点一次继续' : '');
+          toast(r.added ? `已从账号黑名单导回 ${r.added} 条` : '本地名单已与账号黑名单一致', r.truncated ? 'warn' : 'success');
           ctx.rerender();
         },
         (done, total) => {

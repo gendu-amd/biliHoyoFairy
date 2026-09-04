@@ -333,21 +333,24 @@ export function blacklistUp(info: BlockSource, cb?: (ok: boolean) => void, cardE
 // 有了这条路，任何时候都能从权威源把名单重建出来，不必手工照着网页一个个抄。
 // 顺带把 UP 名也存进 uidNames：光有一串数字，用户在面板里根本认不出自己拉黑过谁。
 export interface ImportBlacksResult {
-  total: number; // 账号黑名单里的总人数
+  total: number; // 账号黑名单里的总人数（接口自报）
+  fetched: number; // 实际读到的条数
   added: number; // 本地新增的条数（已存在的不重复计）
-  cancelled: boolean;
+  truncated: boolean; // 撞上页数上限提前停了——必须如实告诉用户，否则少导一半也看不出来
 }
 
 const BLACKS_PAGE_SIZE = 50;
-// 页数上限：账号黑名单本身有总量上限，这里只是防「接口一直说 has_more」时死循环。
-const BLACKS_MAX_PAGES = 40;
+// 页数上限：纯粹防「接口一直返回满页」时死循环，不是业务限制，所以要开得比任何真实名单都大。
+// 上一版设成 40（= 2000 人）并把停下来报成 cancelled——名单上千的人会被静默截断，
+// 而界面上只显示「共 N 人，新增 M 条」，看不出少了一半。宁可多转几圈也不能悄悄少导。
+const BLACKS_MAX_PAGES = 400;
 
 export function importAccountBlacklist(cb: (r: ImportBlacksResult | null) => void, onProgress?: (done: number, total: number) => void): void {
   const uids: string[] = [];
   const names: Record<string, string> = {};
   let total = 0;
 
-  const finish = (cancelled: boolean) => {
+  const finish = (truncated: boolean) => {
     // 一次性写入 + 一次重扫：逐页写会让大名单期间页面反复重扫。
     const added = pushUnique(CONFIG.block.uids, uids);
     for (const uid of Object.keys(names)) setUidName(uid, names[uid]);
@@ -355,7 +358,7 @@ export function importAccountBlacklist(cb: (r: ImportBlacksResult | null) => voi
       saveConfig();
       emitRulesChanged();
     }
-    cb({ total, added, cancelled });
+    cb({ total, fetched: uids.length, added, truncated });
   };
 
   const page = (pn: number) => {
