@@ -22,51 +22,12 @@ const countedEls = new WeakSet<Element>(); // DOM 兜底「已计数」去重
 // 撤销 DOM 层对某卡的隐藏 / 审查标记（规则变更后重扫时调用）。
 function clearVisual(card: HTMLElement) {
   card.style.display = '';
-  // 折叠状态随规则变更一并撤掉，否则改了规则会留下一排孤儿灰条。
-  for (const h of [cellOf(card) as HTMLElement, card]) {
-    h.classList.remove('bfb-collapsed');
-    const p = h.querySelector(':scope > .bfb-card-ph');
-    if (p) p.remove();
-  }
   card.classList.remove('bfb-review');
   const t = card.querySelector(':scope > .bfb-tag');
   if (t) t.remove();
   card.removeAttribute(ATTR_BLOCKED);
   const cell = cellOf(card) as HTMLElement;
   if (cell !== card) cell.style.display = '';
-}
-
-// 折叠模式：命中的卡收成一行灰条，可展开看一眼、再点收起。与审查模式的区别是——
-// 审查模式是「核对期临时用、卡片照常占位」，折叠是「长期这么用、只占一行」。
-// 评论区早就是这个模式，卡片这边此前只有「隐藏 / 审查标记」两态。
-function collapseCard(card: HTMLElement, reason: string, info: CardInfo) {
-  const cell = cellOf(card) as HTMLElement;
-  const host = isUnsafeHideTarget(cell) ? card : cell;
-  if (host.querySelector(':scope > .bfb-card-ph')) return; // 已折叠
-  // 灰条放在格子**内部**，靠一个类隐藏格子里原有的内容。
-  // 曾经是插成格子的同级兄弟——而首页 .container 是 display:grid，那样灰条自己会占掉一个格子：
-  // 折叠时占 1 格、展开时灰条 + 卡片占 2 格，看起来就像动了两张卡。
-  const ph = document.createElement('div');
-  ph.className = 'bfb-card-ph';
-  const txt = document.createElement('span');
-  txt.className = 'tx';
-  const act = document.createElement('span');
-  act.className = 'ac';
-  ph.append(txt, act);
-  const apply = () => {
-    const open = !host.classList.contains('bfb-collapsed');
-    txt.textContent = (open ? '已展开 · ' : '已折叠 · ') + reason + (info.title ? ' · ' + info.title.slice(0, 30) : '');
-    act.textContent = open ? '收起 ▴' : '展开 ▾';
-  };
-  ph.onclick = () => {
-    host.classList.toggle('bfb-collapsed');
-    apply();
-  };
-  host.classList.add('bfb-collapsed');
-  host.insertBefore(ph, host.firstChild);
-  host.style.display = '';
-  card.style.display = '';
-  apply();
 }
 
 // 审查模式：不隐藏，给卡片打醒目标记 + 原因 + 就地「放行」按钮，便于核对防误伤。
@@ -101,8 +62,6 @@ function markCard(card: HTMLElement, reason: string, info: CardInfo) {
 export function blockVideo(card: HTMLElement, reason: string, info: CardInfo): void {
   if (CONFIG.reviewMode) {
     markCard(card, reason, info);
-  } else if (CONFIG.collapseCards) {
-    collapseCard(card, reason, info);
   } else {
     const cell = cellOf(card) as HTMLElement;
     if (!isUnsafeHideTarget(cell)) cell.style.display = 'none';

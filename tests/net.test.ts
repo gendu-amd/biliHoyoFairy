@@ -281,22 +281,3 @@ describe('FEED_HOOKS 注册表本身', () => {
   });
 });
 
-// 折叠模式与审查模式同理：数据层不删项，交给 DOM 层收成灰条。
-// 不这么做的话，用户会看到「一部分折叠、一部分凭空消失」——而这两个模式的全部意义就是让他看见。
-describe('折叠模式：数据层不删项', () => {
-  it('开启折叠模式时一项不删', () => {
-    CONFIG.block.keywords.push('原神');
-    CONFIG.collapseCards = true;
-    rebuildRules();
-    const json = clone(rcmd);
-    expect(filterFeedJson(URLS.rcmd, json)).toBe(0);
-    expect(json.data.item.length).toBe(3);
-  });
-
-  it('关闭后照常删项（默认档不受影响）', () => {
-    CONFIG.block.keywords.push('原神');
-    CONFIG.collapseCards = false;
-    rebuildRules();
-    expect(filterFeedJson(URLS.rcmd, clone(rcmd))).toBe(1);
-  });
-});
