@@ -16,12 +16,13 @@ export const baseSection: PanelSection = {
     sw.innerHTML = `
       <div class="switch"><input type="checkbox" id="bfb-enabled"> 启用拦截</div>
       <div class="switch"><input type="checkbox" id="bfb-review"> 🔍 审查模式（不隐藏，仅标记被拦视频并提供就地放行，便于核对）</div>
+      <div class="switch"><input type="checkbox" id="bfb-collapse-cards"> 📎 折叠模式（命中的视频收成一行灰条，可展开查看，而非直接消失）</div>
       <div class="switch"><input type="checkbox" id="bfb-rclick"> 右键卡片弹出菜单（屏蔽、拉黑、加入白名单）</div>
       <div class="switch"><input type="checkbox" id="bfb-hoverbtn"> 悬停卡片显示快捷「拉黑 / 不看这个」按钮</div>
       <div class="switch"><input type="checkbox" id="bfb-collab"> 联合投稿一并拉黑合作者</div>
       <div class="switch"><input type="checkbox" id="bfb-fuzzy"> 反绕过模糊匹配（「原 神」「原.神」同样拦截；隐形字符始终拦截）</div>
       <div class="switch"><input type="checkbox" id="bfb-debug"> 调试模式（控制台逐卡打印拦截 / 放行原因；并在「工具 → 运行自检」里记录耗时）</div>
-      <div class="hint">所有开关与规则均<b>即时生效</b>，无需保存。切换<b>审查模式</b>后建议<b>刷新页面</b>以核对完整结果。如需让视频真正从推荐流中消失，请使用<b>拉黑</b>。</div>`;
+      <div class="hint">所有开关与规则均<b>即时生效</b>，无需保存。<b>审查模式</b>与<b>折叠模式</b>都会让拦截层停止在数据层删项（否则你只会看到一部分被折叠、另一部分凭空消失），代价是失去「从头就不出现」的无闪烁效果，切换后建议<b>刷新页面</b>。如需让视频真正从推荐流中消失，请使用<b>拉黑</b>。</div>`;
     host.appendChild(sw);
     bindControl(sw, 'bfb-enabled', CONFIG, 'enabled', {
       after: () => {
@@ -30,6 +31,7 @@ export const baseSection: PanelSection = {
       },
     });
     bindControl(sw, 'bfb-review', CONFIG, 'reviewMode', { after: rescanAfterRuleChange });
+    bindControl(sw, 'bfb-collapse-cards', CONFIG, 'collapseCards', { after: rescanAfterRuleChange });
     bindControl(sw, 'bfb-rclick', CONFIG, 'rightClickBlock');
     bindControl(sw, 'bfb-hoverbtn', CONFIG, 'cardHoverBtn', { after: hideHoverBtn });
     bindControl(sw, 'bfb-collab', CONFIG, 'blacklistCollab');

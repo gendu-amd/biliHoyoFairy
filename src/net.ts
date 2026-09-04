@@ -73,8 +73,10 @@ export function filterFeedJson(url: string, json: any): number {
   // B 站改字段名时 feedParsed 会停在 0，健康检查据此报警。
   health.feedParsed++;
   health.feedItems += arr.length;
-  // 审查模式下不在数据层删项，让视频照常渲染，交给 DOM 层标记，便于核对
-  if (!CONFIG.enabled || CONFIG.reviewMode) return 0;
+  // 审查模式与折叠模式都不在数据层删项：这两个模式的意义就是「让你看见拦了什么」，
+  // 数据层删掉的项根本到不了 DOM，只折叠 DOM 层命中的会变成「一部分折叠、一部分凭空消失」。
+  // 代价是这两个模式下失去拦截层的无闪烁优势，所以它们都不是默认档。
+  if (!CONFIG.enabled || CONFIG.reviewMode || CONFIG.collapseCards) return 0;
   let removed = 0;
   for (let i = arr.length - 1; i >= 0; i--) {
     try {

@@ -405,6 +405,8 @@
     // 充电专属视频（API）
     boostFeedLoad: false,
     // 增大首页推荐每次请求的视频数（拦截层删项后仍保持信息流饱满）
+    collapseCards: false,
+    // 命中后折叠成一行灰条而非隐藏（想知道自己屏蔽了什么的人用）
     // —— 评论区过滤（独立一套，读评论组件 __data；仅在有评论的页面生效）——
     comment: {
       enabled: false,
@@ -1540,7 +1542,7 @@
     if (!arr || !arr.length) return 0;
     health.feedParsed++;
     health.feedItems += arr.length;
-    if (!CONFIG.enabled || CONFIG.reviewMode) return 0;
+    if (!CONFIG.enabled || CONFIG.reviewMode || CONFIG.collapseCards) return 0;
     let removed = 0;
     for (let i = arr.length - 1; i >= 0; i--) {
       try {
@@ -2359,12 +2361,44 @@
   var countedEls = /* @__PURE__ */ new WeakSet();
   function clearVisual(card) {
     card.style.display = "";
+    const cell0 = cellOf(card);
+    for (const h of [cell0, card]) {
+      const p = h.previousElementSibling;
+      if (p && p.classList && p.classList.contains("bfb-card-ph")) p.remove();
+    }
     card.classList.remove("bfb-review");
     const t = card.querySelector(":scope > .bfb-tag");
     if (t) t.remove();
     card.removeAttribute(ATTR_BLOCKED);
     const cell = cellOf(card);
     if (cell !== card) cell.style.display = "";
+  }
+  function collapseCard(card, reason, info) {
+    const cell = cellOf(card);
+    const host = isUnsafeHideTarget(cell) ? card : cell;
+    let ph = host.previousElementSibling;
+    if (!ph || !ph.classList || !ph.classList.contains("bfb-card-ph")) {
+      ph = document.createElement("div");
+      ph.className = "bfb-card-ph";
+      const txt = document.createElement("span");
+      txt.className = "tx";
+      const act = document.createElement("span");
+      act.className = "ac";
+      ph.append(txt, act);
+      let open = false;
+      const apply = () => {
+        txt.textContent = (open ? "已展开 · " : "已折叠 · ") + reason + (info.title ? " · " + info.title.slice(0, 30) : "");
+        act.textContent = open ? "收起 ▴" : "展开 ▾";
+        host.style.display = open ? "" : "none";
+        if (host !== card) card.style.display = "";
+      };
+      ph.onclick = () => {
+        open = !open;
+        apply();
+      };
+      host.parentNode?.insertBefore(ph, host);
+      apply();
+    }
   }
   function markCard(card, reason, info) {
     card.classList.add("bfb-review");
@@ -2395,6 +2429,8 @@
   function blockVideo(card, reason, info) {
     if (CONFIG.reviewMode) {
       markCard(card, reason, info);
+    } else if (CONFIG.collapseCards) {
+      collapseCard(card, reason, info);
     } else {
       const cell = cellOf(card);
       if (!isUnsafeHideTarget(cell)) cell.style.display = "none";
@@ -3336,6 +3372,9 @@
     #bfb-badge{position:fixed;right:18px;bottom:18px;z-index:99999;background:#fb7299;color:#fff;border-radius:24px;padding:8px 14px;font-size:13px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.2);font-family:system-ui,Arial;user-select:none}
     #bfb-badge.off{background:#999}
     #bfb-badge.warn{background:#e67e22}
+    .bfb-card-ph{display:flex;align-items:center;gap:8px;margin:4px 0;padding:6px 10px;border-radius:8px;background:rgba(251,114,153,.08);border:1px dashed rgba(251,114,153,.45);font-size:12px;color:#9499a0;cursor:pointer;user-select:none;line-height:1.5}
+    .bfb-card-ph .tx{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .bfb-card-ph .ac{color:#fb7299;flex:none}
     #bfb-ctxmenu{position:fixed;z-index:100002;background:#fff;border:1px solid #ffd5e2;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.22);overflow:hidden;min-width:210px;font-family:system-ui,Arial}
     .bfb-ctx-item{padding:10px 14px;font-size:13px;color:#333;cursor:pointer;white-space:nowrap}
     .bfb-ctx-item:hover{background:#fff0f5;color:#fb7299}
@@ -3926,12 +3965,13 @@
       sw.innerHTML = `
       <div class="switch"><input type="checkbox" id="bfb-enabled"> 启用拦截</div>
       <div class="switch"><input type="checkbox" id="bfb-review"> 🔍 审查模式（不隐藏，仅标记被拦视频并提供就地放行，便于核对）</div>
+      <div class="switch"><input type="checkbox" id="bfb-collapse-cards"> 📎 折叠模式（命中的视频收成一行灰条，可展开查看，而非直接消失）</div>
       <div class="switch"><input type="checkbox" id="bfb-rclick"> 右键卡片弹出菜单（屏蔽、拉黑、加入白名单）</div>
       <div class="switch"><input type="checkbox" id="bfb-hoverbtn"> 悬停卡片显示快捷「拉黑 / 不看这个」按钮</div>
       <div class="switch"><input type="checkbox" id="bfb-collab"> 联合投稿一并拉黑合作者</div>
       <div class="switch"><input type="checkbox" id="bfb-fuzzy"> 反绕过模糊匹配（「原 神」「原.神」同样拦截；隐形字符始终拦截）</div>
       <div class="switch"><input type="checkbox" id="bfb-debug"> 调试模式（控制台逐卡打印拦截 / 放行原因；并在「工具 → 运行自检」里记录耗时）</div>
-      <div class="hint">所有开关与规则均<b>即时生效</b>，无需保存。切换<b>审查模式</b>后建议<b>刷新页面</b>以核对完整结果。如需让视频真正从推荐流中消失，请使用<b>拉黑</b>。</div>`;
+      <div class="hint">所有开关与规则均<b>即时生效</b>，无需保存。<b>审查模式</b>与<b>折叠模式</b>都会让拦截层停止在数据层删项（否则你只会看到一部分被折叠、另一部分凭空消失），代价是失去「从头就不出现」的无闪烁效果，切换后建议<b>刷新页面</b>。如需让视频真正从推荐流中消失，请使用<b>拉黑</b>。</div>`;
       host.appendChild(sw);
       bindControl(sw, "bfb-enabled", CONFIG, "enabled", {
         after: () => {
@@ -3940,6 +3980,7 @@
         }
       });
       bindControl(sw, "bfb-review", CONFIG, "reviewMode", { after: rescanAfterRuleChange });
+      bindControl(sw, "bfb-collapse-cards", CONFIG, "collapseCards", { after: rescanAfterRuleChange });
       bindControl(sw, "bfb-rclick", CONFIG, "rightClickBlock");
       bindControl(sw, "bfb-hoverbtn", CONFIG, "cardHoverBtn", { after: hideHoverBtn });
       bindControl(sw, "bfb-collab", CONFIG, "blacklistCollab");

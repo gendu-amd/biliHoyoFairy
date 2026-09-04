@@ -7,6 +7,9 @@
     #bfb-badge{position:fixed;right:18px;bottom:18px;z-index:99999;background:#fb7299;color:#fff;border-radius:24px;padding:8px 14px;font-size:13px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.2);font-family:system-ui,Arial;user-select:none}
     #bfb-badge.off{background:#999}
     #bfb-badge.warn{background:#e67e22}
+    .bfb-card-ph{display:flex;align-items:center;gap:8px;margin:4px 0;padding:6px 10px;border-radius:8px;background:rgba(251,114,153,.08);border:1px dashed rgba(251,114,153,.45);font-size:12px;color:#9499a0;cursor:pointer;user-select:none;line-height:1.5}
+    .bfb-card-ph .tx{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .bfb-card-ph .ac{color:#fb7299;flex:none}
     #bfb-ctxmenu{position:fixed;z-index:100002;background:#fff;border:1px solid #ffd5e2;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.22);overflow:hidden;min-width:210px;font-family:system-ui,Arial}
     .bfb-ctx-item{padding:10px 14px;font-size:13px;color:#333;cursor:pointer;white-space:nowrap}
     .bfb-ctx-item:hover{background:#fff0f5;color:#fb7299}

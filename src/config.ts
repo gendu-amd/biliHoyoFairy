@@ -77,6 +77,8 @@ export interface AppConfig {
   apiFilters: boolean;
   hideCharging: boolean;
   boostFeedLoad: boolean;
+  // 命中后把卡片折叠成一行灰条（可展开/再收起），而不是直接隐藏。评论区早有这个模式。
+  collapseCards: boolean;
   comment: CommentConfig;
   debug: boolean;
   blockedCount: number;
@@ -125,6 +127,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   apiFilters: false, // 精确过滤总开关（关闭时完全不联网）
   hideCharging: false, // 充电专属视频（API）
   boostFeedLoad: false, // 增大首页推荐每次请求的视频数（拦截层删项后仍保持信息流饱满）
+  collapseCards: false, // 命中后折叠成一行灰条而非隐藏（想知道自己屏蔽了什么的人用）
   // —— 评论区过滤（独立一套，读评论组件 __data；仅在有评论的页面生效）——
   comment: {
     enabled: false, // 评论区过滤总开关（关=完全不处理评论）
