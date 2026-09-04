@@ -1,6 +1,7 @@
 // 接口层：缓存 + 小并发限速队列 + 风控熔断。API 取数与批量拉黑共用。
 import { RISK_CODES } from './constants';
-import { CONFIG, scheduleSave, setUidName } from './config';
+import { gmRequest } from './gm';
+import { CONFIG, scheduleStatsSave, setUidName } from './config';
 import { capMapSet } from './util';
 import { logErr } from './logging';
 import { toast } from './ui/toast';
@@ -81,13 +82,8 @@ function apiEnqueue(task: (done: () => void) => void): void {
 }
 
 function gmGet(url: string, cb: ApiCb): void {
-  if (typeof GM_xmlhttpRequest !== 'function') {
-    cb(null);
-    return;
-  }
-  // withCredentials 不在 @types/tampermonkey 的 Request 类型里，但运行期 TM 接受（携带 Cookie）；
-  // 为保持与 v0.0.5 完全一致，保留该字段并对详情对象做一次宽松断言。
-  GM_xmlhttpRequest({
+  // withCredentials（携带 Cookie）由 gm.ts 的类型垫片补上；环境没有 GM_xmlhttpRequest 时它返回 false。
+  const sent = gmRequest({
     method: 'GET',
     url,
     withCredentials: true,
@@ -103,50 +99,91 @@ function gmGet(url: string, cb: ApiCb): void {
     },
     onerror: () => cb(null),
     ontimeout: () => cb(null),
-  } as any);
+  });
+  if (!sent) cb(null);
+}
+
+// 失败的两种性质要分开：把瞬时失败也写进长期缓存的话 cache.has(key) 恒为真，
+// 一次网络抖动就能让一批视频在整个会话内永久拿不到标签/简介——静默且不可恢复。
+//   - code === 0            成功，长期缓存
+//   - code !== 0 且非风控码  服务端的确定性否定（稿件不存在等），结论不会变，长期缓存 null
+//   - 无响应 / 风控码        瞬时失败，不进长期缓存，只压一段冷却后可重试
+// 冷却是必要的：完全不记会让每轮重扫对同一批 key 重发请求。
+const RETRY_AFTER_MS = 30000;
+const COOLDOWN_MAX = 2000;
+// key 带命名空间前缀：view 与 tag 都以 bvid 为键，共用一张表会让一次 view 失败连带压住 tag 请求。
+const cooldown = new Map<string, number>();
+function inCooldown(k: string): boolean {
+  const until = cooldown.get(k);
+  if (until === undefined) return false;
+  if (Date.now() < until) return true;
+  cooldown.delete(k);
+  return false;
+}
+
+// 在途请求表：同 key 的第二次调用挂到第一个的回调队列上，不再重复发。
+// cache 只在响应回来之后才写，所以在那之前来几次就发几次——同屏两张同 UP 的卡、
+// 面板里一批 UID 同时解析名称，都会撞上。
+const inflight = new Map<string, ApiCb[]>();
+
+// 三个取数接口的公共骨架：命中缓存/冷却直接回调，否则入队请求并按上面的分流写缓存。
+function cachedGet(cache: Map<string, any>, cap: number, ns: string, key: string, url: string, pick: (j: any) => any, cb: ApiCb): void {
+  if (!key) return cb(null);
+  if (cache.has(key)) return cb(cache.get(key));
+  if (inCooldown(ns + key)) return cb(null);
+  const flightKey = ns + key;
+  const waiting = inflight.get(flightKey);
+  if (waiting) {
+    waiting.push(cb); // 已有同 key 的请求在路上，等它的结果即可
+    return;
+  }
+  inflight.set(flightKey, [cb]);
+  const settle = (d: any) => {
+    const cbs = inflight.get(flightKey) || [];
+    inflight.delete(flightKey);
+    for (const f of cbs) f(d);
+  };
+  apiEnqueue((done) => {
+    gmGet(url, (j) => {
+      const code = j && typeof j.code === 'number' ? j.code : null;
+      if (code === null || RISK_CODES.has(code)) {
+        capMapSet(cooldown, ns + key, Date.now() + RETRY_AFTER_MS, COOLDOWN_MAX);
+        settle(null);
+      } else {
+        const d = code === 0 ? pick(j) : null;
+        capMapSet(cache, key, d, cap);
+        settle(d);
+      }
+      done();
+    });
+  });
 }
 
 export function fetchView(bvid: string, cb: ApiCb): void {
-  if (!bvid) return cb(null);
-  if (API.view.has(bvid)) return cb(API.view.get(bvid));
-  apiEnqueue((done) => {
-    gmGet('https://api.bilibili.com/x/web-interface/view?bvid=' + encodeURIComponent(bvid), (j) => {
-      const d = j && j.code === 0 ? j.data : null;
-      capMapSet(API.view, bvid, d, VIEW_CACHE_MAX); // d.owner.mid 即可反查 uid，无需另设缓存
-      if (d && d.owner && d.owner.mid && d.owner.name && CONFIG.uidNames[String(d.owner.mid)] === undefined) {
-        setUidName(d.owner.mid, d.owner.name); // 持久化（软上限内）：面板按名展示
-        scheduleSave();
-      }
-      cb(d);
-      done();
-    });
+  // d.owner.mid 即可反查 uid（cachedUid），无需另设缓存
+  cachedGet(API.view, VIEW_CACHE_MAX, 'v:', bvid, 'https://api.bilibili.com/x/web-interface/view?bvid=' + encodeURIComponent(bvid), (j) => j.data, (d) => {
+    if (d && d.owner && d.owner.mid && d.owner.name && CONFIG.uidNames[String(d.owner.mid)] === undefined) {
+      setUidName(d.owner.mid, d.owner.name); // 持久化（软上限内）：面板按名展示
+      scheduleStatsSave();
+    }
+    cb(d);
   });
 }
 
 export function fetchTags(bvid: string, cb: ApiCb): void {
-  if (!bvid) return cb(null);
-  if (API.tag.has(bvid)) return cb(API.tag.get(bvid));
-  apiEnqueue((done) => {
-    gmGet('https://api.bilibili.com/x/web-interface/view/detail/tag?bvid=' + encodeURIComponent(bvid), (j) => {
-      const arr = j && j.code === 0 && Array.isArray(j.data) ? j.data.map((x: any) => x.tag_name).filter(Boolean) : null;
-      capMapSet(API.tag, bvid, arr, TAG_CACHE_MAX);
-      cb(arr);
-      done();
-    });
-  });
+  cachedGet(
+    API.tag,
+    TAG_CACHE_MAX,
+    't:',
+    bvid,
+    'https://api.bilibili.com/x/web-interface/view/detail/tag?bvid=' + encodeURIComponent(bvid),
+    (j) => (Array.isArray(j.data) ? j.data.map((x: any) => x.tag_name).filter(Boolean) : null),
+    cb
+  );
 }
 
 export function fetchCard(mid: string, cb: ApiCb): void {
-  if (!mid) return cb(null);
-  if (API.card.has(mid)) return cb(API.card.get(mid));
-  apiEnqueue((done) => {
-    gmGet('https://api.bilibili.com/x/web-interface/card?mid=' + encodeURIComponent(mid), (j) => {
-      const d = j && j.code === 0 ? j.data : null;
-      capMapSet(API.card, mid, d, CARD_CACHE_MAX);
-      cb(d);
-      done();
-    });
-  });
+  cachedGet(API.card, CARD_CACHE_MAX, 'c:', mid, 'https://api.bilibili.com/x/web-interface/card?mid=' + encodeURIComponent(mid), (j) => j.data, cb);
 }
 
 // 从 view 缓存里同步取 uid（已请求过的 bvid 才有；否则返回空串）。

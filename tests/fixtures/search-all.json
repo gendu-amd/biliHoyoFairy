@@ -1,0 +1,44 @@
+{
+  "code": 0,
+  "message": "0",
+  "ttl": 1,
+  "data": {
+    "seid": "0",
+    "page": 1,
+    "result": [
+      {
+        "result_type": "bili_user",
+        "data": [{ "mid": 500001, "uname": "样本UP壬", "usign": "" }]
+      },
+      {
+        "result_type": "video",
+        "data": [
+          {
+            "type": "video",
+            "id": 5001,
+            "bvid": "BV1jj411j1j1",
+            "author": "样本UP癸",
+            "mid": 500002,
+            "title": "<em class=\"keyword\">原神</em>速通教学",
+            "typename": "单机游戏",
+            "duration": "10:15",
+            "play": 230000,
+            "like": 12000
+          },
+          {
+            "type": "video",
+            "id": 5002,
+            "bvid": "BV1kk411k1k1",
+            "author": "样本UP子",
+            "mid": 500003,
+            "title": "Rust 入门第一课",
+            "typename": "计算机技术",
+            "duration": "25:40",
+            "play": 45000,
+            "like": 5000
+          }
+        ]
+      }
+    ]
+  }
+}

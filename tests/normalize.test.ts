@@ -3,10 +3,13 @@ import {
   compileLines,
   compileScopedKeywords,
   configureFuzzy,
+  configureTradNorm,
+  toSimplified,
   escapeRe,
   kwHit,
   lc,
   normMatch,
+  regexRejectReason,
   splitRuleInput,
   stripInvisible,
   textHit,
@@ -82,6 +85,18 @@ describe('compileLines + textHit', () => {
     expect(compileLines(['/(ab)+/']).empty).toBe(false); // 普通分组+量词 → 保留
     expect(compileLines(['/ab+/']).empty).toBe(false);
   });
+  // 正则测试器与编译器共用这个判据：拒收理由是给用户看的字符串，null=引擎会正常收下。
+  // 两处若各判各的，测试器就会对一条引擎其实不收的正则报「命中」，抄进名单后一次都不生效。
+  it('regexRejectReason 与 compileLines 的取舍一致', () => {
+    for (const body of ['a'.repeat(2000), '(a+)+$', '(a*)*']) {
+      expect(regexRejectReason(body), body).toBeTruthy();
+      expect(compileLines([`/${body}/`]).empty, body).toBe(true);
+    }
+    for (const body of ['abc', '(ab)+', 'ab+']) {
+      expect(regexRejectReason(body), body).toBeNull();
+      expect(compileLines([`/${body}/`]).empty, body).toBe(false);
+    }
+  });
   it('剥除 g/y 标志（避免 .test 复用时 lastIndex 粘连漏判）', () => {
     const re = compileLines(['/ab/g']).regexes[0];
     expect(re.flags).not.toContain('g');
@@ -141,5 +156,79 @@ describe('splitRuleInput：批量输入拆分（正则感知）', () => {
     expect(splitRuleInput('   ')).toEqual([]);
     expect(splitRuleInput(null)).toEqual([]);
     expect(splitRuleInput(undefined)).toEqual([]);
+  });
+});
+
+// normMatch 带单格 memo（kwHit 对同一段文本要归一两次，一张卡 6~8 次）。
+// 缓存 key 必须带上 fuzzy 开关：它一变归一结果就变，缓存不跟着变就会用旧结果匹配——
+// 用户拨了开关却没反应，且不报任何错。
+describe('normMatch 的 memo', () => {
+  beforeEach(() => configureFuzzy(() => false));
+  it('同一段文本重复归一结果一致', () => {
+    expect(normMatch('原 神')).toBe(normMatch('原 神'));
+  });
+  it('fuzzy 开关切换后立刻反映，不吃旧缓存', () => {
+    const s = '原 神';
+    configureFuzzy(() => false);
+    expect(normMatch(s)).toBe('原 神');
+    configureFuzzy(() => true);
+    expect(normMatch(s)).toBe('原神'); // 缓存没带上开关的话这里会拿到上一行的结果
+    configureFuzzy(() => false);
+    expect(normMatch(s)).toBe('原 神');
+  });
+  it('交替归一不同文本不会串味', () => {
+    expect(normMatch('ＡＢ')).toBe('ab');
+    expect(normMatch('ＣＤ')).toBe('cd');
+    expect(normMatch('ＡＢ')).toBe('ab');
+  });
+});
+
+// 简繁归一：只做繁→简单向（繁→简基本多对一少歧义，反过来一个简体常对多个繁体）。
+// 匹配时两侧都归到简体即可互通。
+describe('简繁归一', () => {
+  beforeEach(() => {
+    configureFuzzy(() => false);
+    configureTradNorm(() => false);
+  });
+
+  it('toSimplified 逐字转换，无繁体时原样返回同一个字符串', () => {
+    expect(toSimplified('這個遊戲')).toBe('这个游戏');
+    const plain = '这个游戏';
+    expect(toSimplified(plain)).toBe(plain);
+  });
+
+  it('关闭时不归一（默认档不受影响）', () => {
+    const m = compileLines(['原神']);
+    expect(textHit('原神啟動', m)).toBe(true); // 「原神」本身简繁同形
+    expect(textHit('這個遊戲', compileLines(['这个游戏']))).toBe(false);
+  });
+
+  it('开启后简体规则能拦住繁体文本', () => {
+    configureTradNorm(() => true);
+    expect(textHit('這個遊戲很好玩', compileLines(['这个游戏']))).toBe(true);
+  });
+
+  it('开启后繁体规则也能拦住简体文本（两侧同归一）', () => {
+    configureTradNorm(() => true);
+    expect(textHit('这个游戏很好玩', compileLines(['這個遊戲']))).toBe(true);
+  });
+
+  it('正则那一路同样归一', () => {
+    configureTradNorm(() => true);
+    expect(textHit('震驚！這個遊戲', compileLines(['/震惊.*游戏/']))).toBe(true);
+  });
+
+  it('与模糊匹配叠加：繁体 + 分隔符绕过一起破', () => {
+    configureTradNorm(() => true);
+    configureFuzzy(() => true);
+    expect(textHit('這 個 遊 戲', compileLines(['这个游戏']))).toBe(true);
+  });
+
+  it('memo 带上简繁开关，拨了立刻生效', () => {
+    const s = '這個';
+    configureTradNorm(() => false);
+    expect(normMatch(s)).toBe('這個');
+    configureTradNorm(() => true);
+    expect(normMatch(s)).toBe('这个');
   });
 });

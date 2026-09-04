@@ -24,20 +24,16 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', caughtErrors: 'none' }],
-      // 迁移期模块仍带 @ts-nocheck（尚未补全类型），允许之；待逐步类型化后收紧。
-      '@typescript-eslint/ban-ts-comment': ['error', { 'ts-nocheck': false }],
-      // 关键安全网：抽离模块时若某符号"用了却忘记 import"，会成为静默全局引用 → 运行时崩。
-      // no-undef 把这类漏接变成 lint 错误（@ts-nocheck 不做类型检查，故由它兜底）。
-      'no-undef': 'error',
-      // 迁移期遗留代码的风格性规则关掉（非正确性问题：空 catch、arguments、x&&x()、正则字符类、全角空格等），
-      // 聚焦 no-undef 这一类真正会致命的漏接；待逐模块类型化后再逐步收紧。
-      'no-empty': 'off',
-      'no-cond-assign': 'off',
-      'no-misleading-character-class': 'off',
-      'no-irregular-whitespace': 'off',
-      'prefer-rest-params': 'off',
-      '@typescript-eslint/no-this-alias': 'off',
-      '@typescript-eslint/no-unused-expressions': 'off',
+      // src/ 与 tests/ 已全量类型化，@ts-nocheck 的迁移期豁免就此收回：
+      // 再想整文件关掉类型检查得先过这条规则，防止「加个 nocheck 先跑起来」重新变成常态。
+      '@typescript-eslint/ban-ts-comment': 'error',
+      // src/ 已全量类型化：同一类错误（用了未定义的名字）由 tsc 覆盖，而 no-undef 不区分类型位置与值位置，
+      // 会把 ParentNode / HTMLElementTagNameMap / Tampermonkey 这些「只存在于类型世界」的名字误报成未定义。
+      'no-undef': 'off',
+      // 迁移期为遗留代码关掉的风格性规则已全部收回（空 catch、arguments、x&&x()、this 别名、正则字符类）。
+      // 剩下的少数合理例外用**定点** eslint-disable + 理由注释，这样新写的同类问题仍会被拦下。
+      // 例外一条：中文文案里的全角空格（U+3000）是有意的排版，模板串与注释里不报。
+      'no-irregular-whitespace': ['error', { skipTemplates: true, skipComments: true }],
     },
   },
 );

@@ -1,0 +1,25 @@
+{
+  "code": 0,
+  "message": "0",
+  "ttl": 1,
+  "data": [
+    {
+      "aid": 4001,
+      "bvid": "BV1hh411h1h1",
+      "title": "原神剧情向混剪",
+      "tname": "综合",
+      "duration": 260,
+      "owner": { "mid": 400001, "name": "样本UP庚" },
+      "stat": { "view": 120000, "like": 9000 }
+    },
+    {
+      "aid": 4002,
+      "bvid": "BV1ii411i1i1",
+      "title": "钢琴演奏：月光第三乐章",
+      "tname": "演奏",
+      "duration": 420,
+      "owner": { "mid": 400002, "name": "样本UP辛" },
+      "stat": { "view": 60000, "like": 7000 }
+    }
+  ]
+}

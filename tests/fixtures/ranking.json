@@ -1,0 +1,28 @@
+{
+  "code": 0,
+  "message": "0",
+  "ttl": 1,
+  "data": {
+    "note": "根据稿件内容质量、社区反馈综合展示，动态更新",
+    "list": [
+      {
+        "aid": 2001,
+        "bvid": "BV1dd411d1d1",
+        "title": "原神 4.0 全角色实战演示",
+        "tname": "单机游戏",
+        "duration": 900,
+        "owner": { "mid": 200001, "name": "样本UP丙" },
+        "stat": { "view": 3000000, "like": 200000 }
+      },
+      {
+        "aid": 2002,
+        "bvid": "BV1ee411e1e1",
+        "title": "自制机械键盘全过程",
+        "tname": "科技·数码",
+        "duration": 1200,
+        "owner": { "mid": 200002, "name": "样本UP丁" },
+        "stat": { "view": 900000, "like": 80000 }
+      }
+    ]
+  }
+}

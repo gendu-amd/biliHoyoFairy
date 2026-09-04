@@ -1,16 +1,18 @@
 // 设置面板样式：作为 import 的副作用注入（与 v0.0.5 一致——启动即注入，不等面板打开）。
   GM_addStyle(`
+    .bfb-gutter-fix > *{margin-right:0 !important}
     .bfb-review{outline:2px solid #fb7299 !important;outline-offset:-2px;border-radius:8px;position:relative !important}
     .bfb-tag{position:absolute;top:6px;left:6px;z-index:9;display:flex;align-items:center;gap:6px;background:rgba(251,114,153,.95);color:#fff;border-radius:8px;padding:3px 6px;font-size:11px;font-family:system-ui,Arial;box-shadow:0 2px 6px rgba(0,0,0,.25)}
     .bfb-tag .rs{white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis}
     .bfb-tag button{border:none;border-radius:6px;background:#fff;color:#1b7a3d;font-size:11px;padding:2px 6px;cursor:pointer;white-space:nowrap}
     #bfb-badge{position:fixed;right:18px;bottom:18px;z-index:99999;background:#fb7299;color:#fff;border-radius:24px;padding:8px 14px;font-size:13px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.2);font-family:system-ui,Arial;user-select:none}
     #bfb-badge.off{background:#999}
+    #bfb-badge.warn{background:#e67e22}
     #bfb-ctxmenu{position:fixed;z-index:100002;background:#fff;border:1px solid #ffd5e2;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.22);overflow:hidden;min-width:210px;font-family:system-ui,Arial}
     .bfb-ctx-item{padding:10px 14px;font-size:13px;color:#333;cursor:pointer;white-space:nowrap}
     .bfb-ctx-item:hover{background:#fff0f5;color:#fb7299}
     #bfb-toasts{position:fixed;right:18px;bottom:70px;z-index:100001;display:flex;flex-direction:column}
-    .bfb-toast{background:#fff;color:#222;border-radius:12px;padding:12px 14px;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.18);max-width:320px;font-family:system-ui,Arial;border:1px solid #ffd5e2;margin-top:8px;display:flex;align-items:center;gap:10px}
+    .bfb-toast{background:#fff;color:#222;border-radius:12px;padding:12px 14px;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.18);max-width:320px;font-family:system-ui,Arial;border:1px solid #ffd5e2;margin-top:8px;display:flex;align-items:center;gap:10px;cursor:pointer}
     .bfb-toast .bfb-toast-msg{flex:1;min-width:0}
     .bfb-toast-act{flex:0 0 auto;border:none;border-radius:7px;background:#fb7299;color:#fff;font-size:12px;font-weight:600;padding:5px 12px;cursor:pointer}
     .bfb-toast-act:hover{background:#e85d88}
@@ -48,8 +50,25 @@
     #bfb-panel .chip{display:inline-flex;align-items:center;gap:6px;background:#fff0f5;color:#c2185b;border:1px solid #ffd5e2;border-radius:14px;padding:3px 10px;font-size:12px}
     #bfb-panel .sec.allow .chip{background:#eafaef;color:#1b7a3d;border-color:#c6ecd0}
     #bfb-panel .chip b{cursor:pointer;font-weight:700;opacity:.6}
+    /* 停用态：留在名单里但不生效。删除线 + 去色，一眼能看出「它在这儿，只是没在干活」 */
+    #bfb-panel .chip.off{background:#f2f2f4;color:#8a8a8a;border-color:#e0e0e4;text-decoration:line-through}
+    #bfb-panel .sec.allow .chip.off{background:#f2f2f4;color:#8a8a8a;border-color:#e0e0e4}
+    #bfb-panel .chip .chip-toggle{text-decoration:none;font-size:10px}
     #bfb-panel .chip b:hover{opacity:1}
+    #bfb-panel .bfb-finder{display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid #f0f0f0}
+    #bfb-panel .bfb-finder input{flex:1;min-width:0;padding:7px 11px;border:1px solid #e3e3e6;border-radius:9px;font-size:12px;outline:none}
+    #bfb-panel .bfb-finder input:focus{border-color:#fb7299}
+    #bfb-panel .bfb-finder button{flex:none;padding:6px 10px;border:1px solid #e3e3e6;border-radius:9px;background:#fafafa;color:#6e6e6e;cursor:pointer;font-size:12px}
+    #bfb-panel .bfb-finder .fst{flex:none;font-size:11px;color:#8a8a8a;text-align:right}
+    #bfb-panel .numgrid{width:100%;border-collapse:collapse;margin-top:6px}
+    #bfb-panel .numgrid th{font-size:11px;font-weight:500;color:#8a8a8a;text-align:left;padding:0 0 4px}
+    #bfb-panel .numgrid td{padding:3px 0;font-size:12px;vertical-align:middle}
+    #bfb-panel .numgrid td:first-child{width:4.5em;color:#444}
+    #bfb-panel .numgrid input{width:76px;padding:5px 8px;border:1px solid #e3e3e6;border-radius:7px;font-size:12px}
+    #bfb-panel .numgrid input:focus{outline:none;border-color:#fb7299}
+    #bfb-panel .numgrid .u{margin-left:5px;color:#8a8a8a;font-size:11px}
     #bfb-panel .empty{font-size:11px;color:#767676;margin-top:6px}
+    #bfb-panel .hint code{background:rgba(0,0,0,.06);border-radius:4px;padding:1px 5px;font-family:ui-monospace,Consolas,monospace;font-size:11px}
     #bfb-panel input[type=number]{width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:6px}
     #bfb-panel .hint{font-size:11px;color:#6e6e6e;margin-top:7px;line-height:1.7}
     #bfb-panel .toolbar{display:flex;gap:8px;flex-wrap:wrap}
@@ -80,6 +99,11 @@
     #bfb-panel .field-head:hover{background:#fff0f5}
     #bfb-panel .field-head .caret{color:#fb7299;font-size:14px;width:14px;flex:0 0 auto;transition:transform .12s}
     #bfb-panel .chip-bar{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+    #bfb-panel .chip-search{display:none;gap:6px;margin-top:8px;align-items:center}
+    #bfb-panel .chip-search input{flex:1;min-width:0;padding:5px 8px;border:1px solid #e3e3e3;border-radius:8px;font-size:12px;background:#fafafa}
+    #bfb-panel .chip-search input:focus{outline:none;border-color:#fb7299;background:#fff;box-shadow:0 0 0 2px rgba(251,114,153,.18)}
+    #bfb-panel .chip-search-x{border:none;background:transparent;color:#999;cursor:pointer;font-size:12px;padding:2px 4px}
+    #bfb-panel .chip-search-x:hover{color:#fb7299}
     #bfb-panel .chip-act{border:1px solid #ffd5e2;background:#fff;color:#fb7299;border-radius:8px;padding:3px 10px;font-size:12px;cursor:pointer}
     #bfb-panel .chip-act:hover{background:#fff0f5}
     #bfb-panel .chip-act.primary{background:#fb7299;color:#fff;border-color:#fb7299}
@@ -137,11 +161,20 @@
       .bfb-modal-input{background:#26262b;color:#e6e6e9;border-color:#44444c}
       #bfb-panel .empty{color:#9a9aa2}
       #bfb-panel .addrow input,#bfb-panel input[type=number]{background:#26262b;border-color:#44444c;color:#e6e6e9}
+      #bfb-panel .chip-search input{background:#232328;border-color:#3a3a42;color:#e6e6e9}
+      #bfb-panel .chip-search input:focus{background:#26262b}
       #bfb-panel button.ghost{background:#2e2e34}
       #bfb-panel .switch input[type=checkbox]{background:#45454d}
       #bfb-panel .chip{background:rgba(251,114,153,.16);color:#ff9ebc;border-color:rgba(251,114,153,.35)}
       #bfb-panel .sec.allow .chip{background:rgba(39,174,96,.16);color:#6ee7a0;border-color:rgba(39,174,96,.35)}
       #bfb-panel .chip.group{background:rgba(124,92,255,.18);color:#c4b5fd;border-color:rgba(124,92,255,.4)}
+      #bfb-panel .chip.off{background:rgba(255,255,255,.07);color:#8b8b93;border-color:rgba(255,255,255,.14)}
+      #bfb-panel .sec.allow .chip.off{background:rgba(255,255,255,.07);color:#8b8b93;border-color:rgba(255,255,255,.14)}
+      #bfb-panel .hint code{background:rgba(255,255,255,.12)}
+      #bfb-panel .bfb-finder{border-bottom-color:#2c2c32}
+      #bfb-panel .bfb-finder input,#bfb-panel .bfb-finder button{background:#2e2e34;border-color:#45454d;color:#e8e8ea}
+      #bfb-panel .numgrid input{background:#2e2e34;border-color:#45454d;color:#e8e8ea}
+      #bfb-panel .numgrid td:first-child{color:#c8c8cc}
       #bfb-panel .chip.sel{background:rgba(251,114,153,.3)}
       #bfb-panel .sec.allow .chip.sel{background:rgba(39,174,96,.3)}
       #bfb-panel .field .chips{background:#232328;border-color:#34343a}

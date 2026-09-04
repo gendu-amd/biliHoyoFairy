@@ -1,3 +1,4 @@
+import { T2S_PAIRS } from './t2s';
 // 匹配核心：文本归一 + 规则行编译 + 作用域关键词 + 输入拆分。纯逻辑，无 DOM / 无网络依赖（L0 叶子）。
 // 唯一的运行时配置依赖（fuzzyMatch 开关）通过 configureFuzzy 注入，便于单测与解耦。
 
@@ -28,10 +29,50 @@ export function configureFuzzy(fn: () => boolean): void {
   getFuzzy = fn;
 }
 
-// 匹配前对文本的归一：全角→半角 + 小写 + 去隐形（+ fuzzy 时去分隔符）。普通词编译时用同一套，保证两侧一致。
+// 简繁归一（默认关）。同样走注入，理由与 fuzzy 一致：normalize 不该直接依赖 CONFIG。
+let getTrad: () => boolean = () => false;
+export function configureTradNorm(fn: () => boolean): void {
+  getTrad = fn;
+}
+
+// 表按需构建：开关默认关，绝大多数用户永远不会用到这 2.8k 个条目。
+let t2sMap: Map<string, string> | null = null;
+let t2sRe: RegExp | null = null;
+function buildT2S(): void {
+  t2sMap = new Map();
+  let cls = '';
+  for (let i = 0; i + 1 < T2S_PAIRS.length; i += 2) {
+    t2sMap.set(T2S_PAIRS[i], T2S_PAIRS[i + 1]);
+    cls += T2S_PAIRS[i];
+  }
+  // 一次原生 replace 扫描，比逐字符 JS 循环快得多；表里全是 CJK，无需转义。
+  t2sRe = new RegExp('[' + cls + ']', 'g');
+}
+
+/** 繁体→简体（单字级）。没有繁体字时原样返回，不产生新字符串。 */
+export function toSimplified(s: string): string {
+  if (!t2sRe) buildT2S();
+  return t2sRe!.test(s) ? ((t2sRe!.lastIndex = 0), s.replace(t2sRe!, (c) => t2sMap!.get(c) || c)) : s;
+}
+
+// 匹配前对文本的归一：全角→半角 + 小写 + 去隐形（+ fuzzy 时去分隔符）。普通词编译时用同一套，两侧一致。
+// 单格 memo：kwHit 对同一段文本要归一两次，一张卡 6~8 次。key 必须带上两个开关，
+// 否则拨了开关会继续用旧结果匹配。
+let memoSrc: unknown;
+let memoFuzzy: boolean | undefined;
+let memoTrad: boolean | undefined;
+let memoOut = '';
 export function normMatch(s: unknown): string {
+  const fuzzy = getFuzzy();
+  const trad = getTrad();
+  if (s === memoSrc && fuzzy === memoFuzzy && trad === memoTrad) return memoOut;
   let t = stripInvisible(toHalfWidth(s)).toLowerCase();
-  if (getFuzzy()) t = t.replace(SEP_RE, '');
+  if (trad) t = toSimplified(t);
+  if (fuzzy) t = t.replace(SEP_RE, '');
+  memoSrc = s;
+  memoFuzzy = fuzzy;
+  memoTrad = trad;
+  memoOut = t;
   return t;
 }
 
@@ -39,6 +80,13 @@ export interface Matcher {
   plain: RegExp | null;
   regexes: RegExp[];
   empty: boolean;
+  // —— 以下三项仅供「解释」冷路径（whichHit）使用，热路径不读 ——
+  // plain 是把所有普通词合并成的**一条**正则（性能考虑），命中后无从知道是哪个词命中的。
+  // 于是并存一份逐条的原始规则行 + 归一后的词，命中之后再逐条回查。
+  // 这条回查路径每次拦截只走一次（而非每张卡），所以宁可慢也不动热路径。
+  plainSrc: string[]; // 原始规则行（展示给用户看的那一份）
+  plainNorm: string[]; // 与 plainSrc 一一对应的归一词（未转义，可直接 includes）
+  regexSrc: string[]; // 与 regexes 一一对应的原始 /正则/ 行
 }
 
 // 单条 /正则/ 模式体的长度上限（针对订阅/导入的不可信正则）。正常规则远不及此。
@@ -51,28 +99,53 @@ function looksCatastrophic(src: string): boolean {
   return /\((?:[^()]*[*+]|[^()]*\{\d+,\}?)[^()]*\)\s*(?:[*+]|\{\d+,\}?)/.test(src);
 }
 
+// 「这条 /正则/ 会被规则引擎拒收吗」——理由可直接展示给用户；null = 会被正常编译。
+// compileLines 与正则测试器共用这一个判据，否则测试器会对引擎不收的正则报「命中」。
+export function regexRejectReason(body: string): string | null {
+  if (body.length > MAX_REGEX_LEN) return `模式体超过 ${MAX_REGEX_LEN} 字符`;
+  if (looksCatastrophic(body)) return '疑似灾难性回溯（量词套在含无界量词的分组上，如 (a+)+），可能卡死页面';
+  return null;
+}
+
+// 消费侧兜底：规则数组的**唯一**入口。
+// 存档/导入/订阅都可能把某个规则字段写成字符串或对象；`for..of "原神"` 会按**字符**遍历，
+// 编译出「原」「神」两条单字规则，足以屏蔽掉整个首页。在消费点收口比在每个写入点堵更可靠，
+// 也能救回已经写坏的老存档。非数组→空；非字符串元素→丢弃。
+export function ruleLines(lines: unknown): string[] {
+  if (!Array.isArray(lines)) return [];
+  return lines.filter((x): x is string => typeof x === 'string');
+}
+
 // 把一组规则行编译成匹配器：普通词 → 归一/转义后合并成单条正则（性能更好）；
 // /.../ 行 → 各自独立编译（保留其原有 flags，如 m/s/g 语义不被合并破坏）。
 export function compileLines(lines: readonly string[] | null | undefined): Matcher {
   const plainParts: string[] = [];
+  const plainSrc: string[] = [];
+  const plainNorm: string[] = [];
   const regexes: RegExp[] = [];
-  for (const raw of lines || []) {
-    const line = (raw || '').trim();
+  const regexSrc: string[] = [];
+  for (const raw of ruleLines(lines)) {
+    const line = raw.trim();
     if (!line) continue;
     const m = line.match(/^\/(.*)\/([a-z]*)$/);
     if (m) {
       // ReDoS 防护：过长 或 含灾难性回溯形态的 /正则/（多来自订阅/导入的不可信来源）直接忽略。
-      if (m[1].length > MAX_REGEX_LEN || looksCatastrophic(m[1])) continue;
+      if (regexRejectReason(m[1])) continue;
       try {
         // 剥除 g/y：编译出的 RegExp 会跨多张卡复用 .test()，全局/粘性标志会让 lastIndex 粘连导致间歇漏判。
         const flags = (m[2] || 'i').replace(/[gy]/g, '');
         regexes.push(new RegExp(m[1], flags.includes('i') ? flags : flags + 'i'));
+        regexSrc.push(line);
       } catch (e) {
         /* 非法正则：忽略该行 */
       }
     } else {
       const w = normMatch(line); // 与 textHit 同一套归一（含反绕过），两侧一致
-      if (w) plainParts.push(escapeRe(w));
+      if (w) {
+        plainParts.push(escapeRe(w));
+        plainSrc.push(line);
+        plainNorm.push(w);
+      }
     }
   }
   let plain: RegExp | null = null;
@@ -83,23 +156,46 @@ export function compileLines(lines: readonly string[] | null | undefined): Match
       /* 理论上不会到这里：各部分已转义 */
     }
   }
-  return { plain, regexes, empty: !plain && !regexes.length };
+  return { plain, regexes, empty: !plain && !regexes.length, plainSrc, plainNorm, regexSrc };
 }
 
 export function textHit(text: unknown, matcher: Matcher | null | undefined): boolean {
   if (!text || !matcher) return false;
   if (matcher.plain && matcher.plain.test(normMatch(text))) return true;
   if (matcher.regexes.length) {
-    const t = stripInvisible(text); // 正则按其原样匹配，仅去隐形字符防零宽绕过
+    // 正则按其原样匹配，仅去隐形字符防零宽绕过；开了简繁归一则文本侧也归一
+    // （规则里的正则由用户自己写，写简体即可两边都命中）。
+    let t = stripInvisible(text);
+    if (getTrad()) t = toSimplified(t);
     for (const r of matcher.regexes) if (r.test(t)) return true;
   }
   return false;
 }
 
+// 「是哪条规则命中的」——冷路径回查，仅在已判定拦截后为了向用户解释才调用。
+// 与 textHit 的判定顺序保持一致（先普通词后正则），否则解释出来的规则可能不是真正生效的那条。
+// plainNorm 是归一后的词、text 也走同一套归一，故 includes 与合并正则的判定完全等价
+// （plainParts 是它 escapeRe 后的字面量，正则里没有元字符参与）。
+export function whichHit(text: unknown, matcher: Matcher | null | undefined): string | null {
+  if (!text || !matcher) return null;
+  if (matcher.plain) {
+    const t = normMatch(text);
+    for (let i = 0; i < matcher.plainNorm.length; i++) {
+      if (t.includes(matcher.plainNorm[i])) return matcher.plainSrc[i];
+    }
+  }
+  if (matcher.regexes.length) {
+    const t = stripInvisible(text);
+    for (let i = 0; i < matcher.regexes.length; i++) {
+      if (matcher.regexes[i].test(t)) return matcher.regexSrc[i];
+    }
+  }
+  return null;
+}
+
 // 关键词作用域：行首可加 title: / up: / part: 前缀，限定只匹配 标题/UP名/分区；
 // 不写前缀 = 全字段（保持历史行为）。形如 title:/正则/ 也支持（前缀剥离后仍交给 compileLines）。
-export const KW_SCOPES = ['title', 'up', 'part'] as const;
-export type KwScope = (typeof KW_SCOPES)[number];
+export type KwScope = 'title' | 'up' | 'part';
 
 export interface ScopedKw {
   all: Matcher;
@@ -110,8 +206,8 @@ export interface ScopedKw {
 
 export function compileScopedKeywords(lines: readonly string[] | null | undefined): ScopedKw {
   const buckets: Record<'all' | KwScope, string[]> = { all: [], title: [], up: [], part: [] };
-  for (const raw of lines || []) {
-    const line = (raw || '').trim();
+  for (const raw of ruleLines(lines)) {
+    const line = raw.trim();
     if (!line) continue;
     const m = !line.startsWith('/') && line.match(/^(title|up|part)\s*:\s*(.+)$/i);
     if (m) buckets[m[1].toLowerCase() as KwScope].push(m[2].trim());
@@ -129,6 +225,12 @@ export function compileScopedKeywords(lines: readonly string[] | null | undefine
 export function kwHit(scoped: ScopedKw | null | undefined, field: KwScope, text: unknown): boolean {
   if (!scoped || !text) return false;
   return textHit(text, scoped.all) || textHit(text, scoped[field]);
+}
+
+// kwHit 的解释版（冷路径）：返回命中的原始规则行。判定顺序与 kwHit 一致：先 all 后带前缀。
+export function kwWhich(scoped: ScopedKw | null | undefined, field: KwScope, text: unknown): string | null {
+  if (!scoped || !text) return null;
+  return whichHit(text, scoped.all) || whichHit(text, scoped[field]);
 }
 
 // 把多条输入拆成规则数组（正则感知）：换行总是分隔；以 / 开头的行视为整条正则、不按逗号拆

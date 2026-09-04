@@ -1,0 +1,310 @@
+// 拦截层契约测试：用固化的接口响应样本，锁住「URL → 取出哪个数组 → 删掉哪些项」这条链路。
+//
+// 纯逻辑单测测不出这里真正的风险：B 站把 data.item 改名成 data.items，matchRule 依然完美工作，
+// 脚本却一个视频都不再拦。样本 + 契约断言让这种结构漂移在改代码时立刻暴露。
+import { describe, expect, it, beforeEach } from 'vitest';
+import { CONFIG, DEFAULT_CONFIG } from '../src/config';
+import { rebuildRules } from '../src/match/engine';
+import { filterFeedJson, findFeedHook, FEED_HOOKS, rewriteRequestUrl } from '../src/net';
+import { health, healthReport } from '../src/health';
+import rcmd from './fixtures/rcmd.json';
+import ranking from './fixtures/ranking.json';
+import popular from './fixtures/popular.json';
+import related from './fixtures/related.json';
+import searchAll from './fixtures/search-all.json';
+import dynamic from './fixtures/dynamic.json';
+
+const clone = <T>(x: T): T => structuredClone(x);
+
+// 每个样本对应的真实请求 URL（含查询串，贴近线上形态）。
+const URLS = {
+  rcmd: 'https://api.bilibili.com/x/web-interface/wbi/index/top/feed/rcmd?ps=12&fresh_idx=1&w_rid=abc',
+  ranking: 'https://api.bilibili.com/x/web-interface/ranking/v2?rid=0&type=all',
+  popular: 'https://api.bilibili.com/x/web-interface/popular?ps=20&pn=1',
+  related: 'https://api.bilibili.com/x/web-interface/archive/related?bvid=BV1aa411a1a1',
+  searchAll: 'https://api.bilibili.com/x/web-interface/wbi/search/all/v2?keyword=test&page=1',
+  dynamic: 'https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/all?timezone_offset=-480&type=all&page=1',
+};
+
+function reset(): void {
+  Object.assign(CONFIG, structuredClone(DEFAULT_CONFIG));
+  rebuildRules();
+}
+
+beforeEach(reset);
+
+describe('findFeedHook：URL 路由', () => {
+  it('五类推荐接口都能命中（含带查询串的真实 URL）', () => {
+    for (const [name, url] of Object.entries(URLS)) {
+      expect(findFeedHook(url), name).not.toBeNull();
+    }
+  });
+
+  it('不相干的 B 站接口不被命中（拦截层不该碰它们）', () => {
+    const others = [
+      'https://api.bilibili.com/x/web-interface/view?bvid=BV1aa411a1a1',
+      'https://api.bilibili.com/x/relation/modify',
+      'https://api.bilibili.com/x/v2/reply/wbi/main?oid=1',
+      'https://api.bilibili.com/x/web-interface/nav',
+    ];
+    for (const u of others) expect(findFeedHook(u), u).toBeNull();
+  });
+
+  it('memo 不会把上一条 URL 的结果串给下一条（单格缓存的经典坑）', () => {
+    expect(findFeedHook(URLS.rcmd)).not.toBeNull();
+    expect(findFeedHook('https://api.bilibili.com/x/web-interface/nav')).toBeNull();
+    expect(findFeedHook(URLS.rcmd)).not.toBeNull();
+  });
+});
+
+describe('取数契约：每类响应都能取出视频数组', () => {
+  const cases: Array<[string, string, any, number]> = [
+    ['首页推荐', URLS.rcmd, rcmd, 3],
+    ['排行榜', URLS.ranking, ranking, 2],
+    ['热门', URLS.popular, popular, 2],
+    ['播放页相关推荐（data 本身即数组）', URLS.related, related, 2],
+    ['搜索综合（分组里取 result_type=video）', URLS.searchAll, searchAll, 2],
+    ['动态流（data.items）', URLS.dynamic, dynamic, 3],
+  ];
+  it.each(cases)('%s', (_name, url, fixture, expected) => {
+    const hook = findFeedHook(url)!;
+    const arr = hook.get(clone(fixture).data);
+    expect(arr).not.toBeNull();
+    expect(arr!.length).toBe(expected);
+  });
+});
+
+describe('filterFeedJson：按规则就地删项', () => {
+  it('关键词命中的项被 splice 掉，其余保持原顺序', () => {
+    CONFIG.block.keywords.push('原神');
+    rebuildRules();
+    const json = clone(rcmd);
+    expect(filterFeedJson(URLS.rcmd, json)).toBe(1);
+    expect(json.data.item.map((x: any) => x.bvid)).toEqual(['BV1bb411b1b1', 'BV1cc411c1c1']);
+  });
+
+  it('UID 黑名单在接口层生效（owner.mid）', () => {
+    CONFIG.block.uids.push('100003');
+    rebuildRules();
+    const json = clone(rcmd);
+    expect(filterFeedJson(URLS.rcmd, json)).toBe(1);
+    expect(json.data.item.some((x: any) => x.owner.mid === 100003)).toBe(false);
+  });
+
+  it('白名单优先于黑名单', () => {
+    CONFIG.block.keywords.push('原神');
+    CONFIG.allow.uids.push('100001');
+    rebuildRules();
+    const json = clone(rcmd);
+    expect(filterFeedJson(URLS.rcmd, json)).toBe(0);
+  });
+
+  it('搜索结果标题里的 <em> 高亮标签不影响关键词命中', () => {
+    CONFIG.block.keywords.push('原神速通');
+    rebuildRules();
+    const json = clone(searchAll);
+    expect(filterFeedJson(URLS.searchAll, json)).toBe(1);
+    const groups: any[] = json.data.result;
+    const g = groups.find((x) => x.result_type === 'video');
+    expect(g.data.map((x: any) => x.bvid)).toEqual(['BV1kk411k1k1']);
+    // 其它分组（用户）不受影响
+    expect(groups.find((x) => x.result_type === 'bili_user').data.length).toBe(1);
+  });
+
+  it('播放页相关推荐：data 直接是数组时也能就地删', () => {
+    CONFIG.block.uids.push('400001');
+    rebuildRules();
+    const json = clone(related);
+    expect(filterFeedJson(URLS.related, json)).toBe(1);
+    expect(json.data.length).toBe(1);
+  });
+
+  it('分区规则命中排行榜的 tname', () => {
+    CONFIG.block.partitions.push('单机游戏');
+    rebuildRules();
+    const json = clone(ranking);
+    expect(filterFeedJson(URLS.ranking, json)).toBe(1);
+    expect(json.data.list[0].bvid).toBe('BV1ee411e1e1');
+  });
+});
+
+describe('filterFeedJson：开关与容错', () => {
+  it('总开关关闭时一项不删', () => {
+    CONFIG.block.keywords.push('原神');
+    CONFIG.enabled = false;
+    rebuildRules();
+    const json = clone(rcmd);
+    expect(filterFeedJson(URLS.rcmd, json)).toBe(0);
+    expect(json.data.item.length).toBe(3);
+  });
+
+  it('审查模式下数据层不删项（交给 DOM 层打标记核对）', () => {
+    CONFIG.block.keywords.push('原神');
+    CONFIG.reviewMode = true;
+    rebuildRules();
+    const json = clone(rcmd);
+    expect(filterFeedJson(URLS.rcmd, json)).toBe(0);
+    expect(json.data.item.length).toBe(3);
+  });
+
+  it('非零 code / 缺 data / 未注册 URL 一律零改动', () => {
+    CONFIG.block.keywords.push('原神');
+    rebuildRules();
+    expect(filterFeedJson(URLS.rcmd, { code: -403, data: clone(rcmd).data })).toBe(0);
+    expect(filterFeedJson(URLS.rcmd, { code: 0 })).toBe(0);
+    expect(filterFeedJson('https://api.bilibili.com/x/web-interface/nav', clone(rcmd))).toBe(0);
+  });
+
+  it('单条畸形 item 不影响同一响应里其它项的判定', () => {
+    CONFIG.block.keywords.push('原神');
+    rebuildRules();
+    const json = clone(rcmd);
+    (json.data.item as any[]).splice(1, 0, null); // 混入一条 null
+    expect(filterFeedJson(URLS.rcmd, json)).toBe(1);
+    expect(json.data.item.length).toBe(3); // 原 3 条 + null - 命中 1 条
+  });
+
+  it('规则数组被写成字符串时不会退化成逐字符规则（否则几乎屏蔽整个首页）', () => {
+    (CONFIG.block as any).keywords = '原神';
+    rebuildRules();
+    const json = clone(rcmd);
+    expect(filterFeedJson(URLS.rcmd, json)).toBe(0);
+    expect(json.data.item.length).toBe(3);
+  });
+});
+
+// 动态流此前是唯一只靠 DOM 兜底的主要页面：只能等卡片画出来再隐藏，且抠不到权威 UID。
+// 它的响应结构与推荐流毫无重合（字段全埋在 modules 下），所以走 hook 自带的 norm。
+describe('动态流：接入拦截层后与首页同判', () => {
+  it('视频动态按关键词命中标题', () => {
+    CONFIG.block.keywords.push('原神');
+    rebuildRules();
+    const json = clone(dynamic);
+    expect(filterFeedJson(URLS.dynamic, json)).toBe(2); // 视频动态 + 转发里带「原神」的那条
+    expect(json.data.items.map((x: any) => x.id_str)).toEqual(['900000000000000002']);
+  });
+
+  it('非视频动态（图文/文字）按正文命中——DOM 层时代这类根本判不了', () => {
+    CONFIG.block.keywords.push('鸣潮');
+    rebuildRules();
+    const json = clone(dynamic);
+    expect(filterFeedJson(URLS.dynamic, json)).toBe(1);
+    expect(json.data.items.some((x: any) => x.id_str === '900000000000000002')).toBe(false);
+  });
+
+  it('UID 黑名单命中动态作者（module_author.mid）', () => {
+    CONFIG.block.uids.push('100001');
+    rebuildRules();
+    const json = clone(dynamic);
+    expect(filterFeedJson(URLS.dynamic, json)).toBe(1);
+    expect(json.data.items.length).toBe(2);
+  });
+
+  it('转发动态：原动态的正文也参与判定（否则「转发引战」拦不到）', () => {
+    CONFIG.block.keywords.push('爆料');
+    rebuildRules();
+    const json = clone(dynamic);
+    expect(filterFeedJson(URLS.dynamic, json)).toBe(1);
+    expect(json.data.items.some((x: any) => x.id_str === '900000000000000003')).toBe(false);
+  });
+
+  it('只删 items，不动分页游标（改它会打乱后续加载）', () => {
+    CONFIG.block.keywords.push('原神');
+    rebuildRules();
+    const json = clone(dynamic);
+    filterFeedJson(URLS.dynamic, json);
+    expect(json.data.offset).toBe('900000000000000001');
+    expect(json.data.has_more).toBe(true);
+  });
+});
+
+describe('health：静默失效自检计数', () => {
+  it('解析成功时 feedParsed / feedItems 累加，且不受总开关影响', () => {
+    const before = { parsed: health.feedParsed, items: health.feedItems };
+    CONFIG.enabled = false;
+    filterFeedJson(URLS.rcmd, clone(rcmd));
+    expect(health.feedParsed).toBe(before.parsed + 1);
+    expect(health.feedItems).toBe(before.items + 3);
+  });
+
+  it('取不出数组时不计入 feedParsed（正是「结构变了」的信号）', () => {
+    const before = health.feedParsed;
+    filterFeedJson(URLS.rcmd, { code: 0, data: { items: [] } }); // 假想的字段改名
+    expect(health.feedParsed).toBe(before);
+  });
+});
+
+// WBI 签名覆盖**全部** query 参数（按 key 排序后连同 mixin_key 一起 MD5 得出 w_rid），
+// 签完再改任何一个参数都会被 B 站判为 -403 校验失败——首页那次请求就白发了。
+// 这组用例锁住「带 w_rid 的 URL 一律不改写」这条兜底，别让以后新增的 preFn 又把它破掉。
+describe('rewriteRequestUrl：不改写已签名(WBI)请求', () => {
+  const RCMD = 'https://api.bilibili.com/x/web-interface/wbi/index/top/feed/rcmd?ps=12&fresh_idx=1';
+  beforeEach(() => {
+    health.signedSkipped = 0;
+    CONFIG.boostFeedLoad = true; // 唯一的改写类功能，默认关，这里显式打开
+  });
+
+  it('带 w_rid 时原样发出，并计入自检', () => {
+    const url = RCMD + '&w_rid=deadbeef&wts=1700000000';
+    expect(rewriteRequestUrl(url)).toBe(url);
+    expect(health.signedSkipped).toBe(1);
+    expect(healthReport().some((s) => s.includes('w_rid'))).toBe(true);
+  });
+
+  it('未签名的旧路径照常改写，不计数', () => {
+    const url = 'https://api.bilibili.com/x/web-interface/index/top/feed/rcmd?ps=12&fresh_idx=1';
+    expect(rewriteRequestUrl(url)).toContain('ps=30');
+    expect(health.signedSkipped).toBe(0);
+  });
+
+  it('本来就没人想改的已签名请求不算「放弃改写」（不误报）', () => {
+    const url = 'https://api.bilibili.com/x/web-interface/wbi/search/all/v2?keyword=x&w_rid=abc';
+    expect(rewriteRequestUrl(url)).toBe(url);
+    expect(health.signedSkipped).toBe(0);
+  });
+
+  it('开关关闭时不改写任何 URL', () => {
+    CONFIG.boostFeedLoad = false;
+    const url = 'https://api.bilibili.com/x/web-interface/index/top/feed/rcmd?ps=12';
+    expect(rewriteRequestUrl(url)).toBe(url);
+  });
+});
+
+describe('FEED_HOOKS 注册表本身', () => {
+  it('每条 hook 都有正则与取数函数（新增时别漏）', () => {
+    expect(FEED_HOOKS.length).toBeGreaterThan(0);
+    for (const h of FEED_HOOKS) {
+      expect(h.re).toBeInstanceOf(RegExp);
+      expect(typeof h.get).toBe('function');
+      expect(h.re.global).toBe(false); // 带 g 的正则 test() 会因 lastIndex 粘连间歇漏判
+    }
+  });
+});
+
+
+// 点赞数维度只有**接口**这一路拿得到数据（原生 B 站的卡片 DOM 上不显示点赞数）。
+// 所以它必须在拦截层生效——否则用户设了值却「毫无反应」，因为 DOM 层压根看不见这个字段。
+describe('点赞数阈值：走拦截层', () => {
+  // 样本三条的点赞数：21000 / 9000 / 300
+  it('低于阈值的项被删掉', () => {
+    CONFIG.block.minLikes = 10000;
+    rebuildRules();
+    const json = clone(rcmd);
+    expect(filterFeedJson(URLS.rcmd, json)).toBe(2); // 9000 与 300
+    expect(json.data.item.map((x: any) => x.bvid)).toEqual(['BV1aa411a1a1']);
+  });
+
+  it('高于阈值的项被删掉', () => {
+    CONFIG.block.maxLikes = 10000;
+    rebuildRules();
+    const json = clone(rcmd);
+    expect(filterFeedJson(URLS.rcmd, json)).toBe(1); // 只有 21000 那条
+  });
+
+  it('热门接口同样生效（stat.like 也在）', () => {
+    CONFIG.block.minLikes = 40000;
+    rebuildRules();
+    const json = clone(popular);
+    expect(filterFeedJson(URLS.popular, json)).toBe(1); // 30000 那条
+  });
+});

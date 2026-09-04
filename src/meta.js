@@ -1,6 +1,6 @@
 // UserScript 元数据（构建产物的头部）。版本号单一来源在此处维护。
 // scripts/build.mjs 会把 banner 原样 prepend 到打包产物 biliHoyoFairy.user.js。
-export const version = '0.0.7';
+export const version = '0.0.8';
 
 export const banner = `// ==UserScript==
 // @name         B站(bilibili)推荐流净化·屏蔽拉黑去广告 — biliHoyoFairy 抗击黑潮
@@ -22,6 +22,8 @@ export const banner = `// ==UserScript==
 // @connect      gitee.com
 // @grant        GM_setValue
 // @grant        GM_getValue
+// @grant        GM_addValueChangeListener
+// @grant        GM_deleteValue
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand

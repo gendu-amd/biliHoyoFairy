@@ -35,7 +35,7 @@ describe('订阅并入：collectSubRules → buildMatchers → matchRule', () =>
     saveSubStore({ [url]: { ok: true, rules: { keywords: ['订阅词'] } } } as any);
     (CONFIG.subscriptions as any).push({ url, name: 's', enabled: true });
     rebuildRules();
-    expect(matchRule(blank({ title: '含订阅词的视频' }))).toBe('关键词');
+    expect(matchRule(blank({ title: '含订阅词的视频' }))).toBe('关键词:订阅词');
   });
   it('禁用的订阅不并入', () => {
     Object.assign(CONFIG, structuredClone(DEFAULT_CONFIG));

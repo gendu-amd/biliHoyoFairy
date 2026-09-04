@@ -2,11 +2,43 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # refactor 也要跑：长期开发分支上积累了几十个 commit，产物漂移一路没人拦——
+    # 「装了脚本却测的是旧代码」这种事排查起来最费时间，而它本该被 CI 当场挡下。
+    branches: [main, refactor]
   pull_request:
     branches: [main]
 
 jobs:
+  # 改了 src/ 却忘了升版本号，装了脚本的用户不会收到更新推送——静默停在旧版本。
+  # 只在 PR 上跑（需要 base 分支做对比），且只要求版本号「变了」，不管怎么变。
+  version:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify @version bumped when src/ changes
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if git diff --quiet "$BASE" "$HEAD" -- src/; then
+            echo "src/ 未改动，跳过版本检查。"
+            exit 0
+          fi
+          old=$(git show "$BASE:src/meta.js" | sed -n "s/^export const version = '\(.*\)';$/\1/p")
+          new=$(git show "$HEAD:src/meta.js" | sed -n "s/^export const version = '\(.*\)';$/\1/p")
+          if [ -z "$new" ]; then
+            echo "::error::读不出 src/meta.js 的 version，请保持 \`export const version = 'x.y.z';\` 这一行的格式。"
+            exit 1
+          fi
+          if [ "$old" = "$new" ]; then
+            echo "::error::src/ 有改动但 @version 仍是 $new：请在 src/meta.js 里升版本号（单一来源），否则已安装的用户收不到更新。"
+            exit 1
+          fi
+          echo "版本号已升：$old -> $new"
+
   build:
     runs-on: ubuntu-latest
     steps:
