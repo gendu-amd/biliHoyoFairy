@@ -88,12 +88,6 @@ export function extractCardInfo(card: Element, deepUid = true): CardInfo {
       }
     }
   }
-  // innerHTML 兜底会序列化整张卡 HTML，开销较大：仅在需要 UID（存在 UID 规则或拉黑场景）且 DOM 没抠到时才走
-  if (!info.uid && deepUid) {
-    info.uid = (card.innerHTML.match(/space\.bilibili\.com\/(\d+)/) || [])[1] || '';
-    if (!info.uid) info.uid = (card.innerHTML.match(/"(?:mid|owner_?id|up_?mid)"\s*:\s*"?(\d{2,})"?/) || [])[1] || '';
-  }
-
   info.partition = pickText(card, CARD_PARTITION_SELECTORS);
 
   const aVideo = card.querySelector('a[href*="/video/"]');
@@ -128,11 +122,22 @@ export function extractCardInfo(card: Element, deepUid = true): CardInfo {
   // （直播卡常常没有标题，靠 isLive 才不会被当成尚未渲染的空壳）。跟着开关走的话，
   // 两个开关都关时每一张无标题直播卡都会被判成骨架、每轮扫描重抠一次，且这个字段的含义会随配置漂移。
   // 三次判定都很轻（两次 querySelector + 一次本卡 textContent），远小于下面的广告角标全卡遍历。
-  info.isLive = !!(
-    card.querySelector('a[href*="live.bilibili.com"]') ||
-    card.querySelector(LIVE_CARD_SELECTOR) ||
-    /直播中|正在直播/.test(card.textContent || '')
-  );
+  // textContent 取一次给两处用（直播判定 + 下面的骨架卡闸门），省一次全卡文本遍历。
+  const text = card.textContent || '';
+  info.isLive = !!(card.querySelector('a[href*="live.bilibili.com"]') || card.querySelector(LIVE_CARD_SELECTOR) || /直播中|正在直播/.test(text));
+
+  // innerHTML 兜底会把整张卡序列化成字符串，是本函数最贵的一步，所以放到最后并加两道闸：
+  //   1) 只序列化一次（原先两条正则各读了一遍 innerHTML，等于白做两倍功）；
+  //   2) 骨架卡（整张卡一个字都没有 = 还没渲染出内容）直接跳过。判据用「有没有文本」而不是
+  //      「有没有标题/UP」：某个版式的标题选择器没覆盖到时，卡其实是渲染好的，不该被当成空壳。
+  //      这一闸很关键——processCard 对骨架卡**不打 PROCESSED 标记**（要等它填充后再判），
+  //      于是每轮扫描都会重抽一遍；不跳过的话，一屏骨架卡就是每 250ms 两次全卡序列化 × N。
+  if (!info.uid && deepUid && text.trim()) {
+    const html = card.innerHTML;
+    info.uid = (html.match(/space\.bilibili\.com\/(\d+)/) || [])[1] || '';
+    if (!info.uid) info.uid = (html.match(/"(?:mid|owner_?id|up_?mid)"\s*:\s*"?(\d{2,})"?/) || [])[1] || '';
+  }
+
 
   // 广告判定（含遍历全卡 span/div 找角标文案）只服务于「屏蔽广告卡」，hideAd 关时整段跳过，省热路径开销。
   // 直播卡直接判非广告（下面本来也是 !isLive && …），顺带省掉那次全卡 span/div 遍历。

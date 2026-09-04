@@ -50,6 +50,50 @@ export function healthDegraded(): boolean {
   return pageType() !== '其他' && health.cardsSeen === 0;
 }
 
+// —— 耗时采样（仅 debug 模式）——
+//
+// 上面那组计数回答「还活着吗」，这组回答「花了多少」。加它的动机很直接：
+// 这类脚本的性能问题几乎都是**写放大与二次复杂度**（一次删除牵出全量存盘+全页重扫、
+// 一行记录牵出一次全名单扫描），靠读代码能推断出量级，但「改完到底快了多少」只能测。
+// 没有它，后续每一个微优化都是在拍脑袋。
+//
+// 只在 debug 打开时记账：performance.now() 本身很便宜，但热路径上每张卡两次调用 + 一次
+// Map 查找并非零成本，而绝大多数用户永远不会看这组数字。
+export interface TimingStat {
+  n: number;
+  ms: number;
+  max: number;
+}
+export const timings = new Map<string, TimingStat>();
+let timingOn = false;
+export function setTimingEnabled(on: boolean): void {
+  timingOn = on;
+  if (!on) timings.clear();
+}
+
+/** 给一段同步操作计时。debug 关时零开销（直接执行，不取时钟、不写表）。 */
+export function timed<T>(label: string, fn: () => T): T {
+  if (!timingOn || typeof performance === 'undefined') return fn();
+  const t0 = performance.now();
+  try {
+    return fn();
+  } finally {
+    const dt = performance.now() - t0;
+    let e = timings.get(label);
+    if (!e) timings.set(label, (e = { n: 0, ms: 0, max: 0 }));
+    e.n++;
+    e.ms += dt;
+    if (dt > e.max) e.max = dt;
+  }
+}
+
+/** 面板/控制台用的耗时摘要，按总耗时降序。空数组 = 没开 debug 或还没采到。 */
+export function timingReport(): string[] {
+  return [...timings.entries()]
+    .sort((a, b) => b[1].ms - a[1].ms)
+    .map(([k, v]) => `${k}: ${v.n} 次 · 共 ${v.ms.toFixed(1)}ms · 均 ${(v.ms / v.n).toFixed(2)}ms · 峰 ${v.max.toFixed(1)}ms`);
+}
+
 // 返回人类可读的**警告**列表（空数组=没发现异常）。调用时机应在首屏稳定之后，否则会误报。
 export function healthReport(): string[] {
   const w: string[] = [];

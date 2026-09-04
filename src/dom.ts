@@ -2,7 +2,7 @@
 // 单卡处理有错误边界，异形卡不会中断整轮扫描。
 import { CONFIG } from './config';
 import { ATTR_API, ATTR_BLOCKED, PROCESSED } from './constants';
-import { cellOf, isUnsafeHideTarget, VIDEO_CARD_SELECTOR } from './page';
+import { cellOf, isUnsafeHideTarget, UNPROCESSED_CARD_SELECTOR, VIDEO_CARD_SELECTOR } from './page';
 import { SWIPE_BANNER } from './selectors';
 import { extractCardInfo, cacheCardInfo } from './cardinfo';
 import type { CardInfo } from './cardinfo';
@@ -13,7 +13,7 @@ import { shadowRoots } from './shadow';
 import { scanComments } from './comments';
 import { addToList } from './rules';
 import { log, logErr, safe } from './logging';
-import { health } from './health';
+import { health, timed } from './health';
 import { toast } from './ui/toast';
 import { refreshPanelIfOpen } from './ui/hooks';
 
@@ -170,17 +170,20 @@ export function queryCards(): HTMLElement[] {
 
 export function scanAll(): void {
   if (!CONFIG.enabled) return;
-  const cards = queryCards();
-  if (cards.length > health.cardsSeen) health.cardsSeen = cards.length; // 自检：选择器是否还认得出卡片
+  // 只取**未处理**的卡：稳态下页面上绝大多数卡都已处理，把它们全取回来再逐个 getAttribute
+  // 是每 250ms 白做一遍的活。语义不变（已处理的本来就会被跳过），只是让选择器引擎代劳。
+  const cards = timed('scan.query', () => queryAllRoots(UNPROCESSED_CARD_SELECTOR));
+  // 自检取的是「一轮里认出过多少张卡」的峰值。首轮全部未处理，峰值照常取到；
+  // 之后只增不减，所以「选择器还认不认得出卡片」这个判据不受影响。
+  if (cards.length > health.cardsSeen) health.cardsSeen = cards.length;
   cards.forEach((card) => {
-    if (card.getAttribute(PROCESSED)) return;
     if (card.closest && card.closest(SWIPE_BANNER)) return; // 顶部轮播 banner，跳过
     processCard(card);
   });
 }
 
 export function rescanAfterRuleChange(): void {
-  rebuildRules();
+  timed('rules.rebuild', rebuildRules);
   // 必须穿透 shadow：queryCards 会处理 shadow 内的卡，这里就得能把它们的标记一并清掉
   queryAllRoots('[' + PROCESSED + ']').forEach((el) => {
     el.removeAttribute(PROCESSED);

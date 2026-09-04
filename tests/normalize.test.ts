@@ -156,3 +156,27 @@ describe('splitRuleInput：批量输入拆分（正则感知）', () => {
     expect(splitRuleInput(undefined)).toEqual([]);
   });
 });
+
+// normMatch 带单格 memo（kwHit 对同一段文本要归一两次，一张卡 6~8 次）。
+// 缓存 key 必须带上 fuzzy 开关：它一变归一结果就变，缓存不跟着变就会用旧结果匹配——
+// 用户拨了开关却没反应，且不报任何错。
+describe('normMatch 的 memo', () => {
+  beforeEach(() => configureFuzzy(() => false));
+  it('同一段文本重复归一结果一致', () => {
+    expect(normMatch('原 神')).toBe(normMatch('原 神'));
+  });
+  it('fuzzy 开关切换后立刻反映，不吃旧缓存', () => {
+    const s = '原 神';
+    configureFuzzy(() => false);
+    expect(normMatch(s)).toBe('原 神');
+    configureFuzzy(() => true);
+    expect(normMatch(s)).toBe('原神'); // 缓存没带上开关的话这里会拿到上一行的结果
+    configureFuzzy(() => false);
+    expect(normMatch(s)).toBe('原 神');
+  });
+  it('交替归一不同文本不会串味', () => {
+    expect(normMatch('ＡＢ')).toBe('ab');
+    expect(normMatch('ＣＤ')).toBe('cd');
+    expect(normMatch('ＡＢ')).toBe('ab');
+  });
+});

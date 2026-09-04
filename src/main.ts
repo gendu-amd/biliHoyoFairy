@@ -5,7 +5,7 @@
 import { VERSION, BLACKLIST_MANAGE_URL, STARTUP_SUMMARY_MS } from './constants';
 import { CONFIG, configRescue, saveConfig, installConfigSync, setConfigNotifier } from './config';
 import { safe, logErr, BADGE } from './logging';
-import { healthReport, markHealthReady } from './health';
+import { healthReport, markHealthReady, setTimingEnabled } from './health';
 import { configureCardDetect } from './cardinfo';
 import { pageType } from './page';
 import { installNetworkHooks } from './net';
@@ -39,6 +39,7 @@ import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
   // 匹配引擎 ./match/engine 在自身模块加载时已绑定 fuzzy 取值器并构建首个 M；
   // 此处仅把卡片广告/直播检测开关注入 ./cardinfo（保持 cardinfo 不直接依赖 CONFIG）。
   configureCardDetect(() => ({ detectAd: CONFIG.hideAd }));
+  setTimingEnabled(CONFIG.debug); // 耗时采样跟着调试模式走（关时零开销）
   // 注入 UI 回调桥：低层模块（stats 等）经此回调到面板/角标，避免 import 面板成环。
   setPanelHooks({
     refreshPanelIfOpen: () => refreshPanelIfOpen(),

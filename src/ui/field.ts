@@ -133,7 +133,15 @@ export function renderListField(host: HTMLElement, o: ListFieldOpts): void {
   // 当前可见条目。**所有**批量操作都走它，不走 model.entries()：搜「原神」筛出 3 条后点
   // 「全选 → 删除所选」，删掉的必须是这 3 条而不是整个名单——按搜索结果操作是这个功能的
   // 全部意义，也是它唯一能酿成大祸的地方。
-  const visible = (): FieldEntry[] => filterBy(model.entries(), query, (e) => (model.texts ? model.texts(e) : [String(e.value)]));
+  // 一次渲染里 visible() 会被问好几次（renderChips 一次、renderBar 一次、全选/反选各一次），
+  // 而它每次都要 model.entries() 重新分配 N 个条目对象——几千条名单下就是每次渲染一两万个临时对象。
+  // 按渲染轮次缓存：renderChips 开头置空，本轮内共用同一份。
+  let visCache: FieldEntry[] | null = null;
+  const visible = (): FieldEntry[] => {
+    if (!visCache) visCache = filterBy(model.entries(), query, (e) => (model.texts ? model.texts(e) : [String(e.value)]));
+    return visCache;
+  };
+  const invalidateVis = () => (visCache = null);
   const filtering = () => !!query.trim();
   const renderBar = () => {
     bar.innerHTML = '';
@@ -157,11 +165,11 @@ export function renderListField(host: HTMLElement, o: ListFieldOpts): void {
     }
     mk(filtering() ? '全选匹配' : '全选', () => {
       visible().forEach((e) => selected.add(e.key));
-      renderChips();
+      syncSelection();
     });
     mk('反选', () => {
       visible().forEach((e) => (selected.has(e.key) ? selected.delete(e.key) : selected.add(e.key)));
-      renderChips();
+      syncSelection();
     });
     mk(`删除所选(${selected.size})`, () => {
       if (!selected.size) {
@@ -206,7 +214,19 @@ export function renderListField(host: HTMLElement, o: ListFieldOpts): void {
       renderChips();
     });
   };
+  // 勾选态变了但名单没变：只把已渲染的 chip 的样式刷一遍 + 更新按钮计数，不重建 DOM。
+  const syncSelection = () => {
+    const nodes = chips.querySelectorAll<HTMLElement>('.chip');
+    let i = 0;
+    for (const e of visible().slice(0, CHIP_RENDER_MAX)) {
+      const node = nodes[i++];
+      if (node) node.classList.toggle('sel', selected.has(e.key));
+    }
+    renderBar();
+  };
+
   const renderChips = () => {
+    invalidateVis(); // 名单可能已被改动，本轮重新算一次
     chips.innerHTML = '';
     const total = model.count();
     const list = visible();
@@ -241,10 +261,13 @@ export function renderListField(host: HTMLElement, o: ListFieldOpts): void {
       if (manage) {
         chip.style.cursor = 'pointer';
         chip.title = '点击勾选 / 取消';
+        // 勾选只切自己的样式 + 更新按钮上的计数。原先每点一下都重建整列 chip
+        // （最多 300 个节点、各带 2~3 个子元素和事件处理器），勾 10 条就是重建 10 次。
         chip.onclick = () => {
           if (selected.has(entry.key)) selected.delete(entry.key);
           else selected.add(entry.key);
-          renderChips();
+          chip.classList.toggle('sel', selected.has(entry.key));
+          renderBar();
         };
       } else {
         // 停用：留在名单里、灰显、不参与编译。删除是不可逆的，而「先关两天看看」才是

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { health, healthReport, healthNotes, healthSummary, healthDegraded, markHealthReady } from '../src/health';
+import { health, healthReport, healthNotes, healthSummary, healthDegraded, markHealthReady, timed, timingReport, setTimingEnabled } from '../src/health';
 
 function reset() {
   health.apiSeen = 0;
@@ -158,5 +158,40 @@ describe('healthDegraded：角标该不该变黄', () => {
     health.feedParsed = 3;
     health.cardsSeen = 0;
     expect(healthDegraded()).toBe(true);
+  });
+});
+
+// 耗时采样：上面那组计数回答「还活着吗」，这组回答「花了多少」。
+// 关键约束是**关时零开销**——它挂在扫描/存盘这类热路径上，不该让不看这组数字的人付代价。
+describe('timed / timingReport', () => {
+  beforeEach(() => setTimingEnabled(false));
+
+  it('关闭时不记账（热路径零开销），但照常返回结果', () => {
+    expect(timed('x', () => 42)).toBe(42);
+    expect(timingReport()).toEqual([]);
+  });
+
+  it('打开后累计次数，报告按总耗时降序', () => {
+    setTimingEnabled(true);
+    timed('a', () => 1);
+    timed('a', () => 1);
+    timed('b', () => 1);
+    const r = timingReport();
+    expect(r.length).toBe(2);
+    expect(r.join('\n')).toContain('a: 2 次');
+    expect(r.join('\n')).toContain('b: 1 次');
+  });
+
+  it('抛错时也记账并把异常原样抛出（否则一段慢又爱抛的代码永远不进统计）', () => {
+    setTimingEnabled(true);
+    expect(() => timed('boom', () => { throw new Error('x'); })).toThrow('x');
+    expect(timingReport().join('')).toContain('boom: 1 次');
+  });
+
+  it('关闭时清零（避免关掉调试后还留着上次的旧数据误导人）', () => {
+    setTimingEnabled(true);
+    timed('a', () => 1);
+    setTimingEnabled(false);
+    expect(timingReport()).toEqual([]);
   });
 });

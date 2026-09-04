@@ -12,6 +12,7 @@ import {
   UNSAFE_KEYS,
   VERSION,
 } from './constants';
+import { timed } from './health';
 
 export interface BlockConfig {
   keywords: string[];
@@ -455,6 +456,12 @@ function threeWayMerge(base: any, mine: any, theirs: any): Record<string, any> {
 
 /** 保存规则与开关（低频）。写前先读回存储做三方合并，绝不整份覆盖。 */
 export function saveConfig(): void {
+  // 计时挂在这里而不是各调用点：这条路径是「写放大」的源头（全量读回 + 深拷贝 + 合并 + 两次序列化），
+  // 想知道某个批量操作贵在哪，先看它调了几次 saveConfig。
+  timed('config.save', saveConfigInner);
+}
+
+function saveConfigInner(): void {
   const stored = readJson(STORE_KEY);
   const mine = snapshotConfig();
   const merged = stored ? threeWayMerge(baseSnapshot, mine, stripStats(migrateConfig(stored))) : mine;

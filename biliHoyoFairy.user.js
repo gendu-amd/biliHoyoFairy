@@ -84,6 +84,227 @@
   var NAME_RESOLVE_MAX = 20;
   var RISK_CODES = /* @__PURE__ */ new Set([-352, -412, -509, -799]);
 
+  // src/selectors.ts
+  var VIDEO_CARD_SELECTORS = [
+    "div.bili-video-card",
+    // 首页 / 分区 / 搜索
+    "div.video-page-card-small",
+    // 播放页右侧推荐
+    "li.bili-rank-list-video__item",
+    // 分区右侧热门
+    "div.video-card",
+    // 综合热门 / 每周必看 / 入站必刷
+    "li.rank-item",
+    // 排行榜
+    "div.video-card-reco",
+    "div.video-card-common",
+    "div.bili-dyn-list__item",
+    // 动态信息流（t.bilibili.com）
+    "div.floor-card.single-card"
+    // 首页信息流里的「直播推荐」单卡（链向 live.bilibili.com）
+  ];
+  var VIDEO_PAGE_UP_BOX = ".up-info-container, .membersinfo-upcard, .up-detail, .video-info-container";
+  var VIDEO_PAGE_UP_NAME = ".up-name, .up-name__text";
+  var PAGE_HEADER_SELECTOR = ".bili-header, #biliMainHeader, #bili-header-container";
+  var CELL_CONTAINERS = [
+    "div.feed-card",
+    // 首页信息流网格项（.container 的直接子元素，必须优先）
+    "div.floor-single-card",
+    // 首页「直播推荐」单卡的带宽高占位外层，只隐内层会留黑框
+    "div.bili-feed-card",
+    // 兜底：无外层 .feed-card 的场景（旧版式/其它信息流）
+    // 放最后：原生选择器优先。BewlyCat 的网格项是 .video-card-container（内层才是 .video-card），
+    // 不登记的话隐藏内层会在它的网格里留下一个空洞。该类名在原生 B 站不存在，无回归风险。
+    "div.video-card-container"
+  ];
+  var UNSAFE_HIDE_CONTAINERS = ".container, .feed2, .bili-feed4, #i_cecream, #app, .bili-header";
+  var SWIPE_BANNER = ".recommended-swipe";
+  var CARD_TITLE_SELECTORS = [
+    ".bili-video-card__info--tit",
+    ".video-name",
+    "h3[title]",
+    ".title",
+    ".bili-dyn-card-video__title",
+    // 动态内视频标题
+    ".dyn-card-opus__title",
+    // 动态专栏/图文标题
+    ".bili-dyn-content__orig__desc",
+    // 动态正文（文字动态，便于关键词命中）
+    ".video-card-title"
+    // BewlyCat 卡片标题
+  ];
+  var CARD_UP_SELECTORS = [
+    ".bili-video-card__info--author",
+    ".up-name__text",
+    ".up-name",
+    ".bili-video-card__info--owner span",
+    ".upname .name",
+    ".bili-dyn-title__text",
+    // 动态发布者
+    ".channel-name"
+    // BewlyCat 的 UP 名（其作者链接仍是 //space.bilibili.com/{mid}，UID 照常抠得到）
+  ];
+  var CARD_PARTITION_SELECTORS = [".bili-video-card__info--tag", ".rcmd-tag"];
+  var CARD_DURATION_SELECTORS = [
+    ".bili-video-card__stats__duration",
+    ".duration",
+    ".bili-dyn-card-video__duration",
+    ".video-card-cover-stats__item--duration"
+    // BewlyCat
+  ];
+  var CARD_VIEWS_SELECTORS = [
+    ".bili-video-card__stats--item",
+    ".play-text",
+    ".cover-stat-view .video-card-cover-stats__value"
+    // BewlyCat
+  ];
+  var CARD_LIKES_SELECTORS = [".cover-stat-like .video-card-cover-stats__value"];
+  var CARD_MID_ATTR_SELECTOR = "[data-mid],[data-up-mid],[data-user-id]";
+  var CARD_MID_ATTRS = ["data-mid", "data-up-mid", "data-user-id"];
+  var LIVE_CARD_SELECTOR = '.bili-live-card, [class*="live-card"]';
+  var AD_CARD_SELECTORS = [
+    ".bili-video-card__info--ad",
+    'a[href*="cm.bilibili.com"]',
+    'a[href*="//mall.bilibili.com"]',
+    'a[href*="specialRecommendByOp"]'
+  ];
+  var AD_CARD_SELECTOR = AD_CARD_SELECTORS.join(",");
+  var HOTSEARCH_SELECTORS = [
+    ".trending",
+    ".search-panel .trending-list",
+    ".search-panel-popover .trending",
+    '.bili-header [class*="trending"]',
+    '.center-search-container [class*="trending"]',
+    '.search-panel [class*="trending"]',
+    '.history-panel [class*="trending"]'
+  ];
+  var COMMENT_TAGS = {
+    "BILI-COMMENT-THREAD-RENDERER": false,
+    "BILI-COMMENT-REPLY-RENDERER": true
+  };
+  function isCommentTag(tagName) {
+    return COMMENT_TAGS[tagName] !== void 0;
+  }
+
+  // src/page.ts
+  var IS_SEARCH = location.host === "search.bilibili.com";
+  var IS_DYNAMIC = location.host === "t.bilibili.com";
+  function pageType() {
+    const h = location.href;
+    if (IS_DYNAMIC) return "动态";
+    if (h.includes("/v/popular/rank") || h.includes("/ranking")) return "排行榜";
+    if (h.includes("/v/popular")) return "热门";
+    if (IS_SEARCH) return "搜索页";
+    if (/^https:\/\/www\.bilibili\.com\/?($|\?|#)/.test(h)) return "首页";
+    if (h.includes("/video/")) return "播放页";
+    return "其他";
+  }
+  var VIDEO_CARD_SELECTOR = VIDEO_CARD_SELECTORS.join(",");
+  var UNPROCESSED_CARD_SELECTOR = VIDEO_CARD_SELECTORS.map((s) => s + `:not([${PROCESSED}])`).join(",");
+  function cellOf(el) {
+    for (const sel of CELL_CONTAINERS) {
+      const fc = el.closest(sel);
+      if (fc) return fc;
+    }
+    if (IS_SEARCH && el.parentElement && el.parentElement !== document.body) return el.parentElement;
+    return el;
+  }
+  function isUnsafeHideTarget(el) {
+    if (!el || el === document.body || el === document.documentElement) return true;
+    if (el.matches && el.matches(UNSAFE_HIDE_CONTAINERS)) return true;
+    try {
+      if (el.querySelectorAll(VIDEO_CARD_SELECTOR).length > 1) return true;
+    } catch (e) {
+    }
+    return false;
+  }
+
+  // src/health.ts
+  var API_RE = /api\.bilibili\.com\/x\/|\/x\/web-interface\//;
+  var FEED_LIKE_RE = /\/(feed\/rcmd|ranking\/v\d|popular|archive\/related|search\/type|search\/all)/;
+  var health = {
+    apiSeen: 0,
+    // 见到的 B 站数据接口请求数（含未被 hook 的）
+    feedLike: 0,
+    // 其中「形似推荐流」的请求数（判断该不该报警的前提）
+    feedMatched: 0,
+    // 命中 FEED_HOOKS 的响应数
+    feedParsed: 0,
+    // 命中后又成功取出可过滤列表的响应数
+    feedItems: 0,
+    // 累计经过拦截层判定的列表项数
+    cardsSeen: 0,
+    // DOM 兜底层识别到的视频卡数
+    signedSkipped: 0,
+    // 因携带 WBI 签名(w_rid)而放弃改写的请求数（见 net.ts SIGNED_RE）
+    noteRequest(url) {
+      if (!url || !API_RE.test(url)) return;
+      this.apiSeen++;
+      if (FEED_LIKE_RE.test(url)) this.feedLike++;
+    }
+  };
+  var ready = false;
+  function markHealthReady() {
+    ready = true;
+  }
+  function healthDegraded() {
+    if (!ready) return false;
+    if (health.feedLike > 0 && health.feedMatched === 0) return true;
+    if (health.feedMatched > 0 && health.feedParsed === 0) return true;
+    return pageType() !== "其他" && health.cardsSeen === 0;
+  }
+  var timings = /* @__PURE__ */ new Map();
+  var timingOn = false;
+  function setTimingEnabled(on) {
+    timingOn = on;
+    if (!on) timings.clear();
+  }
+  function timed(label, fn) {
+    if (!timingOn || typeof performance === "undefined") return fn();
+    const t0 = performance.now();
+    try {
+      return fn();
+    } finally {
+      const dt = performance.now() - t0;
+      let e = timings.get(label);
+      if (!e) timings.set(label, e = { n: 0, ms: 0, max: 0 });
+      e.n++;
+      e.ms += dt;
+      if (dt > e.max) e.max = dt;
+    }
+  }
+  function timingReport() {
+    return [...timings.entries()].sort((a, b) => b[1].ms - a[1].ms).map(([k, v]) => `${k}: ${v.n} 次 · 共 ${v.ms.toFixed(1)}ms · 均 ${(v.ms / v.n).toFixed(2)}ms · 峰 ${v.max.toFixed(1)}ms`);
+  }
+  function healthReport() {
+    const w = [];
+    if (health.feedLike > 0 && health.feedMatched === 0) {
+      w.push(`本页发出了 ${health.feedLike} 个形似推荐流的接口请求，却没有一个命中拦截规则表：接口路径可能已变更，拦截层当前未生效。请更新脚本或提 Issue。`);
+    } else if (health.feedMatched > 0 && health.feedParsed === 0) {
+      w.push("已捕获到推荐接口响应，但取不出其中的视频列表：接口返回结构可能已变更，拦截层当前未生效。请更新脚本或提 Issue。");
+    }
+    if (health.signedSkipped > 0) {
+      w.push(
+        `有 ${health.signedSkipped} 个请求因携带 WBI 签名（w_rid）而放弃改写：签名覆盖全部查询参数，改动会被 B 站判为 -403 校验失败。目前唯一会改写请求的功能是「进阶 → 增大首页推荐每批加载数量」，它在这些已签名的接口上不会生效（不影响屏蔽本身），可以关掉。`
+      );
+    }
+    if (pageType() !== "其他" && health.cardsSeen === 0) {
+      w.push("未识别到任何视频卡：卡片选择器可能已失效，DOM 兜底层当前未生效。请更新脚本或提 Issue。");
+    }
+    return w;
+  }
+  function healthNotes() {
+    const n = [];
+    if (health.feedMatched === 0 && health.feedLike === 0) {
+      n.push("本页尚未发生推荐流接口请求，拦截层暂无用武之地——B 站首屏是服务端直出的，滚动或点「换一换」加载更多后再看这里。当前屏蔽由 DOM 兜底层完成。");
+    }
+    return n;
+  }
+  function healthSummary() {
+    return `页面 ${pageType()} · 接口请求 ${health.apiSeen}（形似推荐流 ${health.feedLike}）· 命中推荐接口 ${health.feedMatched} · 解析出列表 ${health.feedParsed}（${health.feedItems} 项）· 识别卡片 ${health.cardsSeen}` + // 常态是 0，只有开了改写类功能且撞上已签名接口才非 0——恒显示只会变成没人看的噪音。
+    (health.signedSkipped ? ` · 因 WBI 签名放弃改写 ${health.signedSkipped}` : "");
+  }
+
   // src/config.ts
   var DEFAULT_CONFIG = {
     schemaVersion: SCHEMA_VERSION,
@@ -366,6 +587,9 @@
     return out;
   }
   function saveConfig() {
+    timed("config.save", saveConfigInner);
+  }
+  function saveConfigInner() {
     const stored = readJson(STORE_KEY);
     const mine = snapshotConfig();
     const merged = stored ? threeWayMerge(baseSnapshot, mine, stripStats(migrateConfig(stored))) : mine;
@@ -504,203 +728,6 @@
     };
   }
 
-  // src/selectors.ts
-  var VIDEO_CARD_SELECTORS = [
-    "div.bili-video-card",
-    // 首页 / 分区 / 搜索
-    "div.video-page-card-small",
-    // 播放页右侧推荐
-    "li.bili-rank-list-video__item",
-    // 分区右侧热门
-    "div.video-card",
-    // 综合热门 / 每周必看 / 入站必刷
-    "li.rank-item",
-    // 排行榜
-    "div.video-card-reco",
-    "div.video-card-common",
-    "div.bili-dyn-list__item",
-    // 动态信息流（t.bilibili.com）
-    "div.floor-card.single-card"
-    // 首页信息流里的「直播推荐」单卡（链向 live.bilibili.com）
-  ];
-  var VIDEO_PAGE_UP_BOX = ".up-info-container, .membersinfo-upcard, .up-detail, .video-info-container";
-  var VIDEO_PAGE_UP_NAME = ".up-name, .up-name__text";
-  var PAGE_HEADER_SELECTOR = ".bili-header, #biliMainHeader, #bili-header-container";
-  var CELL_CONTAINERS = [
-    "div.feed-card",
-    // 首页信息流网格项（.container 的直接子元素，必须优先）
-    "div.floor-single-card",
-    // 首页「直播推荐」单卡的带宽高占位外层，只隐内层会留黑框
-    "div.bili-feed-card",
-    // 兜底：无外层 .feed-card 的场景（旧版式/其它信息流）
-    // 放最后：原生选择器优先。BewlyCat 的网格项是 .video-card-container（内层才是 .video-card），
-    // 不登记的话隐藏内层会在它的网格里留下一个空洞。该类名在原生 B 站不存在，无回归风险。
-    "div.video-card-container"
-  ];
-  var UNSAFE_HIDE_CONTAINERS = ".container, .feed2, .bili-feed4, #i_cecream, #app, .bili-header";
-  var SWIPE_BANNER = ".recommended-swipe";
-  var CARD_TITLE_SELECTORS = [
-    ".bili-video-card__info--tit",
-    ".video-name",
-    "h3[title]",
-    ".title",
-    ".bili-dyn-card-video__title",
-    // 动态内视频标题
-    ".dyn-card-opus__title",
-    // 动态专栏/图文标题
-    ".bili-dyn-content__orig__desc",
-    // 动态正文（文字动态，便于关键词命中）
-    ".video-card-title"
-    // BewlyCat 卡片标题
-  ];
-  var CARD_UP_SELECTORS = [
-    ".bili-video-card__info--author",
-    ".up-name__text",
-    ".up-name",
-    ".bili-video-card__info--owner span",
-    ".upname .name",
-    ".bili-dyn-title__text",
-    // 动态发布者
-    ".channel-name"
-    // BewlyCat 的 UP 名（其作者链接仍是 //space.bilibili.com/{mid}，UID 照常抠得到）
-  ];
-  var CARD_PARTITION_SELECTORS = [".bili-video-card__info--tag", ".rcmd-tag"];
-  var CARD_DURATION_SELECTORS = [
-    ".bili-video-card__stats__duration",
-    ".duration",
-    ".bili-dyn-card-video__duration",
-    ".video-card-cover-stats__item--duration"
-    // BewlyCat
-  ];
-  var CARD_VIEWS_SELECTORS = [
-    ".bili-video-card__stats--item",
-    ".play-text",
-    ".cover-stat-view .video-card-cover-stats__value"
-    // BewlyCat
-  ];
-  var CARD_LIKES_SELECTORS = [".cover-stat-like .video-card-cover-stats__value"];
-  var CARD_MID_ATTR_SELECTOR = "[data-mid],[data-up-mid],[data-user-id]";
-  var CARD_MID_ATTRS = ["data-mid", "data-up-mid", "data-user-id"];
-  var LIVE_CARD_SELECTOR = '.bili-live-card, [class*="live-card"]';
-  var AD_CARD_SELECTORS = [
-    ".bili-video-card__info--ad",
-    'a[href*="cm.bilibili.com"]',
-    'a[href*="//mall.bilibili.com"]',
-    'a[href*="specialRecommendByOp"]'
-  ];
-  var AD_CARD_SELECTOR = AD_CARD_SELECTORS.join(",");
-  var HOTSEARCH_SELECTORS = [
-    ".trending",
-    ".search-panel .trending-list",
-    ".search-panel-popover .trending",
-    '.bili-header [class*="trending"]',
-    '.center-search-container [class*="trending"]',
-    '.search-panel [class*="trending"]',
-    '.history-panel [class*="trending"]'
-  ];
-  var COMMENT_TAGS = {
-    "BILI-COMMENT-THREAD-RENDERER": false,
-    "BILI-COMMENT-REPLY-RENDERER": true
-  };
-  function isCommentTag(tagName) {
-    return COMMENT_TAGS[tagName] !== void 0;
-  }
-
-  // src/page.ts
-  var IS_SEARCH = location.host === "search.bilibili.com";
-  var IS_DYNAMIC = location.host === "t.bilibili.com";
-  function pageType() {
-    const h = location.href;
-    if (IS_DYNAMIC) return "动态";
-    if (h.includes("/v/popular/rank") || h.includes("/ranking")) return "排行榜";
-    if (h.includes("/v/popular")) return "热门";
-    if (IS_SEARCH) return "搜索页";
-    if (/^https:\/\/www\.bilibili\.com\/?($|\?|#)/.test(h)) return "首页";
-    if (h.includes("/video/")) return "播放页";
-    return "其他";
-  }
-  var VIDEO_CARD_SELECTOR = VIDEO_CARD_SELECTORS.join(",");
-  function cellOf(el) {
-    for (const sel of CELL_CONTAINERS) {
-      const fc = el.closest(sel);
-      if (fc) return fc;
-    }
-    if (IS_SEARCH && el.parentElement && el.parentElement !== document.body) return el.parentElement;
-    return el;
-  }
-  function isUnsafeHideTarget(el) {
-    if (!el || el === document.body || el === document.documentElement) return true;
-    if (el.matches && el.matches(UNSAFE_HIDE_CONTAINERS)) return true;
-    try {
-      if (el.querySelectorAll(VIDEO_CARD_SELECTOR).length > 1) return true;
-    } catch (e) {
-    }
-    return false;
-  }
-
-  // src/health.ts
-  var API_RE = /api\.bilibili\.com\/x\/|\/x\/web-interface\//;
-  var FEED_LIKE_RE = /\/(feed\/rcmd|ranking\/v\d|popular|archive\/related|search\/type|search\/all)/;
-  var health = {
-    apiSeen: 0,
-    // 见到的 B 站数据接口请求数（含未被 hook 的）
-    feedLike: 0,
-    // 其中「形似推荐流」的请求数（判断该不该报警的前提）
-    feedMatched: 0,
-    // 命中 FEED_HOOKS 的响应数
-    feedParsed: 0,
-    // 命中后又成功取出可过滤列表的响应数
-    feedItems: 0,
-    // 累计经过拦截层判定的列表项数
-    cardsSeen: 0,
-    // DOM 兜底层识别到的视频卡数
-    signedSkipped: 0,
-    // 因携带 WBI 签名(w_rid)而放弃改写的请求数（见 net.ts SIGNED_RE）
-    noteRequest(url) {
-      if (!url || !API_RE.test(url)) return;
-      this.apiSeen++;
-      if (FEED_LIKE_RE.test(url)) this.feedLike++;
-    }
-  };
-  var ready = false;
-  function markHealthReady() {
-    ready = true;
-  }
-  function healthDegraded() {
-    if (!ready) return false;
-    if (health.feedLike > 0 && health.feedMatched === 0) return true;
-    if (health.feedMatched > 0 && health.feedParsed === 0) return true;
-    return pageType() !== "其他" && health.cardsSeen === 0;
-  }
-  function healthReport() {
-    const w = [];
-    if (health.feedLike > 0 && health.feedMatched === 0) {
-      w.push(`本页发出了 ${health.feedLike} 个形似推荐流的接口请求，却没有一个命中拦截规则表：接口路径可能已变更，拦截层当前未生效。请更新脚本或提 Issue。`);
-    } else if (health.feedMatched > 0 && health.feedParsed === 0) {
-      w.push("已捕获到推荐接口响应，但取不出其中的视频列表：接口返回结构可能已变更，拦截层当前未生效。请更新脚本或提 Issue。");
-    }
-    if (health.signedSkipped > 0) {
-      w.push(
-        `有 ${health.signedSkipped} 个请求因携带 WBI 签名（w_rid）而放弃改写：签名覆盖全部查询参数，改动会被 B 站判为 -403 校验失败。目前唯一会改写请求的功能是「进阶 → 增大首页推荐每批加载数量」，它在这些已签名的接口上不会生效（不影响屏蔽本身），可以关掉。`
-      );
-    }
-    if (pageType() !== "其他" && health.cardsSeen === 0) {
-      w.push("未识别到任何视频卡：卡片选择器可能已失效，DOM 兜底层当前未生效。请更新脚本或提 Issue。");
-    }
-    return w;
-  }
-  function healthNotes() {
-    const n = [];
-    if (health.feedMatched === 0 && health.feedLike === 0) {
-      n.push("本页尚未发生推荐流接口请求，拦截层暂无用武之地——B 站首屏是服务端直出的，滚动或点「换一换」加载更多后再看这里。当前屏蔽由 DOM 兜底层完成。");
-    }
-    return n;
-  }
-  function healthSummary() {
-    return `页面 ${pageType()} · 接口请求 ${health.apiSeen}（形似推荐流 ${health.feedLike}）· 命中推荐接口 ${health.feedMatched} · 解析出列表 ${health.feedParsed}（${health.feedItems} 项）· 识别卡片 ${health.cardsSeen}` + // 常态是 0，只有开了改写类功能且撞上已签名接口才非 0——恒显示只会变成没人看的噪音。
-    (health.signedSkipped ? ` · 因 WBI 签名放弃改写 ${health.signedSkipped}` : "");
-  }
-
   // src/util.ts
   function getCookie(name) {
     const m = document.cookie.match(new RegExp("(^|;\\s*)" + name + "=([^;]*)"));
@@ -774,10 +801,6 @@
         }
       }
     }
-    if (!info.uid && deepUid) {
-      info.uid = (card.innerHTML.match(/space\.bilibili\.com\/(\d+)/) || [])[1] || "";
-      if (!info.uid) info.uid = (card.innerHTML.match(/"(?:mid|owner_?id|up_?mid)"\s*:\s*"?(\d{2,})"?/) || [])[1] || "";
-    }
     info.partition = pickText(card, CARD_PARTITION_SELECTORS);
     const aVideo = card.querySelector('a[href*="/video/"]');
     if (aVideo) {
@@ -800,7 +823,13 @@
       }
     }
     const { detectAd } = getDetect();
-    info.isLive = !!(card.querySelector('a[href*="live.bilibili.com"]') || card.querySelector(LIVE_CARD_SELECTOR) || /直播中|正在直播/.test(card.textContent || ""));
+    const text = card.textContent || "";
+    info.isLive = !!(card.querySelector('a[href*="live.bilibili.com"]') || card.querySelector(LIVE_CARD_SELECTOR) || /直播中|正在直播/.test(text));
+    if (!info.uid && deepUid && text.trim()) {
+      const html = card.innerHTML;
+      info.uid = (html.match(/space\.bilibili\.com\/(\d+)/) || [])[1] || "";
+      if (!info.uid) info.uid = (html.match(/"(?:mid|owner_?id|up_?mid)"\s*:\s*"?(\d{2,})"?/) || [])[1] || "";
+    }
     if (detectAd && !info.isLive) {
       const adBadge = () => Array.from(card.querySelectorAll("span,div")).some((el) => {
         const tx = (el.textContent || "").trim();
@@ -877,9 +906,17 @@
   function configureFuzzy(fn) {
     getFuzzy = fn;
   }
+  var memoSrc;
+  var memoFuzzy;
+  var memoOut = "";
   function normMatch(s) {
+    const fuzzy = getFuzzy();
+    if (s === memoSrc && fuzzy === memoFuzzy) return memoOut;
     let t = stripInvisible(toHalfWidth(s)).toLowerCase();
-    if (getFuzzy()) t = t.replace(SEP_RE, "");
+    if (fuzzy) t = t.replace(SEP_RE, "");
+    memoSrc = s;
+    memoFuzzy = fuzzy;
+    memoOut = t;
     return t;
   }
   var MAX_REGEX_LEN = 1e3;
@@ -2427,21 +2464,17 @@
     }
     return out;
   }
-  function queryCards() {
-    return queryAllRoots(VIDEO_CARD_SELECTOR);
-  }
   function scanAll() {
     if (!CONFIG.enabled) return;
-    const cards = queryCards();
+    const cards = timed("scan.query", () => queryAllRoots(UNPROCESSED_CARD_SELECTOR));
     if (cards.length > health.cardsSeen) health.cardsSeen = cards.length;
     cards.forEach((card) => {
-      if (card.getAttribute(PROCESSED)) return;
       if (card.closest && card.closest(SWIPE_BANNER)) return;
       processCard(card);
     });
   }
   function rescanAfterRuleChange() {
-    rebuildRules();
+    timed("rules.rebuild", rebuildRules);
     queryAllRoots("[" + PROCESSED + "]").forEach((el) => {
       el.removeAttribute(PROCESSED);
       el.removeAttribute(ATTR_API);
@@ -3534,7 +3567,12 @@
     let manage = false;
     let query = "";
     const selected = /* @__PURE__ */ new Set();
-    const visible = () => filterBy(model.entries(), query, (e) => model.texts ? model.texts(e) : [String(e.value)]);
+    let visCache = null;
+    const visible = () => {
+      if (!visCache) visCache = filterBy(model.entries(), query, (e) => model.texts ? model.texts(e) : [String(e.value)]);
+      return visCache;
+    };
+    const invalidateVis = () => visCache = null;
     const filtering = () => !!query.trim();
     const renderBar = () => {
       bar.innerHTML = "";
@@ -3558,11 +3596,11 @@
       }
       mk(filtering() ? "全选匹配" : "全选", () => {
         visible().forEach((e) => selected.add(e.key));
-        renderChips();
+        syncSelection();
       });
       mk("反选", () => {
         visible().forEach((e) => selected.has(e.key) ? selected.delete(e.key) : selected.add(e.key));
-        renderChips();
+        syncSelection();
       });
       mk(`删除所选(${selected.size})`, () => {
         if (!selected.size) {
@@ -3603,7 +3641,17 @@
         renderChips();
       });
     };
+    const syncSelection = () => {
+      const nodes = chips.querySelectorAll(".chip");
+      let i = 0;
+      for (const e of visible().slice(0, CHIP_RENDER_MAX)) {
+        const node = nodes[i++];
+        if (node) node.classList.toggle("sel", selected.has(e.key));
+      }
+      renderBar();
+    };
     const renderChips = () => {
+      invalidateVis();
       chips.innerHTML = "";
       const total = model.count();
       const list = visible();
@@ -3636,7 +3684,8 @@
           chip.onclick = () => {
             if (selected.has(entry.key)) selected.delete(entry.key);
             else selected.add(entry.key);
-            renderChips();
+            chip.classList.toggle("sel", selected.has(entry.key));
+            renderBar();
           };
         } else {
           if (entry.path) {
@@ -3841,7 +3890,7 @@
       <div class="switch"><input type="checkbox" id="bfb-hoverbtn"> 悬停卡片显示快捷「拉黑 / 不看这个」按钮</div>
       <div class="switch"><input type="checkbox" id="bfb-collab"> 联合投稿一并拉黑合作者</div>
       <div class="switch"><input type="checkbox" id="bfb-fuzzy"> 反绕过模糊匹配（「原 神」「原.神」同样拦截；隐形字符始终拦截）</div>
-      <div class="switch"><input type="checkbox" id="bfb-debug"> 调试模式（控制台逐卡打印拦截 / 放行原因）</div>
+      <div class="switch"><input type="checkbox" id="bfb-debug"> 调试模式（控制台逐卡打印拦截 / 放行原因；并在「工具 → 运行自检」里记录耗时）</div>
       <div class="hint">所有开关与规则均<b>即时生效</b>，无需保存。切换<b>审查模式</b>后建议<b>刷新页面</b>以核对完整结果。如需让视频真正从推荐流中消失，请使用<b>拉黑</b>。</div>`;
       host.appendChild(sw);
       bindControl(sw, "bfb-enabled", CONFIG, "enabled", {
@@ -3855,7 +3904,12 @@
       bindControl(sw, "bfb-hoverbtn", CONFIG, "cardHoverBtn", { after: hideHoverBtn });
       bindControl(sw, "bfb-collab", CONFIG, "blacklistCollab");
       bindControl(sw, "bfb-fuzzy", CONFIG, "fuzzyMatch", { after: rescanAfterRuleChange });
-      bindControl(sw, "bfb-debug", CONFIG, "debug", { after: rescanAfterRuleChange });
+      bindControl(sw, "bfb-debug", CONFIG, "debug", {
+        after: () => {
+          setTimingEnabled(CONFIG.debug);
+          rescanAfterRuleChange();
+        }
+      });
       const ct = document.createElement("div");
       ct.className = "sec";
       ct.innerHTML = `
@@ -4684,12 +4738,16 @@
       sec.className = "sec";
       sec.innerHTML = `<label>🩺 运行自检 <button class="act ghost" id="bfb-health-refresh" style="float:right">刷新</button></label>
       <div class="stat" id="bfb-health-sum"></div>
-      <div id="bfb-health-warn" style="margin-top:6px"></div>`;
+      <div id="bfb-health-warn" style="margin-top:6px"></div>
+      <div id="bfb-health-timing" style="margin-top:6px"></div>`;
       host.appendChild(sec);
       const sumEl = q(sec, "#bfb-health-sum");
       const warnEl = q(sec, "#bfb-health-warn");
+      const timeEl = q(sec, "#bfb-health-timing");
       const refresh = () => {
         sumEl.textContent = healthSummary();
+        const t = timingReport();
+        timeEl.innerHTML = t.length ? '<label style="margin-top:8px">⏱ 耗时采样（调试模式）</label>' + t.map((x) => `<div class="stat">${escapeHtml(x)}</div>`).join("") + '<div class="hint">「共」是累计，「峰」是单次最慢——卡顿看峰值，写放大看次数。关闭调试模式即清零。</div>' : "";
         const w = healthReport();
         if (w.length) {
           warnEl.innerHTML = w.map((x) => `<div class="hint" style="color:#e74c3c">⚠ ${escapeHtml(x)}</div>`).join("");
@@ -5148,6 +5206,7 @@ ${r.line}`, {
   (function() {
     "use strict";
     configureCardDetect(() => ({ detectAd: CONFIG.hideAd }));
+    setTimingEnabled(CONFIG.debug);
     setPanelHooks({
       refreshPanelIfOpen: () => refreshPanelIfOpen2(),
       openPanel: () => openPanel2()

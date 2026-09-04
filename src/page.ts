@@ -1,6 +1,7 @@
 // 页面模型：识别当前页类型、定位“内层视频卡”与要隐藏的网格格子。
 // 选择器字符串本身统一登记在 ./selectors，本文件只负责「怎么用」。
 import { CELL_CONTAINERS, UNSAFE_HIDE_CONTAINERS, VIDEO_CARD_SELECTORS } from './selectors';
+import { PROCESSED } from './constants';
 
 const IS_SEARCH = location.host === 'search.bilibili.com';
 const IS_DYNAMIC = location.host === 't.bilibili.com';
@@ -18,6 +19,12 @@ export function pageType(): string {
 
 // 「内层视频卡」选择器（兼容首页 / 热门 / 排行榜 / 搜索 / 播放页）。
 export const VIDEO_CARD_SELECTOR = VIDEO_CARD_SELECTORS.join(',');
+
+// 「还没处理过的卡」。扫描热路径专用：把「跳过已处理」交给选择器引擎，
+// 而不是把整页卡片取回来再逐个 getAttribute——稳态下绝大多数卡都是已处理的，
+// 那一遍遍历纯属白做（每 250ms 一次 × 页面上所有卡）。
+// 逐条加后缀而不是给整串包一层：`a,b:not(x)` 只会作用在最后一段上。
+export const UNPROCESSED_CARD_SELECTOR = VIDEO_CARD_SELECTORS.map((s) => s + `:not([${PROCESSED}])`).join(',');
 
 // 定位要隐藏的网格格子：显式有序链，避免破坏布局。
 export function cellOf(el: Element): Element {

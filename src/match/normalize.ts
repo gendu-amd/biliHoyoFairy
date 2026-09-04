@@ -29,9 +29,21 @@ export function configureFuzzy(fn: () => boolean): void {
 }
 
 // 匹配前对文本的归一：全角→半角 + 小写 + 去隐形（+ fuzzy 时去分隔符）。普通词编译时用同一套，保证两侧一致。
+//
+// 单格 memo：kwHit 对同一段文本要调两次（无前缀词 + 带前缀词各一次），一张卡的标题/UP名/分区
+// 加起来 6~8 次，而每次都是三到四遍全串扫描。缓存 key 必须带上 fuzzy 开关——它一变归一结果就变，
+// 否则改完开关会继续用旧结果匹配（静默失效）。单格足够：调用点天然是「对同一段文本连着问几次」。
+let memoSrc: unknown;
+let memoFuzzy: boolean | undefined;
+let memoOut = '';
 export function normMatch(s: unknown): string {
+  const fuzzy = getFuzzy();
+  if (s === memoSrc && fuzzy === memoFuzzy) return memoOut;
   let t = stripInvisible(toHalfWidth(s)).toLowerCase();
-  if (getFuzzy()) t = t.replace(SEP_RE, '');
+  if (fuzzy) t = t.replace(SEP_RE, '');
+  memoSrc = s;
+  memoFuzzy = fuzzy;
+  memoOut = t;
   return t;
 }
 
