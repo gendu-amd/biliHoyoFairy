@@ -271,20 +271,45 @@ export const REASON_RULE_FIELD: Record<string, RuleListField> = {
 
 // 从一条屏蔽原因反查到用户名单里的**那一行**规则（供 UI 一键删除）。
 // 找不到 = 该规则不在用户自己的名单里，多半来自已启用的订阅——此时不能假装能删。
+// 反查索引：`维度:规则` → 名单里的原行。跟着 ruleVersion 失效，规则一变自动重建。
+//
+// 为什么要索引：屏蔽记录面板一次渲染最多 100 行，每行都要调一次 locateRule 判断「能不能删这条规则」，
+// 而它原本是**线性扫描该维度的全部规则行**、每行还 trim 两次 + 跑一次正则。
+// 5 万条 UID 名单 × 100 行 = 单次刷新 500 万次比较，而这在滚首页时会被反复触发。
+// 建一次表是 O(名单长度)，之后每次查询 O(1)。
+let locIndex: Map<string, { field: RuleListField; line: string }> | null = null;
+let locIndexVer = -1;
+
+function buildLocIndex(): Map<string, { field: RuleListField; line: string }> {
+  const idx = new Map<string, { field: RuleListField; line: string }>();
+  for (const dim of Object.keys(REASON_RULE_FIELD)) {
+    const field = REASON_RULE_FIELD[dim];
+    for (const line of ruleLines(CONFIG.block[field])) {
+      const t = line.trim();
+      if (!t) continue;
+      // 先登记原行本身
+      if (!idx.has(dim + ':' + t)) idx.set(dim + ':' + t, { field, line });
+      // 关键词的 title:/up:/part: 前缀在编译时已被剥掉，原因串里是剥后的词，
+      // 回查必须认得带前缀的原行，否则会把用户自己的规则误判成「来自订阅」。
+      const m = !t.startsWith('/') && t.match(/^(?:title|up|part)\s*:\s*(.+)$/i);
+      if (m) {
+        const k = dim + ':' + m[1].trim();
+        if (!idx.has(k)) idx.set(k, { field, line });
+      }
+    }
+  }
+  return idx;
+}
+
 export function locateRule(reason: string): { field: RuleListField; line: string } | null {
   const i = reason.indexOf(':');
   if (i <= 0) return null;
-  const field = REASON_RULE_FIELD[reason.slice(0, i)];
-  const rule = reason.slice(i + 1);
-  if (!field || !rule) return null;
-  for (const line of ruleLines(CONFIG.block[field])) {
-    if (line.trim() === rule) return { field, line };
-    // 关键词的 title:/up:/part: 前缀在编译时已被剥掉，原因串里是剥后的词，
-    // 回查必须认得带前缀的原行，否则会把用户自己的规则误判成「来自订阅」。
-    const m = !line.trim().startsWith('/') && line.trim().match(/^(?:title|up|part)\s*:\s*(.+)$/i);
-    if (m && m[1].trim() === rule) return { field, line };
+  if (!REASON_RULE_FIELD[reason.slice(0, i)]) return null;
+  if (!locIndex || locIndexVer !== ruleVersion) {
+    locIndex = buildLocIndex();
+    locIndexVer = ruleVersion;
   }
-  return null;
+  return locIndex.get(reason) || null;
 }
 
 // REASON_RULE_FIELD 的反向表（字段 -> 维度名），供 enumerateRules 由规则行推出原因串。

@@ -19,6 +19,7 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addValueChangeListener
+// @grant        GM_deleteValue
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand
@@ -249,6 +250,7 @@
     }
   }
   var CONFIG = loadConfig();
+  var backupBlobKey = (ts) => BACKUP_KEY + ":" + ts;
   function countRules(cfg) {
     if (!cfg || typeof cfg !== "object") return 0;
     let n = 0;
@@ -262,21 +264,34 @@
     const v = readJson(BACKUP_KEY);
     return Array.isArray(v) ? v : [];
   }
+  function loadBackupRaw(b) {
+    const v = GM_getValue(backupBlobKey(b.ts), null);
+    return typeof v === "string" && v ? v : null;
+  }
   function pushBackup(raw, reason, rules) {
     try {
+      const ts = Date.now();
       const list = loadBackups();
-      list.unshift({ ts: Date.now(), version: VERSION, reason, rules, raw });
-      GM_setValue(BACKUP_KEY, JSON.stringify(list.slice(0, BACKUP_MAX)));
+      list.unshift({ ts, version: VERSION, reason, rules });
+      const keep = list.slice(0, BACKUP_MAX);
+      GM_setValue(backupBlobKey(ts), raw);
+      GM_setValue(BACKUP_KEY, JSON.stringify(keep));
+      for (const old of list.slice(BACKUP_MAX)) {
+        if (typeof GM_deleteValue === "function") GM_deleteValue(backupBlobKey(old.ts));
+        else GM_setValue(backupBlobKey(old.ts), "");
+      }
     } catch (e) {
     }
   }
   function restoreBackup(b) {
     try {
-      const parsed = JSON.parse(b.raw);
+      const raw = loadBackupRaw(b);
+      if (!raw) return false;
+      const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object") return false;
       const cur = GM_getValue(STORE_KEY, null);
       if (typeof cur === "string") pushBackup(cur, "restore", countRules(readJson(STORE_KEY)));
-      GM_setValue(STORE_KEY, b.raw);
+      GM_setValue(STORE_KEY, raw);
       deepMerge(CONFIG, loadConfig());
       baseSnapshot = snapshotConfig();
       return true;
@@ -319,7 +334,8 @@
       seen.add(k);
       const m = mineMap.get(k);
       const b = baseMap.get(k);
-      out.push(m !== void 0 && b !== void 0 && JSON.stringify(m) !== JSON.stringify(b) ? m : x);
+      if (m !== void 0 && b !== void 0 && typeof m !== "string" && JSON.stringify(m) !== JSON.stringify(b)) out.push(m);
+      else out.push(x);
     }
     for (const x of mine) {
       const k = keyOf(x);
@@ -343,7 +359,9 @@
         if (b === void 0) out[k] = t;
       } else if (t === void 0) {
         if (b === void 0 || JSON.stringify(m) !== JSON.stringify(b)) out[k] = m;
-      } else out[k] = JSON.stringify(m) === JSON.stringify(b) ? t : m;
+      } else {
+        out[k] = m === b || JSON.stringify(m) === JSON.stringify(b) ? t : m;
+      }
     }
     return out;
   }
@@ -712,11 +730,9 @@
       map.delete(oldest);
     }
   }
+  var HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
   function escapeHtml(s) {
-    return (s || "").replace(
-      /[&<>"']/g,
-      (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
-    );
+    return (s || "").replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]);
   }
 
   // src/cardinfo.ts
@@ -1041,14 +1057,21 @@
   }
 
   // src/subscriptions/store.ts
+  var cached = null;
+  function invalidateSubStore() {
+    cached = null;
+  }
   function loadSubStore() {
+    if (cached) return cached;
     try {
-      return JSON.parse(GM_getValue(SUB_STORE_KEY, "") || "{}") || {};
+      cached = JSON.parse(GM_getValue(SUB_STORE_KEY, "") || "{}") || {};
     } catch (e) {
-      return {};
+      cached = {};
     }
+    return cached;
   }
   function saveSubStore(store) {
+    cached = store;
     try {
       GM_setValue(SUB_STORE_KEY, JSON.stringify(store));
     } catch (e) {
@@ -1067,6 +1090,11 @@
       }
     }
     return merged;
+  }
+  if (typeof GM_addValueChangeListener === "function") {
+    GM_addValueChangeListener(SUB_STORE_KEY, (_n, _o, _v, remote) => {
+      if (remote) invalidateSubStore();
+    });
   }
 
   // src/match/engine.ts
@@ -1235,18 +1263,34 @@
     双标签: "dualTags",
     UP简介: "upBio"
   };
+  var locIndex = null;
+  var locIndexVer = -1;
+  function buildLocIndex() {
+    const idx = /* @__PURE__ */ new Map();
+    for (const dim of Object.keys(REASON_RULE_FIELD)) {
+      const field = REASON_RULE_FIELD[dim];
+      for (const line of ruleLines(CONFIG.block[field])) {
+        const t = line.trim();
+        if (!t) continue;
+        if (!idx.has(dim + ":" + t)) idx.set(dim + ":" + t, { field, line });
+        const m = !t.startsWith("/") && t.match(/^(?:title|up|part)\s*:\s*(.+)$/i);
+        if (m) {
+          const k = dim + ":" + m[1].trim();
+          if (!idx.has(k)) idx.set(k, { field, line });
+        }
+      }
+    }
+    return idx;
+  }
   function locateRule(reason) {
     const i = reason.indexOf(":");
     if (i <= 0) return null;
-    const field = REASON_RULE_FIELD[reason.slice(0, i)];
-    const rule = reason.slice(i + 1);
-    if (!field || !rule) return null;
-    for (const line of ruleLines(CONFIG.block[field])) {
-      if (line.trim() === rule) return { field, line };
-      const m = !line.trim().startsWith("/") && line.trim().match(/^(?:title|up|part)\s*:\s*(.+)$/i);
-      if (m && m[1].trim() === rule) return { field, line };
+    if (!REASON_RULE_FIELD[reason.slice(0, i)]) return null;
+    if (!locIndex || locIndexVer !== ruleVersion) {
+      locIndex = buildLocIndex();
+      locIndexVer = ruleVersion;
     }
-    return null;
+    return locIndex.get(reason) || null;
   }
   var FIELD_REASON_DIM = {};
   for (const dim of Object.keys(REASON_RULE_FIELD)) FIELD_REASON_DIM[REASON_RULE_FIELD[dim]] = dim;
@@ -1625,6 +1669,9 @@
     if (!root || shadowRoots.has(root)) return;
     shadowRoots.add(root);
     onRoot(root);
+  }
+  function pruneShadowRoots() {
+    for (const r of shadowRoots) if (!r.host || !r.host.isConnected) shadowRoots.delete(r);
   }
   function harvestShadowRoots(root) {
     if (!root || !root.querySelectorAll) return;
@@ -2110,20 +2157,33 @@
     cooldown.delete(k);
     return false;
   }
+  var inflight = /* @__PURE__ */ new Map();
   function cachedGet(cache, cap, ns, key, url, pick, cb) {
     if (!key) return cb(null);
     if (cache.has(key)) return cb(cache.get(key));
     if (inCooldown(ns + key)) return cb(null);
+    const flightKey = ns + key;
+    const waiting = inflight.get(flightKey);
+    if (waiting) {
+      waiting.push(cb);
+      return;
+    }
+    inflight.set(flightKey, [cb]);
+    const settle = (d) => {
+      const cbs = inflight.get(flightKey) || [];
+      inflight.delete(flightKey);
+      for (const f of cbs) f(d);
+    };
     apiEnqueue((done) => {
       gmGet(url, (j) => {
         const code = j && typeof j.code === "number" ? j.code : null;
         if (code === null || RISK_CODES.has(code)) {
           capMapSet(cooldown, ns + key, Date.now() + RETRY_AFTER_MS, COOLDOWN_MAX);
-          cb(null);
+          settle(null);
         } else {
           const d = code === 0 ? pick(j) : null;
           capMapSet(cache, key, d, cap);
-          cb(d);
+          settle(d);
         }
         done();
       });
@@ -2187,6 +2247,41 @@
       saveConfig();
       emitRulesChanged();
     }
+  }
+  function removeEntries(entries) {
+    if (!entries.length) return 0;
+    const byArr = /* @__PURE__ */ new Map();
+    for (const e of entries) {
+      let set = byArr.get(e.arr);
+      if (!set) byArr.set(e.arr, set = /* @__PURE__ */ new Set());
+      set.add(String(e.value));
+    }
+    let n = 0;
+    for (const [arr, kill] of byArr) {
+      let w = 0;
+      for (let r = 0; r < arr.length; r++) {
+        if (kill.has(String(arr[r]))) n++;
+        else arr[w++] = arr[r];
+      }
+      arr.length = w;
+    }
+    if (n) {
+      saveConfig();
+      emitRulesChanged();
+    }
+    return n;
+  }
+  function clearLists(...arrs) {
+    let n = 0;
+    for (const a of arrs) {
+      n += a.length;
+      a.length = 0;
+    }
+    if (n) {
+      saveConfig();
+      emitRulesChanged();
+    }
+    return n;
   }
   function restoreToList(arr, value, at) {
     const v = (value ? String(value) : "").trim();
@@ -2358,6 +2453,7 @@
 
   // src/scanner.ts
   var STEADY_THROTTLE_MS = 250;
+  var PRUNE_ROOTS_MS = 3e4;
   function createScanScheduler(deps) {
     let firstPaint = true;
     let queued = false;
@@ -2388,7 +2484,6 @@
       raf: (cb) => typeof requestAnimationFrame === "function" ? requestAnimationFrame(cb) : setTimeout(cb, 0),
       timeout: (cb, ms) => setTimeout(cb, ms)
     });
-    let sawShadowHost = false;
     const observer = new MutationObserver(
       safe("observer", (muts) => {
         let touched = false;
@@ -2397,27 +2492,22 @@
           touched = true;
           for (const n of m.addedNodes) {
             const el = n;
-            if (n.nodeType === 1 && el.shadowRoot && el.id !== "bfb-overlay-host") {
-              addShadowRoot(el.shadowRoot);
-              sawShadowHost = true;
-            }
+            if (n.nodeType === 1 && el.shadowRoot && el.id !== "bfb-overlay-host") addShadowRoot(el.shadowRoot);
           }
         }
         if (!touched) return;
-        if (sawShadowHost) {
-          sawShadowHost = false;
-          harvestShadowRoots(document);
-        }
         scheduler.request();
       })
     );
     observer.observe(document, { childList: true, subtree: true });
     setShadowRootHandler((root) => {
+      if (root.host && isCommentTag(root.host.tagName)) return;
       try {
         observer.observe(root, { childList: true, subtree: true });
       } catch (e) {
       }
     });
+    setInterval(pruneShadowRoots, PRUNE_ROOTS_MS);
     scanAll();
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", () => scheduler.toSteadyState(), { once: true });
@@ -3374,6 +3464,16 @@
   // src/ui/field.ts
   var collapseState = {};
   var nameBudget = 0;
+  var nameFlushTimer = null;
+  var NAME_FLUSH_MS = 400;
+  function scheduleNameFlush(rerender) {
+    if (nameFlushTimer) clearTimeout(nameFlushTimer);
+    nameFlushTimer = setTimeout(() => {
+      nameFlushTimer = null;
+      saveConfig();
+      rerender();
+    }, NAME_FLUSH_MS);
+  }
   function renderListField(host, o) {
     const model = o.model;
     const el = (t, c) => {
@@ -3469,10 +3569,9 @@
           toast("未勾选任何项");
           return;
         }
-        const n = selected.size;
         const byKey = {};
         model.entries().forEach((e) => byKey[e.key] = e);
-        selected.forEach((k) => byKey[k] && removeFromList(byKey[k].arr, byKey[k].value));
+        const n = removeEntries([...selected].map((k) => byKey[k]).filter(Boolean));
         selected.clear();
         renderChips();
         toast(`已删除 ${n} 条`);
@@ -3484,7 +3583,7 @@
           if (!vis.length) return;
           confirmModal(`确定删除匹配「${query.trim()}」的 ${vis.length} 条？此操作不可撤销（其余 ${model.count() - vis.length} 条保留）。`, { title: "删除匹配项", okText: "删除", danger: true }).then((ok) => {
             if (!ok) return;
-            vis.forEach((e) => removeFromList(e.arr, e.value));
+            removeEntries(vis);
             selected.clear();
             renderChips();
             toast(`已删除 ${vis.length} 条`);
@@ -3613,7 +3712,7 @@
       count: () => arr.length,
       entries: () => arr.map((v) => ({ key: v, value: v, arr, path })),
       clear: () => {
-        arr.length = 0;
+        clearLists(arr);
       },
       add: (raw) => {
         if (groupMode) {
@@ -3650,8 +3749,7 @@
       count: () => names.length + uids.length,
       entries: () => names.map((v) => ({ key: "n:" + v, value: v, arr: names, uid: false, path: namePath })).concat(uids.map((v) => ({ key: "u:" + v, value: v, arr: uids, uid: true, path: uidPath }))),
       clear: () => {
-        names.length = 0;
-        uids.length = 0;
+        clearLists(names, uids);
       },
       add: (raw) => {
         const parts = splitRuleInput(raw);
@@ -3678,8 +3776,7 @@
             const name = d && d.card && d.card.name;
             if (name) {
               setUidName(entry.value, name);
-              saveConfig();
-              rerender();
+              scheduleNameFlush(rerender);
             }
           });
         }
@@ -4154,7 +4251,7 @@
               { title: "恢复配置备份", okText: "恢复" }
             ).then((ok) => {
               if (!ok) return;
-              if (!restoreBackup(b)) return toast("恢复失败：这份备份的内容已损坏", "error");
+              if (!restoreBackup(b)) return toast("恢复失败：这份备份的内容已损坏或被清理", "error");
               rescanAfterRuleChange();
               updateBadge();
               ctx.rerender();
@@ -4788,6 +4885,7 @@ ${r.line}`, {
           logList.innerHTML = '<div class="stat">暂无记录</div>';
           return;
         }
+        const blacklisted = new Set(ruleLines(CONFIG.block.uids));
         blockedLog.slice(0, 100).forEach((b) => {
           const row = document.createElement("div");
           row.className = "log-row";
@@ -4817,7 +4915,7 @@ ${r.line}`, {
             };
             row.appendChild(pass);
           }
-          const isBlacklisted = b.uid && ruleLines(CONFIG.block.uids).includes(String(b.uid));
+          const isBlacklisted = b.uid && blacklisted.has(String(b.uid));
           const loc = b.src === "BL" && isBlacklisted ? null : locateRule(b.reason);
           if (loc) {
             const del = document.createElement("button");

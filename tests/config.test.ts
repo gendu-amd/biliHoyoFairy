@@ -14,6 +14,7 @@ import {
   saveStats,
   countRules,
   loadBackups,
+  loadBackupRaw,
   restoreBackup,
   setConfigNotifier,
 } from '../src/config';
@@ -419,7 +420,8 @@ describe('自动备份：事故之后还有得救', () => {
     const shrink = backups.find((b) => b.reason === 'shrink');
     expect(shrink).toBeTruthy();
     expect(shrink!.rules).toBe(6);
-    expect(JSON.parse(shrink!.raw).block.keywords).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
+    // 内容另存一个键（索引里只留摘要），恢复时才按需读——否则每次开面板都要 JSON.parse 几 MB
+    expect(JSON.parse(loadBackupRaw(shrink!)!).block.keywords).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
     expect(msgs.length).toBe(1);
     setConfigNotifier(() => {});
   });
@@ -435,7 +437,9 @@ describe('自动备份：事故之后还有得救', () => {
   it('restoreBackup 把内容写回存储并载入内存，且先给当前状态留一份后悔药', () => {
     CONFIG.block.keywords.push('原神', '鸣潮');
     saveConfig();
-    const good: any = { ts: 1, version: '0.0.8', reason: 'upgrade', rules: 2, raw: gmStore[STORE_KEY] };
+    // 手工造一份备份：索引项 + 内容键
+    const good: any = { ts: 1, version: '0.0.8', reason: 'upgrade', rules: 2 };
+    gmStore['bfb_backups_v1:1'] = gmStore[STORE_KEY];
 
     CONFIG.block.keywords.length = 0;
     saveConfig();
@@ -447,14 +451,31 @@ describe('自动备份：事故之后还有得救', () => {
     expect(loadBackups().some((b) => b.reason === 'restore')).toBe(true);
   });
 
-  it('备份内容损坏时恢复失败但不抛错', () => {
-    expect(restoreBackup({ ts: 1, version: 'x', reason: 'upgrade', rules: 0, raw: '{oops' } as any)).toBe(false);
+  it('备份内容损坏或已被清理时恢复失败但不抛错', () => {
+    gmStore['bfb_backups_v1:1'] = '{oops';
+    expect(restoreBackup({ ts: 1, version: 'x', reason: 'upgrade', rules: 0 } as any)).toBe(false);
+    expect(restoreBackup({ ts: 999, version: 'x', reason: 'upgrade', rules: 0 } as any)).toBe(false); // 内容键不存在
+  });
+
+  it('超出保留份数的备份，内容键也被清掉（只删索引会留下没人引用的大字符串）', () => {
+    for (let i = 0; i < 7; i++) {
+      CONFIG.block.keywords.push('a', 'b', 'c', 'd', 'e', 'f', 'g');
+      saveConfig();
+      CONFIG.block.keywords.length = 0;
+      saveConfig(); // 每轮触发一次 shrink 备份
+    }
+    const list = loadBackups();
+    expect(list.length).toBe(5);
+    const alive = new Set(list.map((b) => 'bfb_backups_v1:' + b.ts));
+    const orphans = Object.keys(gmStore).filter((k) => k.startsWith('bfb_backups_v1:') && !alive.has(k) && gmStore[k]);
+    expect(orphans).toEqual([]);
   });
 
   it('恢复后合并基准同步重置（否则下一次存盘会把恢复的内容又顶回去）', () => {
     CONFIG.block.keywords.push('原神');
     saveConfig();
-    const good: any = { ts: 1, version: '0.0.8', reason: 'upgrade', rules: 1, raw: gmStore[STORE_KEY] };
+    const good: any = { ts: 1, version: '0.0.8', reason: 'upgrade', rules: 1 };
+    gmStore['bfb_backups_v1:1'] = gmStore[STORE_KEY];
     CONFIG.block.keywords.length = 0;
     saveConfig();
     restoreBackup(good);

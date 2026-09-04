@@ -16,7 +16,8 @@
 // 退化成「不过滤」而不是「看不见内容」——失败方向必须是安全的那一侧。
 
 import { scanAll } from './dom';
-import { addShadowRoot, harvestShadowRoots, setShadowRootHandler } from './shadow';
+import { addShadowRoot, pruneShadowRoots, setShadowRootHandler } from './shadow';
+import { isCommentTag } from './selectors';
 import { safe } from './logging';
 
 export interface ScanScheduler {
@@ -35,6 +36,8 @@ export interface SchedulerDeps {
 }
 
 export const STEADY_THROTTLE_MS = 250;
+// 失效 shadow root 的回收间隔。纯垃圾回收，不影响功能，取长一点即可。
+const PRUNE_ROOTS_MS = 30000;
 
 // 纯策略，依赖注入以便单测用假的 raf/timeout 驱动（node 环境没有真的）。
 export function createScanScheduler(deps: SchedulerDeps): ScanScheduler {
@@ -80,8 +83,6 @@ export function startScanner(): void {
     timeout: (cb, ms) => setTimeout(cb, ms),
   });
 
-  // 本批是否出现新的 shadow host；没有就不做昂贵的全子树采集（host 极少出现，常态零成本）
-  let sawShadowHost = false;
   const observer = new MutationObserver(
     safe('observer', (muts: MutationRecord[]) => {
       let touched = false;
@@ -90,17 +91,15 @@ export function startScanner(): void {
         touched = true;
         for (const n of m.addedNodes) {
           const el = n as Element;
-          if (n.nodeType === 1 && el.shadowRoot && el.id !== 'bfb-overlay-host') {
-            addShadowRoot(el.shadowRoot);
-            sawShadowHost = true;
-          }
+          // 插入时就已挂着 shadowRoot 的节点（先 attachShadow 后 append）。
+          // 走 attachShadow 钩子的那一路更常见，这里只是补齐另一种顺序。
+          if (n.nodeType === 1 && el.shadowRoot && el.id !== 'bfb-overlay-host') addShadowRoot(el.shadowRoot);
         }
       }
       if (!touched) return;
-      if (sawShadowHost) {
-        sawShadowHost = false;
-        harvestShadowRoots(document);
-      }
+      // 这里曾经还会 harvestShadowRoots(document) 全文档扫一遍找 shadow host。删掉了：
+      // attachShadow 已被 hook，新建的 root 一律当场入表，全量采集捞不到任何新东西；
+      // 而「我们注入之前就已存在的 root」由 main 在 DOMContentLoaded 采集一次即可。
       scheduler.request();
     })
   );
@@ -116,12 +115,21 @@ export function startScanner(): void {
   // 注册这一步要在任何采集之前，且 setShadowRootHandler 会对已收集的 root 补跑（main 里的
   // attachShadow 钩子先于本函数安装，可能已经收到过 root）。
   setShadowRootHandler((root) => {
+    // 评论组件的影子树**不挂**卡片观察器：评论里没有视频卡，但它的懒加载、展开楼中楼、
+    // hover 都会持续产生 mutation，每一次都会触发一轮全页卡片重扫（scanAll 要遍历主文档
+    // 加所有 shadow root）。评论有自己的扫描路径（scheduleCommentScan / ruleVersion），
+    // 不需要也不该由卡片观察器来驱动。
+    if (root.host && isCommentTag(root.host.tagName)) return;
     try {
       observer.observe(root, { childList: true, subtree: true });
     } catch (e) {
       /* 个别 root 观察失败不影响其它 */
     }
   });
+
+  // 周期性回收失效的 shadow root。不放在扫描路径里：那条路被 CONFIG.enabled 挡着，
+  // 而「脚本暂停时更不该攥着一堆 detached 子树」恰恰相反。间隔取长一点，纯粹是垃圾回收。
+  setInterval(pruneShadowRoots, PRUNE_ROOTS_MS);
 
   // 装好时可能已经解析出一些卡（脚本注入点之前的那部分 HTML），先扫一遍。
   scanAll();

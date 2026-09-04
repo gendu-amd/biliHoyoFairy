@@ -6,6 +6,9 @@ g.GM_getValue = (k: string, d: unknown) => (k in store ? store[k] : d);
 g.GM_setValue = (k: string, v: string) => {
   store[k] = v;
 };
+g.GM_deleteValue = (k: string) => {
+  delete store[k];
+};
 g.GM_info = { script: { version: '0.0.5' } };
 // 让用例能把存储清空/预置成任意形态（存档损坏的分支只有这样才测得到）。
 g.__gmStore = store;

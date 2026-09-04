@@ -127,21 +127,40 @@ function inCooldown(k: string): boolean {
   return false;
 }
 
+// 在途请求表：同一个 key 第二次进来时不再发第二个请求，而是挂在第一个的回调队列上。
+//
+// 没有它就会重复发：cache 只在**响应回来之后**才写，所以同一 bvid/mid 在这之前来几次就发几次。
+// 现实里这很常见——同一个 UP 的两张卡同屏、面板里一批 UID chip 同时解析名称、
+// 一次重渲把还在飞行中的请求又发一遍。纯浪费之外还实打实地把风控风险抬高了。
+const inflight = new Map<string, ApiCb[]>();
+
 // 三个取数接口的公共骨架：命中缓存/冷却直接回调，否则入队请求并按上面的分流写缓存。
 function cachedGet(cache: Map<string, any>, cap: number, ns: string, key: string, url: string, pick: (j: any) => any, cb: ApiCb): void {
   if (!key) return cb(null);
   if (cache.has(key)) return cb(cache.get(key));
   if (inCooldown(ns + key)) return cb(null);
+  const flightKey = ns + key;
+  const waiting = inflight.get(flightKey);
+  if (waiting) {
+    waiting.push(cb); // 已有同 key 的请求在路上，等它的结果即可
+    return;
+  }
+  inflight.set(flightKey, [cb]);
+  const settle = (d: any) => {
+    const cbs = inflight.get(flightKey) || [];
+    inflight.delete(flightKey);
+    for (const f of cbs) f(d);
+  };
   apiEnqueue((done) => {
     gmGet(url, (j) => {
       const code = j && typeof j.code === 'number' ? j.code : null;
       if (code === null || RISK_CODES.has(code)) {
         capMapSet(cooldown, ns + key, Date.now() + RETRY_AFTER_MS, COOLDOWN_MAX);
-        cb(null);
+        settle(null);
       } else {
         const d = code === 0 ? pick(j) : null;
         capMapSet(cache, key, d, cap);
-        cb(d);
+        settle(d);
       }
       done();
     });

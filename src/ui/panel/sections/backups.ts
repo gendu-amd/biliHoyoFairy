@@ -61,7 +61,7 @@ export const backupsSection: PanelSection = {
             { title: '恢复配置备份', okText: '恢复' }
           ).then((ok) => {
             if (!ok) return;
-            if (!restoreBackup(b)) return toast('恢复失败：这份备份的内容已损坏', 'error');
+            if (!restoreBackup(b)) return toast('恢复失败：这份备份的内容已损坏或被清理', 'error');
             rescanAfterRuleChange();
             updateBadge();
             ctx.rerender();

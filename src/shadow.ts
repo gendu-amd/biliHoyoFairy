@@ -24,6 +24,15 @@ export function addShadowRoot(root: ShadowRoot | null | undefined): void {
   onRoot(root);
 }
 
+/** 丢掉宿主已脱离文档的 root。
+ *
+ * 原先清理只发生在 queryAllRoots（dom.ts）里，而它的两个入口都有 `if (!CONFIG.enabled) return`——
+ * 脚本一暂停，detached 的评论组件连同整棵子树就被这个集合钉在内存里，每个还挂着观察器。
+ * 「回收已经没用的引用」和「用户开没开拦截」没有任何关系，不该被那个开关挡住。 */
+export function pruneShadowRoots(): void {
+  for (const r of shadowRoots) if (!r.host || !r.host.isConnected) shadowRoots.delete(r);
+}
+
 export function harvestShadowRoots(root: Document | ShadowRoot | Element | null): void {
   if (!root || !root.querySelectorAll) return;
   try {

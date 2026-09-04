@@ -273,13 +273,18 @@ export const CONFIG: AppConfig = loadConfig();
 //   2) 一次写入若让规则总数骤降，把写入前的内容存一份再写。
 // 刻意**不**拒绝写入：清空列表、删除匹配、恢复默认都是正当操作，拦下来只会变成「我删不掉规则」
 // 这种新 bug。备份 + 显式告警既不改变行为，又让任何一次清空都可回滚。
+// 备份的**索引项**。内容（整份配置的字符串）另存一个键，索引里只留摘要。
+// 分开存是必须的：面板每次重渲都会读一遍索引，而备份内容可达数百 KB × 5 份——
+// 混在一起就是「每次开面板都 JSON.parse 几 MB」，纯粹为了显示三行文字。
 export interface ConfigBackup {
   ts: number;
   version: string;
-  reason: string; // 'upgrade' | 'shrink'
+  reason: string; // 'upgrade' | 'shrink' | 'restore'
   rules: number; // 备份时的规则条数，面板里直接显示，不必让用户去读 JSON
-  raw: string; // 原样的 STORE_KEY 内容
 }
+
+/** 某份备份的内容键。用时间戳区分，索引与内容一一对应。 */
+const backupBlobKey = (ts: number): string => BACKUP_KEY + ':' + ts;
 
 /** 数一份配置里的规则总条数（黑/白/评论三处的名单）。用于骤降判定与备份展示。 */
 export function countRules(cfg: any): number {
@@ -297,12 +302,28 @@ export function loadBackups(): ConfigBackup[] {
   return Array.isArray(v) ? v : [];
 }
 
+/** 读某份备份的内容（仅在用户点「恢复」时才需要）。 */
+export function loadBackupRaw(b: ConfigBackup): string | null {
+  const v = GM_getValue(backupBlobKey(b.ts), null);
+  return typeof v === 'string' && v ? v : null;
+}
+
 // 备份写失败绝不能连累主流程：存储满、配额超限时，宁可没有备份也要让脚本正常跑。
 function pushBackup(raw: string, reason: string, rules: number): void {
   try {
+    const ts = Date.now();
     const list = loadBackups();
-    list.unshift({ ts: Date.now(), version: VERSION, reason, rules, raw });
-    GM_setValue(BACKUP_KEY, JSON.stringify(list.slice(0, BACKUP_MAX)));
+    list.unshift({ ts, version: VERSION, reason, rules });
+    const keep = list.slice(0, BACKUP_MAX);
+    GM_setValue(backupBlobKey(ts), raw);
+    GM_setValue(BACKUP_KEY, JSON.stringify(keep));
+    // 被挤出去的那几份，内容也要一并删掉——只删索引会在存储里留下永远没人引用的大字符串。
+    // 被挤出去的那几份要把内容也清掉，只删索引会在存储里留下永远没人引用的大字符串。
+    // GM_deleteValue 在个别环境/权限下可能没有，降级为写空串——占位很小，且 loadBackupRaw 读到空即视为失效。
+    for (const old of list.slice(BACKUP_MAX)) {
+      if (typeof GM_deleteValue === 'function') GM_deleteValue(backupBlobKey(old.ts));
+      else GM_setValue(backupBlobKey(old.ts), '');
+    }
   } catch (e) {
     /* 存不下就算了 */
   }
@@ -311,12 +332,14 @@ function pushBackup(raw: string, reason: string, rules: number): void {
 /** 面板「恢复」用：把某份备份写回并载入内存。返回是否成功。 */
 export function restoreBackup(b: ConfigBackup): boolean {
   try {
-    const parsed = JSON.parse(b.raw);
+    const raw = loadBackupRaw(b);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return false;
     // 恢复本身也先备份一次当前状态——「点错了恢复键」同样是需要后悔药的操作。
     const cur = GM_getValue(STORE_KEY, null);
     if (typeof cur === 'string') pushBackup(cur, 'restore', countRules(readJson(STORE_KEY)));
-    GM_setValue(STORE_KEY, b.raw);
+    GM_setValue(STORE_KEY, raw);
     deepMerge(CONFIG, loadConfig());
     baseSnapshot = snapshotConfig();
     return true;
@@ -387,7 +410,10 @@ function mergeList(base: any[], mine: any[], theirs: any[]): any[] {
     const m = mineMap.get(k);
     const b = baseMap.get(k);
     // 同一条目本页改过内容（如订阅的启用开关）→ 用本页的；没改过 → 用对面的。
-    out.push(m !== undefined && b !== undefined && JSON.stringify(m) !== JSON.stringify(b) ? m : x);
+    // 字符串元素直接跳过：keyOf 就是它自己，同 key 必然同值，比较恒为 false——
+    // 5 万条 UID 的名单在这里白跑 10 万次 JSON.stringify。只有对象元素（订阅）才需要真比。
+    if (m !== undefined && b !== undefined && typeof m !== 'string' && JSON.stringify(m) !== JSON.stringify(b)) out.push(m);
+    else out.push(x);
   }
   for (const x of mine) {
     const k = keyOf(x);
@@ -419,7 +445,10 @@ function threeWayMerge(base: any, mine: any, theirs: any): Record<string, any> {
     } else if (t === undefined) {
       // 反过来同理：对面删掉的键，本页没动过就跟着删；本页改过则以本页为准。
       if (b === undefined || JSON.stringify(m) !== JSON.stringify(b)) out[k] = m;
-    } else out[k] = JSON.stringify(m) === JSON.stringify(b) ? t : m; // 本页没动过 → 采纳存储里的
+    } else {
+      // 标量先用 === 短路，真需要深比的只剩「一边是数组/对象、另一边不是」这种畸形存档。
+      out[k] = m === b || JSON.stringify(m) === JSON.stringify(b) ? t : m; // 本页没动过 → 采纳存储里的
+    }
   }
   return out;
 }

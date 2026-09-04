@@ -38,9 +38,9 @@ export function capMapSet<K, V>(map: Map<K, V>, key: K, val: V, max: number): vo
 }
 
 // HTML 转义：所有写入 innerHTML 的动态文本都应先过这里。
+// 映射表提到模块级：放在 replace 回调里的话，每匹配一个字符就要新建一次对象字面量，
+// 而屏蔽记录面板每次刷新会调它几百次。
+const HTML_ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 export function escapeHtml(s: string | null | undefined): string {
-  return (s || '').replace(
-    /[&<>"']/g,
-    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string
-  );
+  return (s || '').replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]);
 }

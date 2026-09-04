@@ -1,7 +1,7 @@
 // 通用列表字段组件：折叠头 / 添加行 / 批量管理 / chip 渲染共一套；不同字段（关键词、UP名+UID、组合标签…）
 // 只需提供一个轻量 model 适配器。供设置面板复用。
 import { CONFIG, isRuleDisabled, saveConfig, setUidName } from '../config';
-import { addToList, removeFromList, restoreToList, toggleRuleDisabled } from '../rules';
+import { addToList, clearLists, removeEntries, removeFromList, restoreToList, toggleRuleDisabled } from '../rules';
 import { splitRuleInput } from '../match/normalize';
 import { fetchCard } from '../api';
 import { toast } from './toast';
@@ -46,6 +46,23 @@ const collapseState: Record<string, boolean> = {};
 // 本次渲染还能为多少个缺名字的 UID 发请求。renderChips 每次开头重置；upModel.decorate 消费。
 // 放模块级而不是穿参：decorate 的签名是 FieldModel 的公共契约，为一个内部限流去改它不划算。
 let nameBudget = 0;
+
+// 解析出的 UP 名攒批落盘 + 攒批重渲。
+//
+// 曾经是「每收到一个名字就 saveConfig() + rerender()」，而这两件事现在都很贵：saveConfig 是
+// 全量三方合并，rerender 会重建整列 chip。更糟的是重渲会把 nameBudget 重置成满额，
+// 于是为**还在飞行中**的那些 UID 又发一轮请求——一批解析能放大成数百个请求 + 数十次全量存盘。
+// 攒批之后：一批解析 = 一次存盘 + 一次重渲。（请求侧的重复由 api.ts 的 in-flight 表兜底。）
+let nameFlushTimer: ReturnType<typeof setTimeout> | null = null;
+const NAME_FLUSH_MS = 400;
+function scheduleNameFlush(rerender: () => void): void {
+  if (nameFlushTimer) clearTimeout(nameFlushTimer);
+  nameFlushTimer = setTimeout(() => {
+    nameFlushTimer = null;
+    saveConfig();
+    rerender();
+  }, NAME_FLUSH_MS);
+}
 
 export function renderListField(host: HTMLElement, o: ListFieldOpts): void {
   const model = o.model;
@@ -151,10 +168,11 @@ export function renderListField(host: HTMLElement, o: ListFieldOpts): void {
         toast('未勾选任何项');
         return;
       }
-      const n = selected.size;
       const byKey: Record<string, FieldEntry> = {};
       model.entries().forEach((e) => (byKey[e.key] = e));
-      selected.forEach((k) => byKey[k] && removeFromList(byKey[k].arr, byKey[k].value));
+      // 一次性删完再存盘重扫。逐条 removeFromList 会把「全量存盘 + 重建匹配器 + 全页重扫」
+      // 跑 N 遍，几千条名单下就是秒级冻结。
+      const n = removeEntries([...selected].map((k) => byKey[k]).filter(Boolean));
       selected.clear();
       renderChips();
       toast(`已删除 ${n} 条`);
@@ -168,7 +186,7 @@ export function renderListField(host: HTMLElement, o: ListFieldOpts): void {
         if (!vis.length) return;
         confirmModal(`确定删除匹配「${query.trim()}」的 ${vis.length} 条？此操作不可撤销（其余 ${model.count() - vis.length} 条保留）。`, { title: '删除匹配项', okText: '删除', danger: true }).then((ok) => {
           if (!ok) return;
-          vis.forEach((e) => removeFromList(e.arr, e.value));
+          removeEntries(vis);
           selected.clear();
           renderChips();
           toast(`已删除 ${vis.length} 条`);
@@ -312,7 +330,7 @@ export function chipModel(arr: string[], groupMode = false, path?: string): Fiel
     count: () => arr.length,
     entries: () => arr.map((v) => ({ key: v, value: v, arr, path })),
     clear: () => {
-      arr.length = 0;
+      clearLists(arr);
     },
     add: (raw: string) => {
       if (groupMode) {
@@ -354,8 +372,7 @@ export function upModel(names: string[], uids: string[], namePath?: string, uidP
         .map((v) => ({ key: 'n:' + v, value: v, arr: names, uid: false, path: namePath }))
         .concat(uids.map((v) => ({ key: 'u:' + v, value: v, arr: uids, uid: true, path: uidPath }))),
     clear: () => {
-      names.length = 0;
-      uids.length = 0;
+      clearLists(names, uids);
     },
     add: (raw) => {
       const parts = splitRuleInput(raw);
@@ -382,8 +399,7 @@ export function upModel(names: string[], uids: string[], namePath?: string, uidP
           const name = d && d.card && d.card.name;
           if (name) {
             setUidName(entry.value, name);
-            saveConfig();
-            rerender();
+            scheduleNameFlush(rerender);
           }
         });
       }
