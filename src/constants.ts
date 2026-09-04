@@ -16,6 +16,13 @@ export const STORE_BACKUP_KEY = 'bfb_config_corrupt_backup';
 // 高频写和低频写不该共用一把锁：规则/开关走 STORE_KEY（低频、要合并、丢不起），
 // 计数走 STATS_KEY（高频、丢一点无所谓）。
 export const STATS_KEY = 'bfb_stats_v1';
+// 配置快照（自动备份）。滚动保留最近几份，供「升级出岔子」「规则被谁清空了」时回滚。
+// 独立于 STORE_KEY：备份要能在规则那份被写坏之后仍然读得出来，就不能和它住在一起。
+export const BACKUP_KEY = 'bfb_backups_v1';
+export const BACKUP_MAX = 5;
+// 规则总数一次掉这么多（或掉光）就先备份再写。阈值不宜太小：删两三条是日常操作，
+// 每次都存快照只会把备份位挤满，真正的事故反而被挤出去。
+export const SHRINK_ALERT_MIN = 5;
 // 配置结构版本。**只在需要就地改写老存档时**递增（改字段名、改语义、改单位），
 // 单纯新增带默认值的字段不用动它——deepMerge 会自动补齐。递增时必须在 config.ts 的
 // MIGRATIONS 里补上对应迁移函数，否则老用户升级后会静默丢配置。

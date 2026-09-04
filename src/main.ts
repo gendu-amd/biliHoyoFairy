@@ -3,7 +3,7 @@
 // 业务逻辑全部在各 src 模块；本文件只负责装配。
 // bootstrap 只依赖各模块的「入口/接线」符号；其余模块经依赖图传递性加载（无需在此直接 import）。
 import { VERSION, BLACKLIST_MANAGE_URL, STARTUP_SUMMARY_MS } from './constants';
-import { CONFIG, configRescue, saveConfig, installConfigSync } from './config';
+import { CONFIG, configRescue, saveConfig, installConfigSync, setConfigNotifier } from './config';
 import { safe, logErr, BADGE } from './logging';
 import { healthReport, markHealthReady } from './health';
 import { configureCardDetect } from './cardinfo';
@@ -51,6 +51,11 @@ import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
   });
   // 规则变更 seam：rules / subscriptions 发事件，这里落到 DOM 层的重建+重扫（打断 dom↔rules 环）。
   setRulesChangedHandler(() => rescanAfterRuleChange());
+  // 配置层的告警口子（规则骤降等）。config 是底层模块，不能自己弹 toast，由这里接出来。
+  setConfigNotifier((msg) => {
+    logErr('配置告警', msg);
+    if (document.body) toast(msg, 'warn', undefined, 12000);
+  });
   // 多标签页同步 seam：别的标签页改了配置 → 本页已就地采纳，这里负责让它可见（重扫 + 角标 + 面板）。
   installConfigSync(() => {
     rescanAfterRuleChange();

@@ -1,7 +1,7 @@
 // 名单批量处理：粘贴 / 文件 / URL 载入一批 UID 或名称 → 仅屏蔽（本地）或 拉黑（写账号黑名单）。
 // 归到「导入/导出」一族，注册顺序紧跟 io section。
 import { CONFIG, saveConfig } from '../../../config';
-import { doBlacklistMany, REL_ERR } from '../../../blacklist';
+import { doBlacklistMany, importAccountBlacklist, REL_ERR } from '../../../blacklist';
 import type { BlockResult, BlockProgress } from '../../../blacklist';
 import { rescanAfterRuleChange } from '../../../dom';
 import { pushUnique } from '../../../rules';
@@ -23,13 +23,14 @@ export const nameListSection: PanelSection = {
       <div class="toolbar" style="margin-top:6px">
         <button class="act ghost" id="bfb-list-file">📁 从文件载入</button>
         <button class="act ghost" id="bfb-list-url">🔗 从 URL 载入</button>
+        <button class="act ghost" id="bfb-list-account">⬇ 从账号黑名单导回</button>
       </div>
       <div class="toolbar" style="margin-top:6px">
         <button class="act" id="bfb-list-hide">仅屏蔽（本地）</button>
         <button class="act ghost" id="bfb-list-block" style="color:#e74c3c">⛔ 拉黑（写账号黑名单）</button>
         <button class="act ghost" id="bfb-list-stop" style="display:none;color:#e67e22">⏹ 停止</button>
       </div>
-      <div class="hint">「仅屏蔽」只在本地隐藏；「拉黑」会写入账号黑名单（限速执行、触发风控自动续传、<b>不可一键撤销</b>、执行前确认）。仅有名称、无 UID 的条目将降级为本地屏蔽。</div>
+      <div class="hint">「⬇ 从账号黑名单导回」把你 B 站账号里已拉黑的人重新填进本地名单（账号那份才是权威，本地这份只是镜像，丢了随时可以这样重建）。「仅屏蔽」只在本地隐藏；「拉黑」会写入账号黑名单（限速执行、触发风控自动续传、<b>不可一键撤销</b>、执行前确认）。仅有名称、无 UID 的条目将降级为本地屏蔽。</div>
       <div id="bfb-list-status" class="stat" style="margin-top:6px;min-height:1.2em"></div>`;
     host.appendChild(listSec);
 
@@ -85,6 +86,32 @@ export const nameListSection: PanelSection = {
         });
         if (!sent) toast('当前环境不支持联网载入', 'warn');
       });
+    };
+
+    // 「拉黑」写两处：B 站账号黑名单（服务端，权威）与本地 block.uids（镜像）。镜像会丢——
+    // 存档损坏、换设备、被别的东西写坏都可能——而账号那份还好端端的。这个按钮就是从权威源
+    // 把本地名单重建出来，不必对着网页一个个手抄。
+    q(listSec, '#bfb-list-account').onclick = () => {
+      const btn = q<HTMLButtonElement>(listSec, '#bfb-list-account');
+      btn.disabled = true;
+      listStatus.textContent = '正在读取账号黑名单…';
+      importAccountBlacklist(
+        (r) => {
+          btn.disabled = false;
+          // 拿不到 ≠ 你的黑名单是空的。这两件事必须分清楚，否则用户会以为账号那边也没了。
+          if (!r) {
+            listStatus.textContent = '❌ 读取失败：可能未登录、网络异常或触发了风控，稍后再试。你的账号黑名单本身不受影响。';
+            toast('读取账号黑名单失败（未登录 / 网络 / 风控）', 'error');
+            return;
+          }
+          listStatus.textContent = `✅ 账号黑名单共 ${r.total} 人，本地新增 ${r.added} 条${r.added < r.total ? `（其余 ${r.total - r.added} 条本地已有）` : ''}`;
+          toast(r.added ? `已从账号黑名单导回 ${r.added} 条` : '本地名单已与账号黑名单一致', 'success');
+          ctx.rerender();
+        },
+        (done, total) => {
+          listStatus.textContent = `读取中 ${done}${total ? '/' + total : ''}…`;
+        }
+      );
     };
 
     q(listSec, '#bfb-list-hide').onclick = () => {

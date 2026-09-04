@@ -12,6 +12,10 @@ import {
   configRescue,
   saveConfig,
   saveStats,
+  countRules,
+  loadBackups,
+  restoreBackup,
+  setConfigNotifier,
 } from '../src/config';
 import { SCHEMA_VERSION, STATS_KEY, STORE_BACKUP_KEY, STORE_KEY, SYNC_COALESCE_MS } from '../src/constants';
 
@@ -383,5 +387,78 @@ describe('高频字段拆到独立存储键', () => {
     gmStore[STORE_KEY] = JSON.stringify({ blockedCount: 7 });
     gmStore[STATS_KEY] = JSON.stringify({ blockedCount: 99 });
     expect(loadConfig().blockedCount).toBe(99);
+  });
+});
+
+// —— 自动备份 ——
+//
+// 三方合并解决的是「不再被覆盖」，那是防止事故。但规则是用户攒了几个月的东西，
+// 事故真发生了也得有救——这组用例锁的是「任何一次清空类写入，之前那份都留得下来」。
+describe('自动备份：事故之后还有得救', () => {
+  beforeEach(() => {
+    gmClear();
+    Object.assign(CONFIG, structuredClone(DEFAULT_CONFIG));
+  });
+
+  it('countRules 数遍黑/白/评论三处的名单', () => {
+    expect(countRules({ block: { keywords: ['a', 'b'], uids: ['1'] }, allow: { uids: ['2'] }, comment: { keywords: ['c'] } })).toBe(5);
+    expect(countRules({ block: { minViews: 3 } })).toBe(0); // 非数组字段不算
+    expect(countRules(null)).toBe(0);
+  });
+
+  it('规则骤降时把写入前的内容备份下来，并告警', () => {
+    CONFIG.block.keywords.push('a', 'b', 'c', 'd', 'e', 'f');
+    saveConfig();
+    const msgs: string[] = [];
+    setConfigNotifier((m) => msgs.push(m));
+
+    CONFIG.block.keywords.length = 0; // 模拟「被谁清空了」
+    saveConfig();
+
+    const backups = loadBackups();
+    const shrink = backups.find((b) => b.reason === 'shrink');
+    expect(shrink).toBeTruthy();
+    expect(shrink!.rules).toBe(6);
+    expect(JSON.parse(shrink!.raw).block.keywords).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
+    expect(msgs.length).toBe(1);
+    setConfigNotifier(() => {});
+  });
+
+  it('日常增删不触发备份（否则备份位会被噪音挤满，真事故反而被挤出去）', () => {
+    CONFIG.block.keywords.push('a', 'b', 'c', 'd', 'e', 'f');
+    saveConfig();
+    CONFIG.block.keywords.splice(0, 2); // 只删两条
+    saveConfig();
+    expect(loadBackups().some((b) => b.reason === 'shrink')).toBe(false);
+  });
+
+  it('restoreBackup 把内容写回存储并载入内存，且先给当前状态留一份后悔药', () => {
+    CONFIG.block.keywords.push('原神', '鸣潮');
+    saveConfig();
+    const good: any = { ts: 1, version: '0.0.8', reason: 'upgrade', rules: 2, raw: gmStore[STORE_KEY] };
+
+    CONFIG.block.keywords.length = 0;
+    saveConfig();
+    expect(CONFIG.block.keywords).toEqual([]);
+
+    expect(restoreBackup(good)).toBe(true);
+    expect(CONFIG.block.keywords).toEqual(['原神', '鸣潮']);
+    // 恢复前的状态（空名单）也被备了一份：点错恢复键同样需要后悔药
+    expect(loadBackups().some((b) => b.reason === 'restore')).toBe(true);
+  });
+
+  it('备份内容损坏时恢复失败但不抛错', () => {
+    expect(restoreBackup({ ts: 1, version: 'x', reason: 'upgrade', rules: 0, raw: '{oops' } as any)).toBe(false);
+  });
+
+  it('恢复后合并基准同步重置（否则下一次存盘会把恢复的内容又顶回去）', () => {
+    CONFIG.block.keywords.push('原神');
+    saveConfig();
+    const good: any = { ts: 1, version: '0.0.8', reason: 'upgrade', rules: 1, raw: gmStore[STORE_KEY] };
+    CONFIG.block.keywords.length = 0;
+    saveConfig();
+    restoreBackup(good);
+    saveConfig(); // 恢复之后随便再存一次
+    expect(JSON.parse(gmStore[STORE_KEY]).block.keywords).toEqual(['原神']);
   });
 });

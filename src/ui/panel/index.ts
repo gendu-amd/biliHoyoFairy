@@ -15,6 +15,7 @@ import { commentSection } from './sections/comment';
 import { presetsSection } from './sections/presets';
 import { regexTesterSection } from './sections/regex-tester';
 import { ioSection } from './sections/io';
+import { backupsSection } from './sections/backups';
 import { nameListSection } from './sections/name-list';
 import { subscriptionsSection } from './sections/subscriptions';
 import { batchBlockSection } from './sections/batch-block';
@@ -44,6 +45,7 @@ const SECTIONS: PanelSection[] = [
   presetsSection,
   regexTesterSection,
   ioSection,
+  backupsSection, // 紧跟导入导出：都是「配置的保存与找回」，放一块儿用户才想得起来它
   nameListSection,
   subscriptionsSection,
   batchBlockSection,

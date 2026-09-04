@@ -1,5 +1,17 @@
 // 配置：默认值 + 本地存储（GM）+ 载入合并 + 导入/导出。CONFIG 为全局共享单例（对象被各模块就地读写）。
-import { SAVE_DEBOUNCE_MS, SCHEMA_VERSION, STATS_KEY, STORE_BACKUP_KEY, STORE_KEY, SYNC_COALESCE_MS, UNSAFE_KEYS, VERSION } from './constants';
+import {
+  BACKUP_KEY,
+  BACKUP_MAX,
+  SAVE_DEBOUNCE_MS,
+  SCHEMA_VERSION,
+  SHRINK_ALERT_MIN,
+  STATS_KEY,
+  STORE_BACKUP_KEY,
+  STORE_KEY,
+  SYNC_COALESCE_MS,
+  UNSAFE_KEYS,
+  VERSION,
+} from './constants';
 
 export interface BlockConfig {
   keywords: string[];
@@ -251,6 +263,87 @@ export function loadConfig(): AppConfig {
 // 全局共享配置单例。
 export const CONFIG: AppConfig = loadConfig();
 
+// —— 自动备份 ——
+//
+// 上面那套三方合并解决的是「不再被覆盖」，属于**防止事故**。但规则是用户攒了几个月的东西，
+// 光有防护不够——事故真发生了（不管是我们没想到的 bug、还是别的脚本/手滑），也得有救。
+// 所以再加两条兜底，都与「具体是哪个 bug」无关：
+//   1) 检测到脚本版本变了，在本次运行写任何东西**之前**，先把存储里那份原样存一份；
+//      升级是最危险的时刻——旧标签页还跑着旧代码，而用户此刻正在密集操作。
+//   2) 一次写入若让规则总数骤降，把写入前的内容存一份再写。
+// 刻意**不**拒绝写入：清空列表、删除匹配、恢复默认都是正当操作，拦下来只会变成「我删不掉规则」
+// 这种新 bug。备份 + 显式告警既不改变行为，又让任何一次清空都可回滚。
+export interface ConfigBackup {
+  ts: number;
+  version: string;
+  reason: string; // 'upgrade' | 'shrink'
+  rules: number; // 备份时的规则条数，面板里直接显示，不必让用户去读 JSON
+  raw: string; // 原样的 STORE_KEY 内容
+}
+
+/** 数一份配置里的规则总条数（黑/白/评论三处的名单）。用于骤降判定与备份展示。 */
+export function countRules(cfg: any): number {
+  if (!cfg || typeof cfg !== 'object') return 0;
+  let n = 0;
+  for (const scope of [cfg.block, cfg.allow, cfg.comment]) {
+    if (!scope || typeof scope !== 'object') continue;
+    for (const v of Object.values(scope)) if (Array.isArray(v)) n += v.length;
+  }
+  return n;
+}
+
+export function loadBackups(): ConfigBackup[] {
+  const v = readJson(BACKUP_KEY);
+  return Array.isArray(v) ? v : [];
+}
+
+// 备份写失败绝不能连累主流程：存储满、配额超限时，宁可没有备份也要让脚本正常跑。
+function pushBackup(raw: string, reason: string, rules: number): void {
+  try {
+    const list = loadBackups();
+    list.unshift({ ts: Date.now(), version: VERSION, reason, rules, raw });
+    GM_setValue(BACKUP_KEY, JSON.stringify(list.slice(0, BACKUP_MAX)));
+  } catch (e) {
+    /* 存不下就算了 */
+  }
+}
+
+/** 面板「恢复」用：把某份备份写回并载入内存。返回是否成功。 */
+export function restoreBackup(b: ConfigBackup): boolean {
+  try {
+    const parsed = JSON.parse(b.raw);
+    if (!parsed || typeof parsed !== 'object') return false;
+    // 恢复本身也先备份一次当前状态——「点错了恢复键」同样是需要后悔药的操作。
+    const cur = GM_getValue(STORE_KEY, null);
+    if (typeof cur === 'string') pushBackup(cur, 'restore', countRules(readJson(STORE_KEY)));
+    GM_setValue(STORE_KEY, b.raw);
+    deepMerge(CONFIG, loadConfig());
+    baseSnapshot = snapshotConfig();
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// 升级快照。必须在本次运行的任何一次 saveConfig 之前跑，否则备下来的已经是被改过的内容。
+// 版本号存在备份列表里而不是另开一个键：少一个键、也不会出现「标记写了但备份没写成」的错位。
+function snapshotOnUpgrade(): void {
+  const raw = GM_getValue(STORE_KEY, null);
+  if (typeof raw !== 'string' || !raw) return; // 首次安装，没什么可备份的
+  const list = loadBackups();
+  if (list.some((b) => b.reason === 'upgrade' && b.version === VERSION)) return; // 本版本已备过
+  pushBackup(raw, 'upgrade', countRules(readJson(STORE_KEY)));
+}
+snapshotOnUpgrade();
+
+// 骤降告警的通知口子。config 是底层模块（logging/toast 反过来依赖它），不能自己弹提示，
+// 由 main 注入。没注入时静默——备份照存，只是没人念出来。
+type Notify = (msg: string) => void;
+let notify: Notify = () => {};
+export function setConfigNotifier(fn: Notify): void {
+  notify = fn;
+}
+
 // —— 存盘 ——
 //
 // 规则/开关这一份**不能**整份覆盖写回。CONFIG 是内存单例，本标签页手里那份随时可能已经过期：
@@ -338,6 +431,17 @@ export function saveConfig(): void {
   const merged = stored ? threeWayMerge(baseSnapshot, mine, stripStats(migrateConfig(stored))) : mine;
   // 合并结果回灌内存：否则本页看不到刚并进来的、别的标签页加的规则，
   // 而下一次存盘又会拿这份内存去当 base，等于把刚合并好的结果再丢一次。
+  // 规则骤降熔断：写之前比一比条数。任何能悄悄清空规则的 bug（这次这个，或将来某个还没
+  // 被发现的）都会先撞上这道墙——它不阻止写入，但保证写入前那一份留得下来、且有人说一声。
+  if (stored) {
+    const before = countRules(stored);
+    const after = countRules(merged);
+    const drop = before - after;
+    if (before > 0 && (after === 0 || drop >= SHRINK_ALERT_MIN)) {
+      pushBackup(JSON.stringify(stored), 'shrink', before);
+      notify(`⚠ 规则条数从 ${before} 降到 ${after}。若非你本人操作，可在「工具 → 🗂 配置备份」里恢复。`);
+    }
+  }
   deepMerge(CONFIG, merged);
   GM_setValue(STORE_KEY, JSON.stringify(merged));
   baseSnapshot = structuredClone(merged);

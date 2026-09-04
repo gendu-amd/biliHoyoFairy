@@ -325,3 +325,74 @@ export function blacklistUp(info: BlockSource, cb?: (ok: boolean) => void, cardE
   }
   cb?.(false);
 }
+
+// —— 从账号黑名单导回本地 ——
+//
+// 「拉黑」写两处：B 站账号黑名单（服务端，权威）与本地 block.uids（镜像，只为让 DOM 层也能拦）。
+// 镜像是会丢的——存档损坏、换设备、被别的东西写坏，都可能让本地那份没了，而账号那份还好端端的。
+// 有了这条路，任何时候都能从权威源把名单重建出来，不必手工照着网页一个个抄。
+// 顺带把 UP 名也存进 uidNames：光有一串数字，用户在面板里根本认不出自己拉黑过谁。
+export interface ImportBlacksResult {
+  total: number; // 账号黑名单里的总人数
+  added: number; // 本地新增的条数（已存在的不重复计）
+  cancelled: boolean;
+}
+
+const BLACKS_PAGE_SIZE = 50;
+// 页数上限：账号黑名单本身有总量上限，这里只是防「接口一直说 has_more」时死循环。
+const BLACKS_MAX_PAGES = 40;
+
+export function importAccountBlacklist(cb: (r: ImportBlacksResult | null) => void, onProgress?: (done: number, total: number) => void): void {
+  const uids: string[] = [];
+  const names: Record<string, string> = {};
+  let total = 0;
+
+  const finish = (cancelled: boolean) => {
+    // 一次性写入 + 一次重扫：逐页写会让大名单期间页面反复重扫。
+    const added = pushUnique(CONFIG.block.uids, uids);
+    for (const uid of Object.keys(names)) setUidName(uid, names[uid]);
+    if (added || Object.keys(names).length) {
+      saveConfig();
+      emitRulesChanged();
+    }
+    cb({ total, added, cancelled });
+  };
+
+  const page = (pn: number) => {
+    if (pn > BLACKS_MAX_PAGES) return finish(true);
+    const sent = gmRequest({
+      method: 'GET',
+      url: `https://api.bilibili.com/x/relation/blacks?re_version=0&ps=${BLACKS_PAGE_SIZE}&pn=${pn}`,
+      withCredentials: true,
+      timeout: 12000,
+      onload: (r) => {
+        let j: any = null;
+        try {
+          j = JSON.parse(r.responseText);
+        } catch (e) {
+          /* 不是 JSON（风控页/网关错误）：按失败处理 */
+        }
+        riskGuard.note(j && j.code);
+        // 未登录（-101）与风控都属于「这次拿不到」，如实返回 null 让调用方说人话，
+        // 而不是把空名单当成「你的黑名单是空的」——那会让用户以为账号那边也没了。
+        if (!j || j.code !== 0 || !j.data) return cb(null);
+        const list: any[] = Array.isArray(j.data.list) ? j.data.list : [];
+        total = typeof j.data.total === 'number' ? j.data.total : total;
+        for (const it of list) {
+          if (!it || it.mid == null) continue;
+          const uid = String(it.mid);
+          uids.push(uid);
+          if (it.uname) names[uid] = String(it.uname);
+        }
+        onProgress?.(uids.length, total);
+        // 拿满一页就还有下一页；不足一页说明到底了。不看 has_more——各接口对它的语义并不一致。
+        if (list.length >= BLACKS_PAGE_SIZE) setTimeout(() => page(pn + 1), 300);
+        else finish(false);
+      },
+      onerror: () => cb(null),
+      ontimeout: () => cb(null),
+    });
+    if (!sent) cb(null);
+  };
+  page(1);
+}

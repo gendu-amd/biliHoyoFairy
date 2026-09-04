@@ -34,6 +34,9 @@
   var STORE_KEY = "bfb_config_v2";
   var STORE_BACKUP_KEY = "bfb_config_corrupt_backup";
   var STATS_KEY = "bfb_stats_v1";
+  var BACKUP_KEY = "bfb_backups_v1";
+  var BACKUP_MAX = 5;
+  var SHRINK_ALERT_MIN = 5;
   var SCHEMA_VERSION = 1;
   var SUB_STORE_KEY = "bfb_subs_v1";
   var BLACKLIST_MANAGE_URL = "https://account.bilibili.com/account/blacklist";
@@ -244,6 +247,54 @@
     }
   }
   var CONFIG = loadConfig();
+  function countRules(cfg) {
+    if (!cfg || typeof cfg !== "object") return 0;
+    let n = 0;
+    for (const scope of [cfg.block, cfg.allow, cfg.comment]) {
+      if (!scope || typeof scope !== "object") continue;
+      for (const v of Object.values(scope)) if (Array.isArray(v)) n += v.length;
+    }
+    return n;
+  }
+  function loadBackups() {
+    const v = readJson(BACKUP_KEY);
+    return Array.isArray(v) ? v : [];
+  }
+  function pushBackup(raw, reason, rules) {
+    try {
+      const list = loadBackups();
+      list.unshift({ ts: Date.now(), version: VERSION, reason, rules, raw });
+      GM_setValue(BACKUP_KEY, JSON.stringify(list.slice(0, BACKUP_MAX)));
+    } catch (e) {
+    }
+  }
+  function restoreBackup(b) {
+    try {
+      const parsed = JSON.parse(b.raw);
+      if (!parsed || typeof parsed !== "object") return false;
+      const cur = GM_getValue(STORE_KEY, null);
+      if (typeof cur === "string") pushBackup(cur, "restore", countRules(readJson(STORE_KEY)));
+      GM_setValue(STORE_KEY, b.raw);
+      deepMerge(CONFIG, loadConfig());
+      baseSnapshot = snapshotConfig();
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+  function snapshotOnUpgrade() {
+    const raw = GM_getValue(STORE_KEY, null);
+    if (typeof raw !== "string" || !raw) return;
+    const list = loadBackups();
+    if (list.some((b) => b.reason === "upgrade" && b.version === VERSION)) return;
+    pushBackup(raw, "upgrade", countRules(readJson(STORE_KEY)));
+  }
+  snapshotOnUpgrade();
+  var notify = () => {
+  };
+  function setConfigNotifier(fn) {
+    notify = fn;
+  }
   var baseSnapshot = {};
   function stripStats(src) {
     const out = src && typeof src === "object" ? { ...src } : {};
@@ -298,6 +349,15 @@
     const stored = readJson(STORE_KEY);
     const mine = snapshotConfig();
     const merged = stored ? threeWayMerge(baseSnapshot, mine, stripStats(migrateConfig(stored))) : mine;
+    if (stored) {
+      const before = countRules(stored);
+      const after = countRules(merged);
+      const drop = before - after;
+      if (before > 0 && (after === 0 || drop >= SHRINK_ALERT_MIN)) {
+        pushBackup(JSON.stringify(stored), "shrink", before);
+        notify(`⚠ 规则条数从 ${before} 降到 ${after}。若非你本人操作，可在「工具 → 🗂 配置备份」里恢复。`);
+      }
+    }
     deepMerge(CONFIG, merged);
     GM_setValue(STORE_KEY, JSON.stringify(merged));
     baseSnapshot = structuredClone(merged);
@@ -2567,6 +2627,55 @@
     }
     cb?.(false);
   }
+  var BLACKS_PAGE_SIZE = 50;
+  var BLACKS_MAX_PAGES = 40;
+  function importAccountBlacklist(cb, onProgress) {
+    const uids = [];
+    const names = {};
+    let total = 0;
+    const finish = (cancelled) => {
+      const added = pushUnique(CONFIG.block.uids, uids);
+      for (const uid of Object.keys(names)) setUidName(uid, names[uid]);
+      if (added || Object.keys(names).length) {
+        saveConfig();
+        emitRulesChanged();
+      }
+      cb({ total, added, cancelled });
+    };
+    const page = (pn) => {
+      if (pn > BLACKS_MAX_PAGES) return finish(true);
+      const sent = gmRequest({
+        method: "GET",
+        url: `https://api.bilibili.com/x/relation/blacks?re_version=0&ps=${BLACKS_PAGE_SIZE}&pn=${pn}`,
+        withCredentials: true,
+        timeout: 12e3,
+        onload: (r) => {
+          let j = null;
+          try {
+            j = JSON.parse(r.responseText);
+          } catch (e) {
+          }
+          riskGuard.note(j && j.code);
+          if (!j || j.code !== 0 || !j.data) return cb(null);
+          const list = Array.isArray(j.data.list) ? j.data.list : [];
+          total = typeof j.data.total === "number" ? j.data.total : total;
+          for (const it of list) {
+            if (!it || it.mid == null) continue;
+            const uid = String(it.mid);
+            uids.push(uid);
+            if (it.uname) names[uid] = String(it.uname);
+          }
+          onProgress?.(uids.length, total);
+          if (list.length >= BLACKS_PAGE_SIZE) setTimeout(() => page(pn + 1), 300);
+          else finish(false);
+        },
+        onerror: () => cb(null),
+        ontimeout: () => cb(null)
+      });
+      if (!sent) cb(null);
+    };
+    page(1);
+  }
 
   // src/ui/confirm.ts
   var current = null;
@@ -3948,6 +4057,71 @@
     }
   };
 
+  // src/ui/panel/sections/backups.ts
+  var REASON_TEXT = {
+    upgrade: "脚本升级前",
+    shrink: "⚠ 规则条数骤降前",
+    restore: "恢复操作前"
+  };
+  var backupsSection = {
+    tab: "tools",
+    render(host, ctx) {
+      const sec = document.createElement("div");
+      sec.className = "sec";
+      sec.innerHTML = `<label>🗂 配置备份（自动，最近 5 份）</label>
+      <div class="hint">脚本升级前、以及规则条数发生骤降时会自动存一份，供出岔子时回滚。这是本地兜底，<b>不能替代</b>「⬇ 导出为文件」——存储被整个清掉时它也会一起没。</div>
+      <div id="bfb-bk-list" style="margin-top:6px"></div>`;
+      host.appendChild(sec);
+      const listEl = q(sec, "#bfb-bk-list");
+      const render = () => {
+        const list = loadBackups();
+        listEl.innerHTML = "";
+        if (!list.length) {
+          const e = document.createElement("div");
+          e.className = "empty";
+          e.textContent = "（暂无备份。首次安装、或安装后还没升级过时是正常的）";
+          listEl.appendChild(e);
+          return;
+        }
+        list.forEach((b) => {
+          const row = document.createElement("div");
+          row.className = "log-row";
+          const tx = document.createElement("span");
+          tx.className = "log-tx";
+          const when = new Date(b.ts).toLocaleString();
+          tx.innerHTML = `<span class="log-rs">[${escapeHtml(REASON_TEXT[b.reason] || b.reason)}]</span> ${escapeHtml(when)} · v${escapeHtml(b.version)} · <b>${b.rules} 条规则</b>`;
+          tx.title = `备份于 ${when}，脚本版本 v${b.version}，含 ${b.rules} 条规则`;
+          row.appendChild(tx);
+          const btn = document.createElement("button");
+          btn.className = "log-undo";
+          btn.textContent = "↩恢复";
+          btn.title = "用这份备份覆盖当前配置（覆盖前会先把当前状态也备份一次）";
+          btn.onclick = () => {
+            confirmModal(
+              `用这份备份覆盖当前配置？
+
+备份时间：${when}
+含规则：${b.rules} 条
+
+当前配置会先被自动备份一次，所以这一步也是可撤销的。`,
+              { title: "恢复配置备份", okText: "恢复" }
+            ).then((ok) => {
+              if (!ok) return;
+              if (!restoreBackup(b)) return toast("恢复失败：这份备份的内容已损坏", "error");
+              rescanAfterRuleChange();
+              updateBadge();
+              ctx.rerender();
+              toast(`已恢复到 ${when} 的备份（${b.rules} 条规则）`, "success");
+            });
+          };
+          row.appendChild(btn);
+          listEl.appendChild(row);
+        });
+      };
+      render();
+    }
+  };
+
   // src/batch.ts
   function parseNameList(raw) {
     const uids = [];
@@ -3984,13 +4158,14 @@
       <div class="toolbar" style="margin-top:6px">
         <button class="act ghost" id="bfb-list-file">📁 从文件载入</button>
         <button class="act ghost" id="bfb-list-url">🔗 从 URL 载入</button>
+        <button class="act ghost" id="bfb-list-account">⬇ 从账号黑名单导回</button>
       </div>
       <div class="toolbar" style="margin-top:6px">
         <button class="act" id="bfb-list-hide">仅屏蔽（本地）</button>
         <button class="act ghost" id="bfb-list-block" style="color:#e74c3c">⛔ 拉黑（写账号黑名单）</button>
         <button class="act ghost" id="bfb-list-stop" style="display:none;color:#e67e22">⏹ 停止</button>
       </div>
-      <div class="hint">「仅屏蔽」只在本地隐藏；「拉黑」会写入账号黑名单（限速执行、触发风控自动续传、<b>不可一键撤销</b>、执行前确认）。仅有名称、无 UID 的条目将降级为本地屏蔽。</div>
+      <div class="hint">「⬇ 从账号黑名单导回」把你 B 站账号里已拉黑的人重新填进本地名单（账号那份才是权威，本地这份只是镜像，丢了随时可以这样重建）。「仅屏蔽」只在本地隐藏；「拉黑」会写入账号黑名单（限速执行、触发风控自动续传、<b>不可一键撤销</b>、执行前确认）。仅有名称、无 UID 的条目将降级为本地屏蔽。</div>
       <div id="bfb-list-status" class="stat" style="margin-top:6px;min-height:1.2em"></div>`;
       host.appendChild(listSec);
       const listTa = q(listSec, "#bfb-list-input");
@@ -4041,6 +4216,27 @@
           });
           if (!sent) toast("当前环境不支持联网载入", "warn");
         });
+      };
+      q(listSec, "#bfb-list-account").onclick = () => {
+        const btn = q(listSec, "#bfb-list-account");
+        btn.disabled = true;
+        listStatus.textContent = "正在读取账号黑名单…";
+        importAccountBlacklist(
+          (r) => {
+            btn.disabled = false;
+            if (!r) {
+              listStatus.textContent = "❌ 读取失败：可能未登录、网络异常或触发了风控，稍后再试。你的账号黑名单本身不受影响。";
+              toast("读取账号黑名单失败（未登录 / 网络 / 风控）", "error");
+              return;
+            }
+            listStatus.textContent = `✅ 账号黑名单共 ${r.total} 人，本地新增 ${r.added} 条${r.added < r.total ? `（其余 ${r.total - r.added} 条本地已有）` : ""}`;
+            toast(r.added ? `已从账号黑名单导回 ${r.added} 条` : "本地名单已与账号黑名单一致", "success");
+            ctx.rerender();
+          },
+          (done, total) => {
+            listStatus.textContent = `读取中 ${done}${total ? "/" + total : ""}…`;
+          }
+        );
       };
       q(listSec, "#bfb-list-hide").onclick = () => {
         const { uids, names } = parseList();
@@ -4662,6 +4858,8 @@ ${r.line}`, {
     presetsSection,
     regexTesterSection,
     ioSection,
+    backupsSection,
+    // 紧跟导入导出：都是「配置的保存与找回」，放一块儿用户才想得起来它
     nameListSection,
     subscriptionsSection,
     batchBlockSection,
@@ -4806,6 +5004,10 @@ ${r.line}`, {
       refreshStatsIfOpen();
     });
     setRulesChangedHandler(() => rescanAfterRuleChange());
+    setConfigNotifier((msg) => {
+      logErr("配置告警", msg);
+      if (document.body) toast(msg, "warn", void 0, 12e3);
+    });
     installConfigSync(() => {
       rescanAfterRuleChange();
       if (document.body) updateBadge();
