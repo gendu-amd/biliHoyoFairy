@@ -31,7 +31,7 @@ export const logSection: PanelSection = {
     const foot = document.createElement('div');
     foot.className = 'sec';
     foot.innerHTML = `<a class="manage" href="${BLACKLIST_MANAGE_URL}" target="_blank">→ 打开 B 站官方黑名单管理页（取消拉黑 / 查看人数）</a>
-      <div class="stat" style="margin-top:6px">累计拦截 <span id="bfb-foot-total">0</span> 次 · 本次会话 <span id="bfb-foot-session">0</span> 次</div>`;
+      <div class="stat" style="margin-top:6px" title="「拦」来源的计数是「已从接口数据中删除」——极少数情况下那批数据最终没被页面渲染（请求重试、组件卸载），此时计数会略高于你实际少看到的条数。">累计拦截 <span id="bfb-foot-total">0</span> 次 · 本次会话 <span id="bfb-foot-session">0</span> 次</div>`;
     host.appendChild(foot);
     const footTotal = q(foot, '#bfb-foot-total');
     const footSession = q(foot, '#bfb-foot-session');
