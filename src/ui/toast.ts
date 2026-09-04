@@ -33,6 +33,28 @@ function toastContainer(): HTMLElement {
   return c;
 }
 
+// 停留时长。带按钮的要长一些（用户得先读完再决定点不点），但也就长一点——
+// 撤销这种提示 6 秒足够，再久就只是挡着页面。
+const PLAIN_MS = 4000;
+const ACTION_MS = 6000;
+
+// 点页面别处也关掉。听 mousedown 而不是 click：提示多半是在某次 click 的处理函数里创建的，
+// 听 click 会被同一次交互立刻打中（mousedown 那时提示还不存在，天然错开）。
+// 首次出现提示时挂一次、之后常驻——回调只做一次 getElementById + contains，代价可忽略。
+let dismissArmed = false;
+function armDismissOnOutsideClick(): void {
+  if (dismissArmed) return;
+  dismissArmed = true;
+  const onDown = (e: Event) => {
+    const c = document.getElementById('bfb-toasts');
+    if (!c) return;
+    // 点在提示自己身上由它自己处理（还要区分「按了动作按钮」）
+    if (e.target instanceof Node && c.contains(e.target)) return;
+    c.innerHTML = '';
+  };
+  document.addEventListener('mousedown', onDown, true);
+}
+
 export type ToastKind = 'info' | 'success' | 'warn' | 'error';
 export interface ToastAction {
   label: string;
@@ -44,23 +66,31 @@ export interface ToastAction {
 export function toast(msg: string, kind: ToastKind = 'info', action?: ToastAction, ms?: number): void {
   const t = document.createElement('div');
   t.className = 'bfb-toast' + (kind !== 'info' ? ' ' + kind : '');
+  t.title = '点击关闭';
   const span = document.createElement('span');
   span.className = 'bfb-toast-msg';
   span.textContent = msg;
   t.appendChild(span);
-  const timeout = ms ?? (action ? 8000 : 4000);
+  const timeout = ms ?? (action ? ACTION_MS : PLAIN_MS);
   const timer = setTimeout(() => t.remove(), timeout);
+  const close = () => {
+    clearTimeout(timer);
+    t.remove();
+  };
+  // 点提示本身即关闭。带按钮的提示停留更久（要给人反应时间），久到不能手动关掉就成了赖着不走。
+  t.onclick = close;
   if (action) {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'bfb-toast-act';
     b.textContent = action.label;
-    b.onclick = () => {
-      clearTimeout(timer);
-      t.remove();
+    b.onclick = (e: MouseEvent) => {
+      e.stopPropagation(); // 别让上面那层 close 抢在动作前面
+      close();
       action.onClick();
     };
     t.appendChild(b);
   }
   toastContainer().appendChild(t);
+  armDismissOnOutsideClick();
 }

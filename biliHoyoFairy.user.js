@@ -1814,28 +1814,49 @@
     }
     return c;
   }
+  var PLAIN_MS = 4e3;
+  var ACTION_MS = 6e3;
+  var dismissArmed = false;
+  function armDismissOnOutsideClick() {
+    if (dismissArmed) return;
+    dismissArmed = true;
+    const onDown = (e) => {
+      const c = document.getElementById("bfb-toasts");
+      if (!c) return;
+      if (e.target instanceof Node && c.contains(e.target)) return;
+      c.innerHTML = "";
+    };
+    document.addEventListener("mousedown", onDown, true);
+  }
   function toast(msg, kind = "info", action, ms) {
     const t = document.createElement("div");
     t.className = "bfb-toast" + (kind !== "info" ? " " + kind : "");
+    t.title = "点击关闭";
     const span = document.createElement("span");
     span.className = "bfb-toast-msg";
     span.textContent = msg;
     t.appendChild(span);
-    const timeout = ms ?? (action ? 8e3 : 4e3);
+    const timeout = ms ?? (action ? ACTION_MS : PLAIN_MS);
     const timer = setTimeout(() => t.remove(), timeout);
+    const close = () => {
+      clearTimeout(timer);
+      t.remove();
+    };
+    t.onclick = close;
     if (action) {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "bfb-toast-act";
       b.textContent = action.label;
-      b.onclick = () => {
-        clearTimeout(timer);
-        t.remove();
+      b.onclick = (e) => {
+        e.stopPropagation();
+        close();
         action.onClick();
       };
       t.appendChild(b);
     }
     toastContainer().appendChild(t);
+    armDismissOnOutsideClick();
   }
 
   // src/gm.ts
@@ -3375,7 +3396,7 @@
     .bfb-ctx-item{padding:10px 14px;font-size:13px;color:#333;cursor:pointer;white-space:nowrap}
     .bfb-ctx-item:hover{background:#fff0f5;color:#fb7299}
     #bfb-toasts{position:fixed;right:18px;bottom:70px;z-index:100001;display:flex;flex-direction:column}
-    .bfb-toast{background:#fff;color:#222;border-radius:12px;padding:12px 14px;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.18);max-width:320px;font-family:system-ui,Arial;border:1px solid #ffd5e2;margin-top:8px;display:flex;align-items:center;gap:10px}
+    .bfb-toast{background:#fff;color:#222;border-radius:12px;padding:12px 14px;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.18);max-width:320px;font-family:system-ui,Arial;border:1px solid #ffd5e2;margin-top:8px;display:flex;align-items:center;gap:10px;cursor:pointer}
     .bfb-toast .bfb-toast-msg{flex:1;min-width:0}
     .bfb-toast-act{flex:0 0 auto;border:none;border-radius:7px;background:#fb7299;color:#fff;font-size:12px;font-weight:600;padding:5px 12px;cursor:pointer}
     .bfb-toast-act:hover{background:#e85d88}
