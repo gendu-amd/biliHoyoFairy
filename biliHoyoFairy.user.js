@@ -2924,6 +2924,49 @@
     page(1);
   }
 
+  // src/ui/menu/locate.ts
+  function elementOf(t) {
+    return t instanceof Element ? t : null;
+  }
+  function findCard(e) {
+    const path = e.composedPath && e.composedPath() || [];
+    for (const node of path) {
+      const el = elementOf(node);
+      if (el && el.matches(VIDEO_CARD_SELECTOR)) return el;
+    }
+    const t = elementOf(e.target);
+    return t ? t.closest(VIDEO_CARD_SELECTOR) : null;
+  }
+  function findVideoPageUp(e) {
+    if (pageType() !== "播放页") return null;
+    const path = e.composedPath && e.composedPath() || [];
+    let link = null;
+    for (const node of path) {
+      const el = elementOf(node);
+      if (!el) continue;
+      if (isCommentTag(el.tagName) || el.matches(PAGE_HEADER_SELECTOR)) return null;
+      if (!link && el.matches('a[href*="space.bilibili.com"]')) link = el;
+    }
+    if (!link) return null;
+    const uid = ((link.getAttribute("href") || "").match(/space\.bilibili\.com\/(\d+)/) || [])[1] || "";
+    if (!uid) return null;
+    let up = (link.getAttribute("title") || link.textContent || "").trim();
+    if (!up) {
+      const box = link.closest(VIDEO_PAGE_UP_BOX);
+      const nameEl = box && box.querySelector(VIDEO_PAGE_UP_NAME);
+      up = (nameEl && (nameEl.getAttribute("title") || nameEl.textContent) || "").trim();
+    }
+    return { uid, up, bvid: (location.pathname.match(/(BV[0-9A-Za-z]+)/) || [])[1] || "" };
+  }
+  function findCommentHost(e) {
+    const path = e.composedPath && e.composedPath() || [];
+    for (const node of path) {
+      const host = asCommentHost(elementOf(node));
+      if (host) return host;
+    }
+    return null;
+  }
+
   // src/ui/confirm.ts
   var current = null;
   function baseModal(opts, fill) {
@@ -3020,40 +3063,17 @@
     });
   }
 
-  // src/ui/menu.ts
-  function elementOf(t) {
-    return t instanceof Element ? t : null;
+  // src/ui/menu/shared.ts
+  function confirmBlacklist(name) {
+    return confirmModal(`确定拉黑「${name}」并写入账号黑名单？
+刷新后不再推荐、不可一键撤销（未登录则仅本地屏蔽）。`, {
+      title: "拉黑确认",
+      okText: "拉黑",
+      danger: true
+    });
   }
-  function findCard(e) {
-    const path = e.composedPath && e.composedPath() || [];
-    for (const node of path) {
-      const el = elementOf(node);
-      if (el && el.matches(VIDEO_CARD_SELECTOR)) return el;
-    }
-    const t = elementOf(e.target);
-    return t ? t.closest(VIDEO_CARD_SELECTOR) : null;
-  }
-  function findVideoPageUp(e) {
-    if (pageType() !== "播放页") return null;
-    const path = e.composedPath && e.composedPath() || [];
-    let link = null;
-    for (const node of path) {
-      const el = elementOf(node);
-      if (!el) continue;
-      if (isCommentTag(el.tagName) || el.matches(PAGE_HEADER_SELECTOR)) return null;
-      if (!link && el.matches('a[href*="space.bilibili.com"]')) link = el;
-    }
-    if (!link) return null;
-    const uid = ((link.getAttribute("href") || "").match(/space\.bilibili\.com\/(\d+)/) || [])[1] || "";
-    if (!uid) return null;
-    let up = (link.getAttribute("title") || link.textContent || "").trim();
-    if (!up) {
-      const box = link.closest(VIDEO_PAGE_UP_BOX);
-      const nameEl = box && box.querySelector(VIDEO_PAGE_UP_NAME);
-      up = (nameEl && (nameEl.getAttribute("title") || nameEl.textContent) || "").trim();
-    }
-    return { uid, up, bvid: (location.pathname.match(/(BV[0-9A-Za-z]+)/) || [])[1] || "" };
-  }
+
+  // src/ui/menu/context.ts
   function showVideoPageUpMenu(e) {
     const info = findVideoPageUp(e);
     if (!info) return;
@@ -3109,14 +3129,6 @@
     }
     items.push({ label: "⚙️ 打开设置面板", act: openPanel });
     renderCtxMenu(e, items);
-  }
-  function confirmBlacklist(name) {
-    return confirmModal(`确定拉黑「${name}」并写入账号黑名单？
-刷新后不再推荐、不可一键撤销（未登录则仅本地屏蔽）。`, {
-      title: "拉黑确认",
-      okText: "拉黑",
-      danger: true
-    });
   }
   var ctxMenuEl = null;
   function closeCtxMenu() {
@@ -3253,16 +3265,8 @@
     menu.style.top = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 10) + "px";
     ctxMenuEl = menu;
   }
-  function findCommentHost(e) {
-    const path = e.composedPath && e.composedPath() || [];
-    for (const node of path) {
-      const host = asCommentHost(elementOf(node));
-      if (host) return host;
-    }
-    return null;
-  }
-  document.addEventListener("click", closeCtxMenu, true);
-  document.addEventListener("scroll", closeCtxMenu, true);
+
+  // src/ui/menu/hover.ts
   var overlayHost = null;
   var overlayRoot = null;
   function getOverlayRoot() {
@@ -3573,6 +3577,96 @@
     }
   `);
 
+  // src/ui/field/models.ts
+  var nameBudget = 0;
+  function resetNameBudget() {
+    nameBudget = NAME_RESOLVE_MAX;
+  }
+  var nameFlushTimer = null;
+  var NAME_FLUSH_MS = 400;
+  function scheduleNameFlush(rerender) {
+    if (nameFlushTimer) clearTimeout(nameFlushTimer);
+    nameFlushTimer = setTimeout(() => {
+      nameFlushTimer = null;
+      saveConfig();
+      rerender();
+    }, NAME_FLUSH_MS);
+  }
+  function chipModel(arr, groupMode = false, path) {
+    return {
+      count: () => arr.length,
+      entries: () => arr.map((v) => ({ key: v, value: v, arr, path })),
+      clear: () => {
+        clearLists(arr);
+      },
+      add: (raw) => {
+        if (groupMode) {
+          const parts2 = raw.split(/[+,，、\s]+/).map((s) => s.trim()).filter(Boolean);
+          if (parts2.length < 2) {
+            toast("组合标签至少要 2 个，如：原神 鸣潮");
+            return false;
+          }
+          if (addToList(arr, parts2.join("+"))) {
+            toast(`已添加组合：${parts2.join(" & ")}`);
+            return true;
+          }
+          toast("该组合已存在");
+          return false;
+        }
+        const parts = splitRuleInput(raw);
+        if (!parts.length) return false;
+        const added = addEntries(parts.map((v) => ({ arr, value: v })));
+        if (added) toast(`已添加 ${added} 条${parts.length > added ? `（${parts.length - added} 条已存在）` : ""}`);
+        else toast("均已存在，未重复添加");
+        return true;
+      },
+      decorate: (entry, chip, txt) => {
+        if (groupMode) chip.classList.add("group");
+        txt.textContent = groupMode ? String(entry.value).split("+").join(" & ") : entry.value;
+      },
+      // 可搜文本 = 存的值 + 显示的值（组合标签存 `a+b`、显示 `a & b`，两种写法都得搜得到）。
+      texts: (entry) => groupMode ? [String(entry.value), String(entry.value).split("+").join(" & ")] : [String(entry.value)]
+    };
+  }
+  function upModel(names, uids, namePath, uidPath) {
+    return {
+      count: () => names.length + uids.length,
+      entries: () => names.map((v) => ({ key: "n:" + v, value: v, arr: names, uid: false, path: namePath })).concat(uids.map((v) => ({ key: "u:" + v, value: v, arr: uids, uid: true, path: uidPath }))),
+      clear: () => {
+        clearLists(names, uids);
+      },
+      add: (raw) => {
+        const parts = splitRuleInput(raw);
+        if (!parts.length) return false;
+        const added = addEntries(parts.map((v) => ({ arr: /^\d+$/.test(v) ? uids : names, value: v })));
+        toast(added ? `已添加 ${added} 条` : "均已存在，未重复添加");
+        return true;
+      },
+      // UID 条目按数字和解析出的 UP 名都能搜到——用户记得住的是名字，不是一串数字。
+      texts: (entry) => entry.uid ? [String(entry.value), CONFIG.uidNames[String(entry.value)] || ""] : [String(entry.value)],
+      decorate: (entry, chip, txt, rerender) => {
+        if (!entry.uid) {
+          txt.textContent = entry.value;
+          return;
+        }
+        const nm = CONFIG.uidNames[String(entry.value)];
+        txt.textContent = nm || entry.value;
+        chip.classList.add("uidchip");
+        chip.title = "UID " + entry.value + (nm ? "" : nameBudget > 0 ? "（正在解析名称…）" : "（名单过长，本次未解析名称）");
+        if (!nm && nameBudget > 0) {
+          nameBudget--;
+          fetchCard(entry.value, (d) => {
+            const name = d && d.card && d.card.name;
+            if (name) {
+              setUidName(entry.value, name);
+              scheduleNameFlush(rerender);
+            }
+          });
+        }
+      }
+    };
+  }
+
   // src/ui/listfilter.ts
   function makeMatcher(query) {
     const q2 = (query || "").trim();
@@ -3593,20 +3687,9 @@
     return items.filter((it) => textsOf(it).some((t) => !!t && m(t)));
   }
 
-  // src/ui/field.ts
+  // src/ui/field/list.ts
   var SYNTAX_CHEATSHEET = "<b>规则语法速查</b><br>· <code>原神</code> —— 普通词，<b>包含</b>即命中，忽略大小写与全角半角<br>· <code>/震惊.*竟然/</code> —— 以 <code>/</code> 包裹为<b>正则</b>，可加 <code>/…/i</code> 等标志<br>· <code>title:原神</code> / <code>up:营销号</code> / <code>part:资讯</code> —— 只匹配 标题 / UP 名 / 分区（不写前缀 = 三者都匹配）<br>· <code>原神 鸣潮</code> —— 仅「组合标签」字段：<b>同时</b>含这一组全部标签才屏蔽<br>· 一次可粘贴多条，用<b>换行</b>或<b>逗号</b>分隔；以 <code>/</code> 开头的行整行保留，不会被逗号拆断<br>· 拿不准就用「工具 → 🧪 正则测试器」先试，它会告诉你会不会被引擎拒收";
   var collapseState = {};
-  var nameBudget = 0;
-  var nameFlushTimer = null;
-  var NAME_FLUSH_MS = 400;
-  function scheduleNameFlush(rerender) {
-    if (nameFlushTimer) clearTimeout(nameFlushTimer);
-    nameFlushTimer = setTimeout(() => {
-      nameFlushTimer = null;
-      saveConfig();
-      rerender();
-    }, NAME_FLUSH_MS);
-  }
   function renderListField(host, o) {
     const model = o.model;
     const el = (t, c) => {
@@ -3782,7 +3865,7 @@
         renderBar();
         return;
       }
-      nameBudget = NAME_RESOLVE_MAX;
+      resetNameBudget();
       const shown = list.slice(0, CHIP_RENDER_MAX);
       shown.forEach((entry) => {
         const chip = el("span", "chip" + (manage && selected.has(entry.key) ? " sel" : ""));
@@ -3867,80 +3950,8 @@
     renderChips();
     host.appendChild(sec);
   }
-  function chipModel(arr, groupMode = false, path) {
-    return {
-      count: () => arr.length,
-      entries: () => arr.map((v) => ({ key: v, value: v, arr, path })),
-      clear: () => {
-        clearLists(arr);
-      },
-      add: (raw) => {
-        if (groupMode) {
-          const parts2 = raw.split(/[+,，、\s]+/).map((s) => s.trim()).filter(Boolean);
-          if (parts2.length < 2) {
-            toast("组合标签至少要 2 个，如：原神 鸣潮");
-            return false;
-          }
-          if (addToList(arr, parts2.join("+"))) {
-            toast(`已添加组合：${parts2.join(" & ")}`);
-            return true;
-          }
-          toast("该组合已存在");
-          return false;
-        }
-        const parts = splitRuleInput(raw);
-        if (!parts.length) return false;
-        const added = addEntries(parts.map((v) => ({ arr, value: v })));
-        if (added) toast(`已添加 ${added} 条${parts.length > added ? `（${parts.length - added} 条已存在）` : ""}`);
-        else toast("均已存在，未重复添加");
-        return true;
-      },
-      decorate: (entry, chip, txt) => {
-        if (groupMode) chip.classList.add("group");
-        txt.textContent = groupMode ? String(entry.value).split("+").join(" & ") : entry.value;
-      },
-      // 可搜文本 = 存的值 + 显示的值（组合标签存 `a+b`、显示 `a & b`，两种写法都得搜得到）。
-      texts: (entry) => groupMode ? [String(entry.value), String(entry.value).split("+").join(" & ")] : [String(entry.value)]
-    };
-  }
-  function upModel(names, uids, namePath, uidPath) {
-    return {
-      count: () => names.length + uids.length,
-      entries: () => names.map((v) => ({ key: "n:" + v, value: v, arr: names, uid: false, path: namePath })).concat(uids.map((v) => ({ key: "u:" + v, value: v, arr: uids, uid: true, path: uidPath }))),
-      clear: () => {
-        clearLists(names, uids);
-      },
-      add: (raw) => {
-        const parts = splitRuleInput(raw);
-        if (!parts.length) return false;
-        const added = addEntries(parts.map((v) => ({ arr: /^\d+$/.test(v) ? uids : names, value: v })));
-        toast(added ? `已添加 ${added} 条` : "均已存在，未重复添加");
-        return true;
-      },
-      // UID 条目按数字和解析出的 UP 名都能搜到——用户记得住的是名字，不是一串数字。
-      texts: (entry) => entry.uid ? [String(entry.value), CONFIG.uidNames[String(entry.value)] || ""] : [String(entry.value)],
-      decorate: (entry, chip, txt, rerender) => {
-        if (!entry.uid) {
-          txt.textContent = entry.value;
-          return;
-        }
-        const nm = CONFIG.uidNames[String(entry.value)];
-        txt.textContent = nm || entry.value;
-        chip.classList.add("uidchip");
-        chip.title = "UID " + entry.value + (nm ? "" : nameBudget > 0 ? "（正在解析名称…）" : "（名单过长，本次未解析名称）");
-        if (!nm && nameBudget > 0) {
-          nameBudget--;
-          fetchCard(entry.value, (d) => {
-            const name = d && d.card && d.card.name;
-            if (name) {
-              setUidName(entry.value, name);
-              scheduleNameFlush(rerender);
-            }
-          });
-        }
-      }
-    };
-  }
+
+  // src/ui/field/controls.ts
   function bindControl(root, id, obj, key, opts = {}) {
     const el = root.querySelector("#" + id);
     if (!el) return;
