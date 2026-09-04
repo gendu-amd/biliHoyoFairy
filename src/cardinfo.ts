@@ -139,6 +139,40 @@ export function extractCardInfo(card: Element, deepUid = true): CardInfo {
   return info;
 }
 
+// 动态流（t.bilibili.com，/x/polymer/web-dynamic/…）的列表项归一。
+//
+// 单独一个函数而不是往 normFeedItem 里加分支：动态的字段全埋在 modules 下，与推荐流那套扁平
+// 结构没有一处重合，混在一起会让 normFeedItem 变成谁都不敢改的大杂烩。
+// 动态不只有视频（还有图文、转发、直播），非视频项归一后没有 bvid/title 也无妨——
+// 关键词与 UP/UID 维度照样能判，这正是我们想拦的（比如某个 UP 的所有动态）。
+export function normDynamicItem(it: any): CardInfo | null {
+  if (!it || typeof it !== 'object') return null;
+  const mods = it.modules || {};
+  const author = mods.module_author || {};
+  const dyn = mods.module_dynamic || {};
+  const major = dyn.major || {};
+  // 视频动态的正文在 major.archive；纯文字/图文动态在 module_dynamic.desc.text
+  const av = major.archive || major.pgc || {};
+  const stat = av.stat || {};
+  const title = av.title || (dyn.desc && dyn.desc.text) || '';
+  // 转发动态：原动态的正文也要参与关键词判定，否则「转发引战内容」拦不到
+  const orig = it.orig ? normDynamicItem(it.orig) : null;
+  return {
+    title: String(title || '') + (orig && orig.title ? ' ' + orig.title : ''),
+    up: author.name || '',
+    uid: author.mid != null ? String(author.mid) : '',
+    partition: '', // 动态接口不返回分区
+    bvid: av.bvid || '',
+    link: av.jump_url || '',
+    duration: parseDuration(av.duration_text),
+    // 动态里的播放数是「10.2万」这类展示串，不是数字
+    views: parseCount(stat.play),
+    likes: null,
+    isLive: it.type === 'DYNAMIC_TYPE_LIVE_RCMD' || !!major.live_rcmd,
+    isAd: false,
+  };
+}
+
 // 各接口的「列表项」归一成与 extractCardInfo 同形状的 info（rcmd/ranking/popular/related 同构）。
 // it 为各推荐接口的原始 JSON 列表项，字段形态各异，统一以宽松类型读取后归一。
 export function normFeedItem(it: any): CardInfo | null {

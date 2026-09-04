@@ -9,7 +9,9 @@
 //   2. 联网维度（标签/双标签/UP简介）在「精确过滤」关闭时压根不会被求值，零命中是配置使然，
 //      单独归到「未启用」而不是「死规则」。
 //   3. 只报用户自己名单里的规则；订阅里的规则删不掉，报了也只是干着急。
-import { CONFIG, scheduleSave } from './config';
+//   4. 用户自己停用的规则单独归类——它零命中是被按下去的，混进死规则等于劝人删掉一条
+//      他刚决定留着观察的规则。
+import { CONFIG, scheduleStatsSave } from './config';
 import { enumerateRules } from './match/engine';
 import type { RuleRef } from './match/engine';
 
@@ -28,6 +30,8 @@ export interface RuleHealth {
   dead: RuleRef[];
   /** 因「精确过滤」关闭而根本不会被求值的自有规则（不算死规则） */
   inactive: RuleRef[];
+  /** 被用户自己停用的规则（同样不算死规则——它没命中是你自己关的） */
+  disabled: RuleRef[];
 }
 
 export function ruleHealth(): RuleHealth {
@@ -45,12 +49,16 @@ export function ruleHealth(): RuleHealth {
 
   const dead: RuleRef[] = [];
   const inactive: RuleRef[] = [];
+  const disabled: RuleRef[] = [];
   for (const r of refs) {
     if (!r.own || stats[r.key]) continue;
-    if (!r.active) inactive.push(r);
+    // 停用的规则当然不会命中——那是用户自己按下的。把它混进「死规则」等于反过来劝人删掉
+    // 一条他刚决定先留着观察的规则。
+    if (r.disabled) disabled.push(r);
+    else if (!r.active) inactive.push(r);
     else if (ready) dead.push(r);
   }
-  return { days, ready, hot, dead, inactive };
+  return { days, ready, hot, dead, inactive, disabled };
 }
 
 // 清掉已删除/已改写规则留下的计数键：它们既不会再增长，也不对应任何可展示的规则，
@@ -67,6 +75,6 @@ export function pruneRuleStats(): number {
       n++;
     }
   }
-  if (n) scheduleSave();
+  if (n) scheduleStatsSave();
   return n;
 }

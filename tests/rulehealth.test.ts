@@ -2,7 +2,7 @@
 // 这里最要命的不是算错次数，而是**冤枉**——把一条天天在拦的规则报成「从未命中」，
 // 用户照着删了，保护就没了。所以核心用例锁的是「枚举出来的键」与「命中时记账的键」字节一致。
 import { beforeEach, describe, expect, it } from 'vitest';
-import { CONFIG, DEFAULT_CONFIG } from '../src/config';
+import { CONFIG, DEFAULT_CONFIG, setRuleDisabled } from '../src/config';
 import { matchRule, matchApi, rebuildRules, enumerateRules, ruleKeyOf } from '../src/match/engine';
 import { recordBlock } from '../src/stats';
 import { ruleHealth, pruneRuleStats, OBSERVE_DAYS } from '../src/rulehealth';
@@ -155,5 +155,66 @@ describe('pruneRuleStats', () => {
     CONFIG.ruleStats = { '关键词:还在的词': 2, '关键词:订阅词': 7, '关键词:早删了的词': 5 };
     expect(pruneRuleStats()).toBe(1);
     expect(new Set(Object.keys(CONFIG.ruleStats))).toEqual(new Set(['关键词:还在的词', '关键词:订阅词']));
+  });
+});
+
+// 规则「停用」：保留在名单里、灰显、不参与编译。
+// 这是「删掉」之外的中间态——面对一条疑似过宽的规则，人真正想做的是先关两天看看，
+// 而删除不可逆，于是没有这个中间态时大多数人选择放着不管，坏规则越攒越多。
+describe('规则停用', () => {
+  it('停用的规则不再参与匹配，重新启用后恢复', () => {
+    CONFIG.block.keywords.push('原神');
+    rebuildRules();
+    const card = { title: '原神新版本', up: '', uid: '', partition: '', bvid: '', duration: null, views: null, likes: null, isLive: false, isAd: false } as CardInfo;
+    expect(matchRule(card)).toBe('关键词:原神');
+
+    setRuleDisabled('block.keywords', '原神', true);
+    rebuildRules();
+    expect(matchRule(card)).toBeNull();
+    expect(CONFIG.block.keywords).toEqual(['原神']); // 仍在名单里，只是不生效
+
+    setRuleDisabled('block.keywords', '原神', false);
+    rebuildRules();
+    expect(matchRule(card)).toBe('关键词:原神');
+  });
+
+  it('白名单与评论维度同样支持停用', () => {
+    CONFIG.block.keywords.push('原神');
+    CONFIG.allow.uids.push('123');
+    rebuildRules();
+    const card = { title: '原神新版本', up: '', uid: '123', partition: '', bvid: '', duration: null, views: null, likes: null, isLive: false, isAd: false } as CardInfo;
+    expect(matchRule(card)).toBeNull(); // 白名单放行
+
+    setRuleDisabled('allow.uids', '123', true);
+    rebuildRules();
+    expect(matchRule(card)).toBe('关键词:原神'); // 白名单那条停用了，于是被拦
+  });
+
+  it('停用的规则归到 disabled，不被报成死规则（它没命中是你自己按下去的）', () => {
+    CONFIG.block.keywords.push('原神');
+    CONFIG.ruleStatsSince = Date.now() - (OBSERVE_DAYS + 1) * DAY;
+    setRuleDisabled('block.keywords', '原神', true);
+    rebuildRules();
+    const h = ruleHealth();
+    expect(h.dead.map((r) => r.line)).toEqual([]);
+    expect(h.disabled.map((r) => r.line)).toEqual(['原神']);
+  });
+
+  // 停用两天就把历史命中数清空的话，重新启用后它看起来像条崭新的规则，随即又被报成「从未命中」。
+  it('停用不会让 pruneRuleStats 清掉这条规则的历史命中数', () => {
+    CONFIG.block.keywords.push('原神');
+    rebuildRules();
+    CONFIG.ruleStats['关键词:原神'] = 12;
+    setRuleDisabled('block.keywords', '原神', true);
+    rebuildRules();
+    pruneRuleStats();
+    expect(CONFIG.ruleStats['关键词:原神']).toBe(12);
+  });
+
+  it('setRuleDisabled 关掉最后一条时不留空键（停用表会跟着同步，空键只是噪音）', () => {
+    setRuleDisabled('block.keywords', '原神', true);
+    expect(CONFIG.disabled['block.keywords']).toEqual(['原神']);
+    setRuleDisabled('block.keywords', '原神', false);
+    expect(CONFIG.disabled['block.keywords']).toBeUndefined();
   });
 });

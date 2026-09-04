@@ -1,7 +1,7 @@
 // 接口层：缓存 + 小并发限速队列 + 风控熔断。API 取数与批量拉黑共用。
 import { RISK_CODES } from './constants';
 import { gmRequest } from './gm';
-import { CONFIG, scheduleSave, setUidName } from './config';
+import { CONFIG, scheduleStatsSave, setUidName } from './config';
 import { capMapSet } from './util';
 import { logErr } from './logging';
 import { toast } from './ui/toast';
@@ -153,7 +153,7 @@ export function fetchView(bvid: string, cb: ApiCb): void {
   cachedGet(API.view, VIEW_CACHE_MAX, 'v:', bvid, 'https://api.bilibili.com/x/web-interface/view?bvid=' + encodeURIComponent(bvid), (j) => j.data, (d) => {
     if (d && d.owner && d.owner.mid && d.owner.name && CONFIG.uidNames[String(d.owner.mid)] === undefined) {
       setUidName(d.owner.mid, d.owner.name); // 持久化（软上限内）：面板按名展示
-      scheduleSave();
+      scheduleStatsSave();
     }
     cb(d);
   });

@@ -4,7 +4,7 @@ import { CONFIG } from '../../../config';
 import { BLACKLIST_MANAGE_URL } from '../../../constants';
 import { blockedLog, tallyLog, sessionBlocked } from '../../../stats';
 import { blacklistUp, unblockUp } from '../../../blacklist';
-import { addToList, removeFromList } from '../../../rules';
+import { addToList, removeFromList, restoreToList } from '../../../rules';
 import { locateRule, REASON_RULE_FIELD } from '../../../match/engine';
 import { ruleLines } from '../../../match/normalize';
 import { escapeHtml } from '../../../util';
@@ -118,8 +118,17 @@ export const logSection: PanelSection = {
           del.onclick = () => {
             confirmModal(`删除规则「${loc.line}」？此后它不再屏蔽任何视频。`, { title: '删除规则', okText: '删除', danger: true }).then((ok) => {
               if (!ok) return;
-              removeFromList(CONFIG.block[loc.field], loc.line);
-              toast(`已删除规则：${loc.line}`);
+              const arr = CONFIG.block[loc.field];
+              const at = arr.indexOf(loc.line);
+              removeFromList(arr, loc.line);
+              // 误删规则比误拉黑常见得多，而拉黑早就有撤销了
+              toast(`已删除规则：${loc.line}`, 'info', {
+                label: '撤销',
+                onClick: () => {
+                  restoreToList(arr, loc.line, at);
+                  refreshPanelIfOpen();
+                },
+              });
               refreshPanelIfOpen();
             });
           };

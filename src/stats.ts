@@ -1,6 +1,6 @@
 // 拦截统计与屏蔽记录（纯计数 + 环形日志）。命中后通过注入的监听器通知 UI（更新角标 / 刷新面板），
 // 自身不直接依赖 UI，避免环。拦截层（无 card）与 DOM 层共用。
-import { CONFIG, scheduleSave } from './config';
+import { CONFIG, scheduleStatsSave } from './config';
 import { log } from './logging';
 import { BLOCKED_LOG_MAX } from './constants';
 
@@ -84,7 +84,7 @@ function notifyBatched(): void {
     } catch (e) {
       /* UI 监听器异常不能反噬记账链路 */
     }
-    scheduleSave(); // 本身已是 SAVE_DEBOUNCE_MS 防抖，跟着合批一起走即可
+    scheduleStatsSave(); // 本身已是 SAVE_DEBOUNCE_MS 防抖，跟着合批一起走即可
   });
 }
 

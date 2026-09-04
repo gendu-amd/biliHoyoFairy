@@ -5,7 +5,7 @@
 import { VERSION, BLACKLIST_MANAGE_URL, STARTUP_SUMMARY_MS } from './constants';
 import { CONFIG, configRescue, saveConfig, installConfigSync } from './config';
 import { safe, logErr, BADGE } from './logging';
-import { healthReport } from './health';
+import { healthReport, markHealthReady } from './health';
 import { configureCardDetect } from './cardinfo';
 import { pageType } from './page';
 import { installNetworkHooks } from './net';
@@ -122,6 +122,9 @@ import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
 
     // 首屏稳定后弹一次「本次拦截」汇总：让你确认脚本真的在干活（区别于 B 站随机换批）
     setTimeout(() => {
+      // 先开闸再判断：此前的计数天然都是 0，提前判定全是误报。
+      markHealthReady();
+      updateBadge(); // 管线疑似失效时角标在这一刻变黄
       if (!CONFIG.enabled) return;
       // 运行自检：B 站换接口/换类名会让脚本静默失效（照常运行、什么都不拦）。
       // 只在控制台报警、不弹 toast——误报的代价是骚扰所有人，而排查的人一定会看控制台。

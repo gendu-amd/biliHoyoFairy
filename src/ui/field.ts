@@ -1,7 +1,7 @@
 // 通用列表字段组件：折叠头 / 添加行 / 批量管理 / chip 渲染共一套；不同字段（关键词、UP名+UID、组合标签…）
 // 只需提供一个轻量 model 适配器。供设置面板复用。
-import { CONFIG, saveConfig, setUidName } from '../config';
-import { addToList, removeFromList } from '../rules';
+import { CONFIG, isRuleDisabled, saveConfig, setUidName } from '../config';
+import { addToList, removeFromList, restoreToList, toggleRuleDisabled } from '../rules';
 import { splitRuleInput } from '../match/normalize';
 import { fetchCard } from '../api';
 import { toast } from './toast';
@@ -15,6 +15,8 @@ export interface FieldEntry {
   value: string;
   arr: string[]; // 该条所属的底层数组（删除时直接操作它）
   uid?: boolean;
+  /** 该条在配置里的名单路径（如 'block.keywords'），停用状态按它索引。缺省则不提供停用按钮。 */
+  path?: string;
 }
 
 /** 列表字段的数据适配器。组件只认这个接口——新增一类名单 = 写一个 model，不动组件。 */
@@ -218,12 +220,39 @@ export function renderListField(host: HTMLElement, o: ListFieldOpts): void {
           renderChips();
         };
       } else {
+        // 停用：留在名单里、灰显、不参与编译。删除是不可逆的，而「先关两天看看」才是
+        // 面对一条可疑规则时最常见的诉求——没有这个中间态，用户只能在「忍着」和「删掉」之间二选一。
+        if (entry.path) {
+          const off = isRuleDisabled(entry.path, entry.value);
+          if (off) chip.classList.add('off');
+          const t = document.createElement('b');
+          t.className = 'chip-toggle';
+          t.textContent = off ? '▶' : '⏸';
+          t.title = off ? '重新启用这条规则' : '暂时停用这条规则（保留在名单里，不参与匹配）';
+          t.onclick = (ev) => {
+            ev.stopPropagation();
+            toggleRuleDisabled(entry.path!, entry.value);
+            renderChips();
+          };
+          chip.appendChild(t);
+        }
         const x = document.createElement('b');
         x.textContent = '✕';
         x.title = '删除';
         x.onclick = () => {
-          removeFromList(entry.arr, entry.value);
+          const { arr, value } = entry;
+          const at = arr.indexOf(value);
+          removeFromList(arr, value);
           renderChips();
+          // 误删规则比误拉黑常见得多，而拉黑早就有撤销了。原位插回去，不是追加到末尾——
+          // 名单顺序是用户自己攒出来的，撤销不该顺手把它打乱。
+          toast(`已删除：${value}`, 'info', {
+            label: '撤销',
+            onClick: () => {
+              restoreToList(arr, value, at);
+              renderChips();
+            },
+          });
         };
         chip.appendChild(x);
       }
@@ -264,10 +293,10 @@ export function renderListField(host: HTMLElement, o: ListFieldOpts): void {
 }
 
 // 普通 chip 列表（关键词 / BV / 标签 / 白名单…）；groupMode=组合标签。
-export function chipModel(arr: string[], groupMode = false): FieldModel {
+export function chipModel(arr: string[], groupMode = false, path?: string): FieldModel {
   return {
     count: () => arr.length,
-    entries: () => arr.map((v) => ({ key: v, value: v, arr })),
+    entries: () => arr.map((v) => ({ key: v, value: v, arr, path })),
     clear: () => {
       arr.length = 0;
     },
@@ -303,13 +332,13 @@ export function chipModel(arr: string[], groupMode = false): FieldModel {
 }
 
 // 「UP 名 + UID」合一：纯数字→uids，否则→names；UID chip 异步解析显示名。
-export function upModel(names: string[], uids: string[]): FieldModel {
+export function upModel(names: string[], uids: string[], namePath?: string, uidPath?: string): FieldModel {
   return {
     count: () => names.length + uids.length,
     entries: () =>
       names
-        .map((v) => ({ key: 'n:' + v, value: v, arr: names, uid: false }))
-        .concat(uids.map((v) => ({ key: 'u:' + v, value: v, arr: uids, uid: true }))),
+        .map((v) => ({ key: 'n:' + v, value: v, arr: names, uid: false, path: namePath }))
+        .concat(uids.map((v) => ({ key: 'u:' + v, value: v, arr: uids, uid: true, path: uidPath }))),
     clear: () => {
       names.length = 0;
       uids.length = 0;
@@ -403,7 +432,7 @@ export function renderFields(host: HTMLElement, defs: FieldDef[]): void {
         hint: f.hint,
         placeholder: '输入 UP 名 或 UID（纯数字自动识别）',
         inputTitle: '可一次粘贴多条，用逗号或换行分隔；纯数字按 UID，其余按 UP 名',
-        model: upModel(CONFIG.block.upNames, CONFIG.block.uids),
+        model: upModel(CONFIG.block.upNames, CONFIG.block.uids, 'block.upNames', 'block.uids'),
       });
       return;
     }
@@ -414,7 +443,7 @@ export function renderFields(host: HTMLElement, defs: FieldDef[]): void {
       placeholder: f.placeholder,
       isAllow: f.scope === 'allow',
       inputTitle: f.groupMode ? '输入一组标签，用空格或逗号分隔，表示同时含这些标签才拦' : '可一次粘贴多条，用逗号或换行分隔',
-      model: chipModel(arr, f.groupMode),
+      model: chipModel(arr, f.groupMode, `${f.scope === 'allow' ? 'allow' : 'block'}.${f.key}`),
     });
   });
 }

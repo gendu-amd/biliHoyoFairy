@@ -1,5 +1,5 @@
 // 配置：默认值 + 本地存储（GM）+ 载入合并 + 导入/导出。CONFIG 为全局共享单例（对象被各模块就地读写）。
-import { SAVE_DEBOUNCE_MS, SCHEMA_VERSION, STORE_BACKUP_KEY, STORE_KEY, SYNC_COALESCE_MS, UNSAFE_KEYS, VERSION } from './constants';
+import { SAVE_DEBOUNCE_MS, SCHEMA_VERSION, STATS_KEY, STORE_BACKUP_KEY, STORE_KEY, SYNC_COALESCE_MS, UNSAFE_KEYS, VERSION } from './constants';
 
 export interface BlockConfig {
   keywords: string[];
@@ -72,6 +72,9 @@ export interface AppConfig {
   ruleStats: Record<string, number>;
   // 开始统计的时间戳。没有它就无法区分「装了三个月没命中=可疑」和「昨天刚装=正常」。
   ruleStatsSince: number;
+  // 被「停用」的规则：键 = 'block.keywords' 这样的名单路径，值 = 停用的**原行**。
+  // 存原行而不是下标——名单会增删，下标会漂到别的规则上。
+  disabled: Record<string, string[]>;
   subscriptions: Subscription[];
 }
 
@@ -129,6 +132,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   uidNames: {}, // uid -> UP 名 缓存（仅用于面板按名称展示；拉黑仍用 uid）
   ruleStats: {}, // 规则 -> 累计命中次数（规则体检：过宽 / 从未命中）
   ruleStatsSince: 0, // 首次记账的时间戳（0=尚未开始统计）
+  disabled: {}, // 规则停用表（见 AppConfig.disabled / isRuleDisabled）
   // 规则订阅：每条 { url, name, enabled }。拉取到的规则数据另存于 SUB_STORE_KEY 缓存（不进 config，不外传）
   subscriptions: [],
 };
@@ -193,13 +197,38 @@ export const configRescue = {
   raw: null as unknown, // 原始内容，供报错时打进控制台（备份键在 GM 存储里，用户自己翻不到）
 };
 
+// —— 高频后台字段（见 constants.STATS_KEY）——
+// 内存里它们仍然住在 CONFIG 上（各模块照常读写 CONFIG.blockedCount），只有**持久化**是分开的。
+// 这样既不用改二十个文件，又能让「计数器自增」不再触碰规则那一份存储。
+export const STATS_FIELDS = ['blockedCount', 'uidNames', 'ruleStats', 'ruleStatsSince'] as const;
+
+function readJson(key: string): any {
+  const raw = GM_getValue(key, null);
+  if (!raw) return null;
+  try {
+    return typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch (e) {
+    return null;
+  }
+}
+
+function pickStats(src: any): Record<string, any> {
+  const out: Record<string, any> = {};
+  if (!src || typeof src !== 'object') return out;
+  for (const k of STATS_FIELDS) if (src[k] !== undefined) out[k] = src[k];
+  return out;
+}
+
 // 读取存档：先按 schemaVersion 逐级迁移，再与默认值合并（新增字段由 deepMerge 自动补默认值）。
+// 高频字段随后从 STATS_KEY 覆盖上来——老存档把它们写在 STORE_KEY 里，那份仍然读得到（自动迁移），
+// 直到下一次 saveConfig 把它们从 STORE_KEY 里剔除为止。
 export function loadConfig(): AppConfig {
   const raw = GM_getValue(STORE_KEY, null);
-  if (!raw) return structuredClone(DEFAULT_CONFIG);
+  if (!raw) return deepMerge(structuredClone(DEFAULT_CONFIG), pickStats(readJson(STATS_KEY))) as AppConfig;
   try {
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    return deepMerge(structuredClone(DEFAULT_CONFIG), migrateConfig(parsed)) as AppConfig;
+    const cfg = deepMerge(structuredClone(DEFAULT_CONFIG), migrateConfig(parsed)) as AppConfig;
+    return deepMerge(cfg, pickStats(readJson(STATS_KEY))) as AppConfig;
   } catch (e) {
     // 存档读不出来（写入被打断、存储被别的东西改坏、磁盘满…）。
     // 过去这里直接返回默认配置就算完，可 CONFIG 一旦成了默认值，随后**任何一次** saveConfig
@@ -214,41 +243,141 @@ export function loadConfig(): AppConfig {
     }
     configRescue.corrupted = true;
     configRescue.raw = raw;
-    return structuredClone(DEFAULT_CONFIG);
+    // 规则那份坏了，但计数那份未必——它是独立的键，能读回来就读回来。
+    return deepMerge(structuredClone(DEFAULT_CONFIG), pickStats(readJson(STATS_KEY))) as AppConfig;
   }
 }
 
 // 全局共享配置单例。
 export const CONFIG: AppConfig = loadConfig();
 
-let saveTimer: ReturnType<typeof setTimeout> | null = null;
+// —— 存盘 ——
+//
+// 规则/开关这一份**不能**整份覆盖写回。CONFIG 是内存单例，本标签页手里那份随时可能已经过期：
+// 别的标签页刚加的规则不在里面，整份写回去就是把它抹掉。这正是「脚本有时候记不住规则」的病根。
+// GM_addValueChangeListener 只把丢失窗口从「标签页的整个生命周期」缩到「一次广播延迟」，
+// 关不掉竞态——两边在同一个窗口内先后写入，先写的那份照样没了。
+//
+// 真正的修法是写时三方合并：写之前先读回存储里**当下**的内容，与「本页上次与存储一致时的样子」
+// （baseSnapshot）逐字段比对，只把本页真正改过的部分盖上去，其余保留存储里的。
+// 于是「谁写得晚」不再决定结果，两个标签页各改各的都能留住。代价是每次存盘多一次读——
+// 规则存盘是低频操作（用户点一下才发生一次），这个代价可以忽略。
+let baseSnapshot: Record<string, any> = {};
 
-export function saveConfig(): void {
-  // 立即存盘时顺手取消待写入：内容相同的重复写没有意义，而且每次写都会广播给其它标签页
-  // （见下面的 installConfigSync），让它们白重载一次。
-  if (saveTimer) {
-    clearTimeout(saveTimer);
-    saveTimer = null;
+function stripStats(src: any): Record<string, any> {
+  const out = src && typeof src === 'object' ? { ...src } : {};
+  for (const k of STATS_FIELDS) delete out[k];
+  return out;
+}
+
+/** 本页「与存储一致」的那一份快照（不含高频字段，它们不走这条路）。 */
+function snapshotConfig(): Record<string, any> {
+  return stripStats(structuredClone(CONFIG));
+}
+
+// 名单数组按**集合**合并，而不是整条替换：本页新增的加进去、本页删掉的删出去，其余保留对面的。
+// 顺序以存储里那份为基准，本页新增的追加在后面。
+// 元素是对象（订阅）时按 url 认同一条——`enabled` 一变 JSON 就变，按整体比对会看成「删一条又加一条」。
+function mergeList(base: any[], mine: any[], theirs: any[]): any[] {
+  const keyOf = (x: any): string =>
+    typeof x === 'string' ? x : x && typeof x === 'object' && x.url ? 'u:' + String(x.url) : JSON.stringify(x);
+  const baseMap = new Map(base.map((x) => [keyOf(x), x]));
+  const mineMap = new Map(mine.map((x) => [keyOf(x), x]));
+  // 本页删掉的（base 里有、内存里没了）：从对面那份里也删掉，否则删除永远同步不出去。
+  const removed = new Set([...baseMap.keys()].filter((k) => !mineMap.has(k)));
+  const out: any[] = [];
+  const seen = new Set<string>();
+  for (const x of theirs) {
+    const k = keyOf(x);
+    if (removed.has(k) || seen.has(k)) continue;
+    seen.add(k);
+    const m = mineMap.get(k);
+    const b = baseMap.get(k);
+    // 同一条目本页改过内容（如订阅的启用开关）→ 用本页的；没改过 → 用对面的。
+    out.push(m !== undefined && b !== undefined && JSON.stringify(m) !== JSON.stringify(b) ? m : x);
   }
-  GM_setValue(STORE_KEY, JSON.stringify(CONFIG));
+  for (const x of mine) {
+    const k = keyOf(x);
+    // 只追加**本页新增**的。base 里有、对面已删的不再复活——那是对面的删除操作，不是本页的新增。
+    if (baseMap.has(k) || seen.has(k)) continue;
+    seen.add(k);
+    out.push(x);
+  }
+  return out;
 }
 
-export function scheduleSave(): void {
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveConfig, SAVE_DEBOUNCE_MS);
+// base=本页上次与存储一致时的样子，mine=当前内存，theirs=存储里现在的内容。
+// 标量逐字段判断「本页改过没有」：改过用本页的，没改过用存储的（别的标签页可能改了）。
+function threeWayMerge(base: any, mine: any, theirs: any): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const k of new Set([...Object.keys(mine || {}), ...Object.keys(theirs || {})])) {
+    if (UNSAFE_KEYS.has(k)) continue;
+    const b = base ? base[k] : undefined;
+    const m = mine ? mine[k] : undefined;
+    const t = theirs ? theirs[k] : undefined;
+    if (Array.isArray(m) && Array.isArray(t)) out[k] = mergeList(Array.isArray(b) ? b : [], m, t);
+    else if (m && typeof m === 'object' && !Array.isArray(m) && t && typeof t === 'object' && !Array.isArray(t))
+      out[k] = threeWayMerge(b, m, t);
+    // 键的「消失」有两种含义，必须靠 base 区分，否则删除永远同步不出去：
+    //   base 里没有 → 对方新增的，收下；
+    //   base 里有   → 本页把它删了（如停用表里最后一条被取消停用），那就别把它捡回来。
+    else if (m === undefined) {
+      if (b === undefined) out[k] = t;
+    } else if (t === undefined) {
+      // 反过来同理：对面删掉的键，本页没动过就跟着删；本页改过则以本页为准。
+      if (b === undefined || JSON.stringify(m) !== JSON.stringify(b)) out[k] = m;
+    } else out[k] = JSON.stringify(m) === JSON.stringify(b) ? t : m; // 本页没动过 → 采纳存储里的
+  }
+  return out;
 }
+
+/** 保存规则与开关（低频）。写前先读回存储做三方合并，绝不整份覆盖。 */
+export function saveConfig(): void {
+  const stored = readJson(STORE_KEY);
+  const mine = snapshotConfig();
+  const merged = stored ? threeWayMerge(baseSnapshot, mine, stripStats(migrateConfig(stored))) : mine;
+  // 合并结果回灌内存：否则本页看不到刚并进来的、别的标签页加的规则，
+  // 而下一次存盘又会拿这份内存去当 base，等于把刚合并好的结果再丢一次。
+  deepMerge(CONFIG, merged);
+  GM_setValue(STORE_KEY, JSON.stringify(merged));
+  baseSnapshot = structuredClone(merged);
+  // 顺带把高频那份也落盘。存储虽然拆成两个键，但对调用方来说「存一下」就该是存全部——
+  // 否则 `CONFIG.blockedCount = 0; saveConfig()`（清空计数）这类写法会静默不生效，
+  // 而这种「改了字段却调错存盘函数」的错误编译期看不出来。saveConfig 是低频路径，多写一次不亏。
+  saveStats();
+}
+
+// —— 高频后台数据（拦截计数 / 规则命中数 / UID→名 缓存）——
+// 单独一个键、单独一条防抖。丢一点计数无所谓，所以这里不做合并、直接覆盖：
+// 关键是它**不再碰规则那份存储**，后台刷首页不会再把别的标签页的规则冲掉。
+let statsTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function saveStats(): void {
+  if (statsTimer) {
+    clearTimeout(statsTimer);
+    statsTimer = null;
+  }
+  const out: Record<string, any> = {};
+  for (const k of STATS_FIELDS) out[k] = (CONFIG as unknown as Record<string, any>)[k];
+  GM_setValue(STATS_KEY, JSON.stringify(out));
+}
+
+export function scheduleStatsSave(): void {
+  if (statsTimer) clearTimeout(statsTimer);
+  statsTimer = setTimeout(saveStats, SAVE_DEBOUNCE_MS);
+}
+
+// 合并基准的初值：刚载入时本页与存储一致。
+baseSnapshot = snapshotConfig();
 
 // —— 多标签页同步 ——
 //
-// CONFIG 是内存单例，saveConfig() 把它**整份**覆盖写回存储。于是同时开着两个 B 站标签页时：
-// A 页加了规则并存盘 → B 页内存里还是加规则之前的旧快照 → B 页此后任何一次存盘（哪怕只是
-// 拦截计数 +1）都会把 A 页刚加的规则整体冲掉。用户侧的现象是「这脚本有时候记不住规则」，
-// 且完全没有报错。开得越久的那个标签页，覆盖掉的东西越多。
-//
-// 修法是让写入可被感知：任一标签页写入后，其余标签页立刻重新载入并重建规则，
-// 把丢数据的窗口从「两个标签页的整个生命周期」缩到「一次存盘防抖」。
+// 存盘已经改成三方合并（见 saveConfig），写入本身不会再冲掉别人的规则。但那只保证**存储**是对的，
+// 不保证**本页看到的**是对的：别的标签页刚加的规则，本页内存里还没有，页面上照旧不拦。
+// 所以仍然需要监听存储变更，把远端的改动及时采纳进内存并让它可见（重扫 + 角标 + 面板）。
 export function installConfigSync(onAdopt: () => void): void {
-  // 老版本脚本管理器没有这个 API：降级为无同步（即当前行为），不影响其它功能。
+  // 老版本脚本管理器没有这个 API：降级为「不自动采纳」。存盘的合并逻辑不依赖它，规则不会因此丢，
+  // 只是本页要等下一次自己存盘（那时会把远端内容合并回来）或刷新才看得到对面的改动。
   if (typeof GM_addValueChangeListener !== 'function') return;
   let syncTimer: ReturnType<typeof setTimeout> | null = null;
   GM_addValueChangeListener(STORE_KEY, (_name, _old, _new, remote) => {
@@ -256,19 +385,35 @@ export function installConfigSync(onAdopt: () => void): void {
     if (syncTimer) clearTimeout(syncTimer);
     syncTimer = setTimeout(() => {
       syncTimer = null;
-      // 撤掉本页待写入：saveConfig 序列化的是**当下**的 CONFIG，采纳之后它写回去的内容
-      // 与对面刚写的一模一样，只会再广播一轮、让所有标签页白重载一次。
-      if (saveTimer) {
-        clearTimeout(saveTimer);
-        saveTimer = null;
-      }
       // 用 deepMerge 就地并入，而不是 Object.assign(CONFIG, fresh)：后者会把 CONFIG.block /
       // CONFIG.comment 换成新对象，而面板的输入框在渲染时就绑定了这些**对象引用**，
       // 换掉之后用户再改设置就写进了脱钩的旧对象，看得见改不生效。
       deepMerge(CONFIG, loadConfig());
+      // 采纳之后本页与存储一致：重置合并基准，否则下一次存盘会把刚采纳的内容当成「本页的改动」，
+      // 反过来把对面之后的删除又顶回去。
+      baseSnapshot = snapshotConfig();
       onAdopt();
     }, SYNC_COALESCE_MS);
   });
+}
+
+// —— 规则「停用」——
+//
+// 规则只有「增 / 删」两态时，面对一条疑似过宽的规则，用户唯一能做的动作是删掉；而删掉不可逆，
+// 于是大多数人选择放着不管，坏规则在名单里越攒越多。人真正想做的是「先关两天看看有没有变化」，
+// 规则体检把可疑规则列出来之后尤其如此。停用 = 留在名单里、灰显、不参与编译。
+export function isRuleDisabled(path: string, line: string): boolean {
+  const off = CONFIG.disabled[path];
+  return Array.isArray(off) && off.indexOf(line) >= 0;
+}
+
+export function setRuleDisabled(path: string, line: string, off: boolean): void {
+  const list = Array.isArray(CONFIG.disabled[path]) ? CONFIG.disabled[path] : (CONFIG.disabled[path] = []);
+  const i = list.indexOf(line);
+  if (off && i < 0) list.push(line);
+  else if (!off && i >= 0) list.splice(i, 1);
+  // 空数组不留着：停用表会跟着名单一起被合并/同步，留一堆空键只是噪音
+  if (!list.length) delete CONFIG.disabled[path];
 }
 
 // uidNames（持久化）软上限：达上限后不再写入「新」键，避免存档 blob 无界膨胀（仅影响新 UP 按名展示，退回显示 uid）。
@@ -287,7 +432,10 @@ export function setUidName(uid: unknown, name: string): void {
 // 可借导入悄悄塞进会自动联网拉取的订阅 URL（安全风险）。
 // ruleStats/ruleStatsSince 属于个人使用数据而非规则本身：别人的命中次数对你没有意义，
 // 更会让导入者的「死规则」判断建立在别人的浏览历史上。
-export const NON_PORTABLE = ['blockedCount', 'uidNames', 'enabled', 'debug', 'reviewMode', 'subscriptions', 'ruleStats', 'ruleStatsSince'];
+// disabled 同理属个人使用状态：别人的「这条我先关两天」对你没有意义，而且导入侧的
+// sanitizeConfigInput 本来就会丢掉它（DEFAULT 里是空对象、无形状可依），列在这里是让导出侧
+// 与导入侧对称——不导出一个对方根本收不下的字段，好过让人以为带上了。
+export const NON_PORTABLE = ['blockedCount', 'uidNames', 'enabled', 'debug', 'reviewMode', 'subscriptions', 'ruleStats', 'ruleStatsSince', 'disabled'];
 export function exportConfig(): string {
   const c: Record<string, any> = structuredClone(CONFIG);
   NON_PORTABLE.forEach((k) => delete c[k]);

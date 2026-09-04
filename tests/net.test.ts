@@ -12,6 +12,7 @@ import ranking from './fixtures/ranking.json';
 import popular from './fixtures/popular.json';
 import related from './fixtures/related.json';
 import searchAll from './fixtures/search-all.json';
+import dynamic from './fixtures/dynamic.json';
 
 const clone = <T>(x: T): T => structuredClone(x);
 
@@ -22,6 +23,7 @@ const URLS = {
   popular: 'https://api.bilibili.com/x/web-interface/popular?ps=20&pn=1',
   related: 'https://api.bilibili.com/x/web-interface/archive/related?bvid=BV1aa411a1a1',
   searchAll: 'https://api.bilibili.com/x/web-interface/wbi/search/all/v2?keyword=test&page=1',
+  dynamic: 'https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/all?timezone_offset=-480&type=all&page=1',
 };
 
 function reset(): void {
@@ -62,6 +64,7 @@ describe('取数契约：每类响应都能取出视频数组', () => {
     ['热门', URLS.popular, popular, 2],
     ['播放页相关推荐（data 本身即数组）', URLS.related, related, 2],
     ['搜索综合（分组里取 result_type=video）', URLS.searchAll, searchAll, 2],
+    ['动态流（data.items）', URLS.dynamic, dynamic, 3],
   ];
   it.each(cases)('%s', (_name, url, fixture, expected) => {
     const hook = findFeedHook(url)!;
@@ -167,6 +170,51 @@ describe('filterFeedJson：开关与容错', () => {
     const json = clone(rcmd);
     expect(filterFeedJson(URLS.rcmd, json)).toBe(0);
     expect(json.data.item.length).toBe(3);
+  });
+});
+
+// 动态流此前是唯一只靠 DOM 兜底的主要页面：只能等卡片画出来再隐藏，且抠不到权威 UID。
+// 它的响应结构与推荐流毫无重合（字段全埋在 modules 下），所以走 hook 自带的 norm。
+describe('动态流：接入拦截层后与首页同判', () => {
+  it('视频动态按关键词命中标题', () => {
+    CONFIG.block.keywords.push('原神');
+    rebuildRules();
+    const json = clone(dynamic);
+    expect(filterFeedJson(URLS.dynamic, json)).toBe(2); // 视频动态 + 转发里带「原神」的那条
+    expect(json.data.items.map((x: any) => x.id_str)).toEqual(['900000000000000002']);
+  });
+
+  it('非视频动态（图文/文字）按正文命中——DOM 层时代这类根本判不了', () => {
+    CONFIG.block.keywords.push('鸣潮');
+    rebuildRules();
+    const json = clone(dynamic);
+    expect(filterFeedJson(URLS.dynamic, json)).toBe(1);
+    expect(json.data.items.some((x: any) => x.id_str === '900000000000000002')).toBe(false);
+  });
+
+  it('UID 黑名单命中动态作者（module_author.mid）', () => {
+    CONFIG.block.uids.push('100001');
+    rebuildRules();
+    const json = clone(dynamic);
+    expect(filterFeedJson(URLS.dynamic, json)).toBe(1);
+    expect(json.data.items.length).toBe(2);
+  });
+
+  it('转发动态：原动态的正文也参与判定（否则「转发引战」拦不到）', () => {
+    CONFIG.block.keywords.push('爆料');
+    rebuildRules();
+    const json = clone(dynamic);
+    expect(filterFeedJson(URLS.dynamic, json)).toBe(1);
+    expect(json.data.items.some((x: any) => x.id_str === '900000000000000003')).toBe(false);
+  });
+
+  it('只删 items，不动分页游标（改它会打乱后续加载）', () => {
+    CONFIG.block.keywords.push('原神');
+    rebuildRules();
+    const json = clone(dynamic);
+    filterFeedJson(URLS.dynamic, json);
+    expect(json.data.offset).toBe('900000000000000001');
+    expect(json.data.has_more).toBe(true);
   });
 });
 

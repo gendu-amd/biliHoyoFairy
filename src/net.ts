@@ -2,15 +2,20 @@
 // 把命中本地规则的项从数组删掉，让页面只渲染保留项。只读不发——不重发请求、不需 WBI、不触发风控。
 import { CONFIG } from './config';
 import { log, logErr } from './logging';
-import { normFeedItem } from './cardinfo';
+import { normDynamicItem, normFeedItem } from './cardinfo';
+import type { CardInfo } from './cardinfo';
 import { matchRule } from './match/engine';
 import { recordBlock } from './stats';
 import { health } from './health';
 
 // 接口注册：re=URL 匹配，get=从 data 里取出可过滤的数组（就地 splice 即生效）。
+// norm=把该接口的列表项归一成 CardInfo；不填则用 normFeedItem（推荐流那套扁平字段）。
+// 动态流的响应结构与推荐流完全不同（字段埋在 modules 里），有了这个口子就不必让 normFeedItem
+// 去认所有接口的形状——那会把一个纯函数变成大杂烩，且每加一个接口都要改它。
 export interface FeedHook {
   re: RegExp;
   get: (d: any) => any[] | null;
+  norm?: (it: any) => CardInfo | null;
 }
 export const FEED_HOOKS: FeedHook[] = [
   { re: /\/x\/web-interface\/wbi\/index\/top\/feed\/rcmd/, get: (d) => (d && Array.isArray(d.item) ? d.item : null) },
@@ -30,6 +35,10 @@ export const FEED_HOOKS: FeedHook[] = [
       return d.result;
     },
   },
+  // 动态流（t.bilibili.com）。此前这是唯一一个完全靠 DOM 兜底的主要页面——DOM 层只能在卡片
+  // 画出来之后再隐藏，且抠不到 UID 这类权威字段。接到拦截层后与首页同源同判。
+  // 只删 data.items 里的项，不动 offset/has_more：分页游标由 B 站维护，改它会打乱后续加载。
+  { re: /\/x\/polymer\/web-dynamic\/v1\/feed\/(all|space)/, get: (d) => (d && Array.isArray(d.items) ? d.items : null), norm: normDynamicItem },
 ];
 
 // hook 查找：单条 URL 通常会被查两次（钩子入口判定 + filterFeedJson 取数组），
@@ -69,7 +78,7 @@ export function filterFeedJson(url: string, json: any): number {
   let removed = 0;
   for (let i = arr.length - 1; i >= 0; i--) {
     try {
-      const info = normFeedItem(arr[i]);
+      const info = (hook.norm || normFeedItem)(arr[i]);
       if (!info) continue; // 白名单由 matchRule 内部短路，无需在此重复判断
       const reason = matchRule(info);
       if (reason) {

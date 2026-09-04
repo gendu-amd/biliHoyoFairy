@@ -9,7 +9,6 @@ import { M, ruleVersion } from './match/engine';
 import { shadowRoots } from './shadow';
 import { recordBlock } from './stats';
 import { log, safe } from './logging';
-import { escapeHtml } from './util';
 import { COMMENT_TAGS, isCommentTag } from './selectors';
 
 // —— B 站挂在宿主上的数据（.__data）——
@@ -123,13 +122,28 @@ export function matchComment(c: CmtInfo, isSub: boolean): string | null {
   return null;
 }
 
-// 折叠：把命中评论收成一行灰条（点击展开），而非直接隐藏。占位条插在宿主前，宿主仍 display:none。
+// 折叠：把命中评论收成一行灰条，而非直接隐藏。占位条插在宿主前，宿主 display:none。
 // 占位条处于评论组件的 shadowRoot 内，文档级 CSS 够不着，样式必须全内联。
+//
+// 灰条是**可来回切换**的：点开看一眼、觉得确实是垃圾、再点一下收回去，这是最自然的用法。
+// 曾经的实现点一下就把灰条 remove 掉，于是展开之后页面上再没有可点的东西——只能刷新。
+// 现在展开只改状态与文案，灰条始终在；__bfbCmtExpanded 只用来挡**自动**重扫（规则没变就别
+// 把用户特意展开的东西又折回去），不再兼任「永久展开」的开关。
+function renderPlaceholder(ph: HTMLElement, host: CommentHost, reason: string) {
+  const expanded = !!host.__bfbCmtExpanded;
+  const txt = ph.querySelector('.bfb-ph-txt');
+  const act = ph.querySelector('.bfb-ph-act');
+  if (txt) txt.textContent = (expanded ? '已展开 · 命中：' : '已折叠 · 命中：') + reason;
+  if (act) act.textContent = expanded ? '点击收起 ▴' : '点击展开 ▾';
+  ph.style.opacity = expanded ? '.6' : '';
+  if (expanded) host.style.removeProperty('display');
+  // 评论组件常带 :host{display:..!important}，必须用 important 内联才能压过
+  else host.style.setProperty('display', 'none', 'important');
+}
+
 function collapseComment(host: CommentHost, reason: string) {
   if (host.__bfbCmtPh && host.__bfbCmtPh.isConnected) {
-    // 已折叠：仅更新原因文案
-    const t = host.__bfbCmtPh.querySelector('.bfb-ph-txt');
-    if (t) t.textContent = '已折叠 · 命中：' + reason;
+    renderPlaceholder(host.__bfbCmtPh, host, reason); // 已有灰条：只更新文案/状态
     return;
   }
   const parent = host.parentNode;
@@ -144,18 +158,15 @@ function collapseComment(host: CommentHost, reason: string) {
     'background:rgba(251,114,153,.08);border:1px dashed rgba(251,114,153,.45);' +
     'font-size:12px;color:#9499a0;cursor:pointer;user-select:none;line-height:1.5';
   ph.innerHTML =
-    '<span class="bfb-ph-txt" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">已折叠 · 命中：' +
-    escapeHtml(reason) +
-    '</span><span style="color:#fb7299;flex:none">点击展开 ▾</span>';
+    '<span class="bfb-ph-txt" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>' +
+    '<span class="bfb-ph-act" style="color:#fb7299;flex:none"></span>';
   ph.addEventListener('click', function () {
-    ph.remove();
-    host.style.removeProperty('display');
-    host.__bfbCmtPh = null;
-    host.__bfbCmtExpanded = true; // 用户已手动展开，后续重扫不再折叠
+    host.__bfbCmtExpanded = !host.__bfbCmtExpanded;
+    renderPlaceholder(ph, host, reason);
   });
   parent.insertBefore(ph, host);
   host.__bfbCmtPh = ph;
-  host.style.setProperty('display', 'none', 'important');
+  renderPlaceholder(ph, host, reason);
 }
 function removeCmtPlaceholder(host: CommentHost) {
   if (host.__bfbCmtPh) {
@@ -183,10 +194,12 @@ const processComment = safe('processComment', function (host: CommentHost, isSub
       host.style.setProperty('outline', '2px solid #fb7299', 'important');
       host.title = '[biliHoyoFairy] 命中：' + reason;
       host.style.removeProperty('display');
-    } else if (CONFIG.comment.collapse && !host.__bfbCmtExpanded) {
+    } else if (CONFIG.comment.collapse) {
+      // 折叠模式：收起态和用户手动展开态都交给它渲染。展开态也**必须留着**那条灰条，
+      // 否则用户就再没有可点的东西把它收回去了。它内部会照 __bfbCmtExpanded 决定显隐。
       collapseComment(host, reason);
     } else if (host.__bfbCmtExpanded) {
-      // 用户已展开过：保持可见，不再折叠/隐藏
+      // 非折叠模式下用户展开过：保持可见，不再隐藏
       removeCmtPlaceholder(host);
       host.style.removeProperty('display');
     } else {

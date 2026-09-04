@@ -57,19 +57,19 @@ export const commentSection: PanelSection = {
       label: '🚫 评论关键词',
       placeholder: '如：引战词 或 /.../',
       hint: '评论正文命中即隐藏。普通词为包含匹配，/.../ 为正则。与视频关键词相互独立。',
-      model: chipModel(CONFIG.comment.keywords),
+      model: chipModel(CONFIG.comment.keywords, false, 'comment.keywords'),
     });
     renderListField(host, {
       label: '🚫 评论用户名（精确）',
       placeholder: '精确用户名',
       hint: '按评论者用户名精确隐藏其评论。可在评论区右键用户名快捷加入。',
-      model: chipModel(CONFIG.comment.userNames),
+      model: chipModel(CONFIG.comment.userNames, false, 'comment.userNames'),
     });
     renderListField(host, {
       label: '🚫 用户名关键词',
       placeholder: '如：营销 或 /.../',
       hint: '按评论者昵称关键词隐藏。普通词为包含匹配，/.../ 为正则。',
-      model: chipModel(CONFIG.comment.userNameKeywords),
+      model: chipModel(CONFIG.comment.userNameKeywords, false, 'comment.userNameKeywords'),
     });
   },
 };

@@ -6,7 +6,7 @@
 // 并就地给「✂删」——发现问题和修问题必须在同一个地方，否则用户看完还得去列表里翻。
 import { CONFIG } from '../../../config';
 import { ruleHealth, pruneRuleStats, OBSERVE_DAYS } from '../../../rulehealth';
-import { removeFromList } from '../../../rules';
+import { removeFromList, restoreToList, toggleRuleDisabled } from '../../../rules';
 import { escapeHtml } from '../../../util';
 import { toast } from '../../toast';
 import { confirmModal } from '../../confirm';
@@ -49,6 +49,12 @@ export const ruleHealthSection: PanelSection = {
       deadEl.innerHTML = '';
       // 未启用 ≠ 死规则：联网维度的规则在「精确过滤」关着时根本不会被求值，
       // 把它们混进「从未命中」会诱导用户删掉一批其实没问题的规则。
+      if (h.disabled.length) {
+        const n = document.createElement('div');
+        n.className = 'hint';
+        n.textContent = `⏸ ${h.disabled.length} 条规则被你停用中（仍在名单里，不参与匹配）：${h.disabled.map((r) => r.line).join('、')}`;
+        deadEl.appendChild(n);
+      }
       if (h.inactive.length) {
         const n = document.createElement('div');
         n.className = 'hint';
@@ -86,6 +92,18 @@ export const ruleHealthSection: PanelSection = {
         tx.innerHTML = `<span class="log-rs">[${escapeHtml(r.dim)}]</span> ${escapeHtml(r.line)}`;
         tx.title = r.line;
         row.appendChild(tx);
+        // 停用排在删除前面：面对一条「七天没命中」的规则，先关两天看看比直接删掉稳妥得多，
+        // 而删掉是不可逆的。把更保守的选项放在更顺手的位置。
+        const off = document.createElement('button');
+        off.className = 'log-pass';
+        off.textContent = '⏸停用';
+        off.title = '暂时停用这条规则（保留在名单里，随时可在对应名单里重新启用）';
+        off.onclick = () => {
+          toggleRuleDisabled('block.' + r.field, r.line);
+          toast(`已停用规则：${r.line}（在「${r.dim}」名单里可重新启用）`);
+          ctx.rerender();
+        };
+        row.appendChild(off);
         const del = document.createElement('button');
         del.className = 'log-pass';
         del.textContent = '✂删';
@@ -97,8 +115,16 @@ export const ruleHealthSection: PanelSection = {
             danger: true,
           }).then((ok) => {
             if (!ok) return;
-            removeFromList(CONFIG.block[r.field], r.line);
-            toast(`已删除规则：${r.line}`);
+            const arr = CONFIG.block[r.field];
+            const at = arr.indexOf(r.line);
+            removeFromList(arr, r.line);
+            toast(`已删除规则：${r.line}`, 'info', {
+              label: '撤销',
+              onClick: () => {
+                restoreToList(arr, r.line, at);
+                ctx.rerender();
+              },
+            });
             ctx.rerender();
           });
         };

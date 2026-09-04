@@ -8,6 +8,14 @@ export const STORE_KEY = 'bfb_config_v2';
 // 存档解析失败时，原始内容被原样另存到这里等人工抢救（见 config.ts loadConfig 的 catch）。
 // 不带版本号后缀：它存的是「当时 STORE_KEY 里那坨东西」，本来就没有可信的结构版本。
 export const STORE_BACKUP_KEY = 'bfb_config_corrupt_backup';
+// 高频后台数据（拦截计数 / 规则命中数 / UID→名 缓存）单独一个键。
+//
+// 为什么必须拆开：这些字段每拦一个视频就变一次，跟着 saveConfig 走的话，一个纯计数器自增
+// 就会触发「把你全部规则一起重写」——而重写用的是本标签页那份可能已经过期的内存快照。
+// 于是「B 页在后台挂着刷首页」这件毫无危害的事，能把你在 A 页刚加的规则整份冲掉。
+// 高频写和低频写不该共用一把锁：规则/开关走 STORE_KEY（低频、要合并、丢不起），
+// 计数走 STATS_KEY（高频、丢一点无所谓）。
+export const STATS_KEY = 'bfb_stats_v1';
 // 配置结构版本。**只在需要就地改写老存档时**递增（改字段名、改语义、改单位），
 // 单纯新增带默认值的字段不用动它——deepMerge 会自动补齐。递增时必须在 config.ts 的
 // MIGRATIONS 里补上对应迁移函数，否则老用户升级后会静默丢配置。

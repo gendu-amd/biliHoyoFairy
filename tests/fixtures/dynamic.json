@@ -1,0 +1,61 @@
+{
+  "code": 0,
+  "message": "0",
+  "ttl": 1,
+  "data": {
+    "has_more": true,
+    "offset": "900000000000000001",
+    "update_baseline": "900000000000000003",
+    "items": [
+      {
+        "id_str": "900000000000000001",
+        "type": "DYNAMIC_TYPE_AV",
+        "modules": {
+          "module_author": { "mid": 100001, "name": "样本UP甲", "pub_ts": 1700000000 },
+          "module_dynamic": {
+            "desc": null,
+            "major": {
+              "type": "MAJOR_TYPE_ARCHIVE",
+              "archive": {
+                "aid": "9001",
+                "bvid": "BV1dd411d1d1",
+                "title": "【原神】新角色实机演示",
+                "desc": "动态里的视频简介",
+                "duration_text": "10:15",
+                "jump_url": "//www.bilibili.com/video/BV1dd411d1d1/",
+                "stat": { "play": "52.3万", "danmaku": "800" }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id_str": "900000000000000002",
+        "type": "DYNAMIC_TYPE_DRAW",
+        "modules": {
+          "module_author": { "mid": 100002, "name": "样本UP乙", "pub_ts": 1700000100 },
+          "module_dynamic": {
+            "desc": { "text": "今天来聊聊鸣潮的手感" },
+            "major": { "type": "MAJOR_TYPE_DRAW", "draw": { "id": 5001, "items": [] } }
+          }
+        }
+      },
+      {
+        "id_str": "900000000000000003",
+        "type": "DYNAMIC_TYPE_FORWARD",
+        "modules": {
+          "module_author": { "mid": 100003, "name": "样本UP丙", "pub_ts": 1700000200 },
+          "module_dynamic": { "desc": { "text": "转发一下" }, "major": null }
+        },
+        "orig": {
+          "id_str": "900000000000000000",
+          "type": "DYNAMIC_TYPE_WORD",
+          "modules": {
+            "module_author": { "mid": 100009, "name": "被转发的UP", "pub_ts": 1699999999 },
+            "module_dynamic": { "desc": { "text": "原神最新爆料汇总" }, "major": null }
+          }
+        }
+      }
+    ]
+  }
+}

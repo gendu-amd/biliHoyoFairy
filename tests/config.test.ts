@@ -10,8 +10,10 @@ import {
   installConfigSync,
   loadConfig,
   configRescue,
+  saveConfig,
+  saveStats,
 } from '../src/config';
-import { SCHEMA_VERSION, STORE_BACKUP_KEY, STORE_KEY, SYNC_COALESCE_MS } from '../src/constants';
+import { SCHEMA_VERSION, STATS_KEY, STORE_BACKUP_KEY, STORE_KEY, SYNC_COALESCE_MS } from '../src/constants';
 
 // 存档损坏这条路径只有把存储预置成坏数据才走得到（桩见 tests/setup.ts）。
 const gmStore = (globalThis as any).__gmStore as Record<string, string>;
@@ -230,5 +232,156 @@ describe('migrateConfig：存档结构版本', () => {
   it('非对象输入原样返回，不抛错', () => {
     expect(migrateConfig(null)).toBeNull();
     expect(migrateConfig('x')).toBe('x');
+  });
+});
+
+// —— 存盘的三方合并（P0 回归）——
+//
+// 这里锁的是「规则会莫名其妙消失」这条最贵的 bug。旧实现把内存里整份 CONFIG 覆盖写回，
+// 而本标签页手里那份随时可能过期——别的标签页刚加的规则不在里面，写回去就没了。
+// 更糟的是触发写入的往往不是用户操作，而是后台的拦截计数自增。
+describe('saveConfig：写时三方合并，不整份覆盖', () => {
+  // 用 saveConfig 自己把合并基准（baseSnapshot）对齐到「当前内存 == 存储」，
+  // 再直接改 gmStore 来扮演「另一个标签页写入了存储」。
+  function startFrom(cfg: Partial<typeof DEFAULT_CONFIG> = {}) {
+    gmClear();
+    Object.assign(CONFIG, structuredClone(DEFAULT_CONFIG), structuredClone(cfg));
+    saveConfig();
+  }
+  // 另一个标签页写入：在存储那份的基础上改，模拟它也是从同一个 base 出发的。
+  function otherTabWrites(mutate: (c: any) => void) {
+    const c = JSON.parse(gmStore[STORE_KEY]);
+    mutate(c);
+    gmStore[STORE_KEY] = JSON.stringify(c);
+  }
+  const stored = () => JSON.parse(gmStore[STORE_KEY]);
+
+  it('两个标签页各加各的规则，两边都留得住', () => {
+    startFrom();
+    otherTabWrites((c) => c.block.keywords.push('别处加的'));
+    CONFIG.block.keywords.push('本页加的');
+    saveConfig();
+    expect(stored().block.keywords).toEqual(['别处加的', '本页加的']);
+    // 合并结果要回灌内存，否则本页看不见对面的规则，下次存盘还会拿旧内存当基准再丢一次
+    expect(CONFIG.block.keywords).toEqual(['别处加的', '本页加的']);
+  });
+
+  it('本页的删除会同步出去，不被存储里的旧值复活', () => {
+    startFrom({ block: { ...DEFAULT_CONFIG.block, keywords: ['a', 'b'] } });
+    CONFIG.block.keywords.splice(1, 1); // 本页删掉 b
+    saveConfig();
+    expect(stored().block.keywords).toEqual(['a']);
+  });
+
+  it('对面删掉的规则不会被本页复活', () => {
+    startFrom({ block: { ...DEFAULT_CONFIG.block, keywords: ['a', 'b'] } });
+    otherTabWrites((c) => (c.block.keywords = ['a'])); // 对面删了 b
+    saveConfig(); // 本页没动过这个名单
+    expect(stored().block.keywords).toEqual(['a']);
+    expect(CONFIG.block.keywords).toEqual(['a']);
+  });
+
+  it('标量：本页没改过的采纳存储里的，本页改过的以本页为准', () => {
+    startFrom();
+    otherTabWrites((c) => {
+      c.hideAd = true; // 本页没碰 → 采纳
+      c.block.minViews = 5; // 本页要改 → 本页优先
+    });
+    CONFIG.block.minViews = 9;
+    saveConfig();
+    expect(stored().hideAd).toBe(true);
+    expect(stored().block.minViews).toBe(9);
+  });
+
+  it('订阅按 url 认同一条：本页拨动开关不会被当成「删一条又加一条」', () => {
+    startFrom({ subscriptions: [{ url: 'https://a.example/x.json', name: 'A', enabled: false }] });
+    otherTabWrites((c) => c.subscriptions.push({ url: 'https://b.example/y.json', name: 'B', enabled: true }));
+    CONFIG.subscriptions[0].enabled = true; // 本页启用了 A
+    saveConfig();
+    const subs = stored().subscriptions;
+    expect(subs.map((s: any) => s.url)).toEqual(['https://a.example/x.json', 'https://b.example/y.json']);
+    expect(subs[0].enabled).toBe(true); // 本页的改动留住了
+  });
+
+  // 键「消失」有两种含义，靠 base 才分得清：对方新增的要收下，本页删掉的不能被捡回来。
+  // 规则停用表就是这个形状——取消最后一条停用会把整个键删掉，分不清的话开关就再也关不掉了。
+  it('本页删掉的键不会被存储里的旧值捡回来', () => {
+    startFrom({ disabled: { 'block.keywords': ['原神'] } });
+    delete CONFIG.disabled['block.keywords'];
+    saveConfig();
+    expect(stored().disabled['block.keywords']).toBeUndefined();
+    expect(CONFIG.disabled['block.keywords']).toBeUndefined();
+  });
+
+  it('对面新增的键照常收下', () => {
+    startFrom();
+    otherTabWrites((c) => (c.disabled = { 'block.keywords': ['别处停用的'] }));
+    saveConfig();
+    expect(stored().disabled['block.keywords']).toEqual(['别处停用的']);
+  });
+
+  it('对面删掉的键，本页没动过就跟着删', () => {
+    startFrom({ disabled: { 'block.keywords': ['原神'] } });
+    otherTabWrites((c) => delete c.disabled['block.keywords']);
+    saveConfig();
+    expect(stored().disabled['block.keywords']).toBeUndefined();
+  });
+
+  it('存储里还没有内容时（首次安装）直接写本页的', () => {
+    gmClear();
+    Object.assign(CONFIG, structuredClone(DEFAULT_CONFIG));
+    CONFIG.block.keywords.push('原神');
+    saveConfig();
+    expect(stored().block.keywords).toEqual(['原神']);
+  });
+});
+
+describe('高频字段拆到独立存储键', () => {
+  it('拦截计数不写进规则那份存储（后台计数不再碰规则）', () => {
+    gmClear();
+    Object.assign(CONFIG, structuredClone(DEFAULT_CONFIG));
+    CONFIG.block.keywords.push('原神');
+    saveConfig();
+
+    // 另一个标签页此刻加了一条规则
+    const c = JSON.parse(gmStore[STORE_KEY]);
+    c.block.keywords.push('别处加的');
+    gmStore[STORE_KEY] = JSON.stringify(c);
+
+    // 本页只是拦到了一个视频（后台计数自增 → 存盘）
+    CONFIG.blockedCount += 1;
+    saveStats();
+
+    // 规则那份存储必须纹丝不动
+    expect(JSON.parse(gmStore[STORE_KEY]).block.keywords).toEqual(['原神', '别处加的']);
+    expect(JSON.parse(gmStore[STATS_KEY]).blockedCount).toBe(1);
+  });
+
+  it('规则存储里不再残留高频字段', () => {
+    gmClear();
+    Object.assign(CONFIG, structuredClone(DEFAULT_CONFIG));
+    CONFIG.blockedCount = 42;
+    CONFIG.uidNames['1'] = '某up';
+    saveConfig();
+    const s = JSON.parse(gmStore[STORE_KEY]);
+    expect(s.blockedCount).toBeUndefined();
+    expect(s.uidNames).toBeUndefined();
+    // 但 saveConfig 会顺带把它们落到 STATS_KEY，调用方不必记住该调哪个
+    expect(JSON.parse(gmStore[STATS_KEY]).blockedCount).toBe(42);
+  });
+
+  it('老存档把高频字段写在规则键里时照样读得回来', () => {
+    gmClear();
+    gmStore[STORE_KEY] = JSON.stringify({ blockedCount: 7, block: { keywords: ['原神'] } });
+    const c = loadConfig();
+    expect(c.blockedCount).toBe(7);
+    expect(c.block.keywords).toEqual(['原神']);
+  });
+
+  it('两个键都在时以独立键为准（迁移后的常态）', () => {
+    gmClear();
+    gmStore[STORE_KEY] = JSON.stringify({ blockedCount: 7 });
+    gmStore[STATS_KEY] = JSON.stringify({ blockedCount: 99 });
+    expect(loadConfig().blockedCount).toBe(99);
   });
 });

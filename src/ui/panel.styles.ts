@@ -6,6 +6,7 @@
     .bfb-tag button{border:none;border-radius:6px;background:#fff;color:#1b7a3d;font-size:11px;padding:2px 6px;cursor:pointer;white-space:nowrap}
     #bfb-badge{position:fixed;right:18px;bottom:18px;z-index:99999;background:#fb7299;color:#fff;border-radius:24px;padding:8px 14px;font-size:13px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.2);font-family:system-ui,Arial;user-select:none}
     #bfb-badge.off{background:#999}
+    #bfb-badge.warn{background:#e67e22}
     #bfb-ctxmenu{position:fixed;z-index:100002;background:#fff;border:1px solid #ffd5e2;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.22);overflow:hidden;min-width:210px;font-family:system-ui,Arial}
     .bfb-ctx-item{padding:10px 14px;font-size:13px;color:#333;cursor:pointer;white-space:nowrap}
     .bfb-ctx-item:hover{background:#fff0f5;color:#fb7299}
@@ -48,6 +49,10 @@
     #bfb-panel .chip{display:inline-flex;align-items:center;gap:6px;background:#fff0f5;color:#c2185b;border:1px solid #ffd5e2;border-radius:14px;padding:3px 10px;font-size:12px}
     #bfb-panel .sec.allow .chip{background:#eafaef;color:#1b7a3d;border-color:#c6ecd0}
     #bfb-panel .chip b{cursor:pointer;font-weight:700;opacity:.6}
+    /* 停用态：留在名单里但不生效。删除线 + 去色，一眼能看出「它在这儿，只是没在干活」 */
+    #bfb-panel .chip.off{background:#f2f2f4;color:#8a8a8a;border-color:#e0e0e4;text-decoration:line-through}
+    #bfb-panel .sec.allow .chip.off{background:#f2f2f4;color:#8a8a8a;border-color:#e0e0e4}
+    #bfb-panel .chip .chip-toggle{text-decoration:none;font-size:10px}
     #bfb-panel .chip b:hover{opacity:1}
     #bfb-panel .empty{font-size:11px;color:#767676;margin-top:6px}
     #bfb-panel input[type=number]{width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:6px}
@@ -149,6 +154,8 @@
       #bfb-panel .chip{background:rgba(251,114,153,.16);color:#ff9ebc;border-color:rgba(251,114,153,.35)}
       #bfb-panel .sec.allow .chip{background:rgba(39,174,96,.16);color:#6ee7a0;border-color:rgba(39,174,96,.35)}
       #bfb-panel .chip.group{background:rgba(124,92,255,.18);color:#c4b5fd;border-color:rgba(124,92,255,.4)}
+      #bfb-panel .chip.off{background:rgba(255,255,255,.07);color:#8b8b93;border-color:rgba(255,255,255,.14)}
+      #bfb-panel .sec.allow .chip.off{background:rgba(255,255,255,.07);color:#8b8b93;border-color:rgba(255,255,255,.14)}
       #bfb-panel .chip.sel{background:rgba(251,114,153,.3)}
       #bfb-panel .sec.allow .chip.sel{background:rgba(39,174,96,.3)}
       #bfb-panel .field .chips{background:#232328;border-color:#34343a}

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { health, healthReport, healthNotes, healthSummary } from '../src/health';
+import { health, healthReport, healthNotes, healthSummary, healthDegraded, markHealthReady } from '../src/health';
 
 function reset() {
   health.apiSeen = 0;
@@ -96,5 +96,67 @@ describe('healthReport 不误报', () => {
     health.cardsSeen = 28;
     expect(healthSummary()).toContain('接口请求 53');
     expect(healthSummary()).toContain('识别卡片 28');
+  });
+});
+
+// 角标变色是「静默失效」唯一能触达普通用户的渠道（控制台报警只有会排查的人看得到），
+// 所以它的判据必须比控制台更保守：宁可漏报，也不能让好端端的页面挂个黄角标。
+describe('healthDegraded：角标该不该变黄', () => {
+  beforeEach(() => {
+    reset();
+    health.cardsSeen = 1; // 排除「没识别到卡片」这一条的干扰，单独测下面各条
+  });
+
+  it('首屏稳定前一律不报（那时计数天然都是 0，判什么都是误报）', () => {
+    reset();
+    expect(healthDegraded()).toBe(false);
+  });
+
+  it('发过形似推荐流的请求却一个都没接住 → 变色', () => {
+    markHealthReady();
+    health.feedLike = 3;
+    health.feedMatched = 0;
+    expect(healthDegraded()).toBe(true);
+  });
+
+  it('接住了但取不出列表（结构变了）→ 变色', () => {
+    markHealthReady();
+    health.feedLike = 3;
+    health.feedMatched = 3;
+    health.feedParsed = 0;
+    expect(healthDegraded()).toBe(true);
+  });
+
+  it('一切正常 → 不变色', () => {
+    markHealthReady();
+    health.feedLike = 3;
+    health.feedMatched = 3;
+    health.feedParsed = 3;
+    expect(healthDegraded()).toBe(false);
+  });
+
+  it('首屏 SSR、压根没发过推荐流请求 → 不变色（最常见的误报来源）', () => {
+    markHealthReady();
+    health.feedLike = 0;
+    health.feedMatched = 0;
+    expect(healthDegraded()).toBe(false);
+  });
+
+  it('WBI 签名放弃改写不算失效（那是某个开关不生效，不是脚本坏了）', () => {
+    markHealthReady();
+    health.feedLike = 3;
+    health.feedMatched = 3;
+    health.feedParsed = 3;
+    health.signedSkipped = 5;
+    expect(healthDegraded()).toBe(false);
+  });
+
+  it('一张视频卡都没识别到 → 变色（DOM 兜底层失效）', () => {
+    markHealthReady();
+    health.feedLike = 3;
+    health.feedMatched = 3;
+    health.feedParsed = 3;
+    health.cardsSeen = 0;
+    expect(healthDegraded()).toBe(true);
   });
 });

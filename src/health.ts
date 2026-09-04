@@ -30,6 +30,26 @@ export const health = {
   },
 };
 
+// 首屏稳定之前，各计数天然都是 0，任何「没接住/没识别到」的判断都是误报。
+// 由 main 在启动汇总那一刻置位，之后 healthDegraded 才开始作数。
+let ready = false;
+export function markHealthReady(): void {
+  ready = true;
+}
+
+// 「拦截管线是不是断了」——供角标变色用。
+//
+// 静默失效是这类脚本的头号故障，而此前唯一的报警渠道是控制台——可会看控制台的人本来就能排查，
+// 真正需要被告知的人永远看不到。角标变色是零误报成本的可见性：不弹窗、不打断，
+// 但「它平时是粉的，今天是黄的」足以让人点开自检看一眼。
+// 只认**管线断了**这两类，不含 signedSkipped——那是「某个开关不生效」，不是脚本坏了。
+export function healthDegraded(): boolean {
+  if (!ready) return false;
+  if (health.feedLike > 0 && health.feedMatched === 0) return true;
+  if (health.feedMatched > 0 && health.feedParsed === 0) return true;
+  return pageType() !== '其他' && health.cardsSeen === 0;
+}
+
 // 返回人类可读的**警告**列表（空数组=没发现异常）。调用时机应在首屏稳定之后，否则会误报。
 export function healthReport(): string[] {
   const w: string[] = [];

@@ -33,6 +33,7 @@
   var VERSION = typeof GM_info !== "undefined" && GM_info.script && GM_info.script.version || "0.0.1";
   var STORE_KEY = "bfb_config_v2";
   var STORE_BACKUP_KEY = "bfb_config_corrupt_backup";
+  var STATS_KEY = "bfb_stats_v1";
   var SCHEMA_VERSION = 1;
   var SUB_STORE_KEY = "bfb_subs_v1";
   var BLACKLIST_MANAGE_URL = "https://account.bilibili.com/account/blacklist";
@@ -166,6 +167,8 @@
     // 规则 -> 累计命中次数（规则体检：过宽 / 从未命中）
     ruleStatsSince: 0,
     // 首次记账的时间戳（0=尚未开始统计）
+    disabled: {},
+    // 规则停用表（见 AppConfig.disabled / isRuleDisabled）
     // 规则订阅：每条 { url, name, enabled }。拉取到的规则数据另存于 SUB_STORE_KEY 缓存（不进 config，不外传）
     subscriptions: []
   };
@@ -207,12 +210,29 @@
     raw: null
     // 原始内容，供报错时打进控制台（备份键在 GM 存储里，用户自己翻不到）
   };
+  var STATS_FIELDS = ["blockedCount", "uidNames", "ruleStats", "ruleStatsSince"];
+  function readJson(key) {
+    const raw = GM_getValue(key, null);
+    if (!raw) return null;
+    try {
+      return typeof raw === "string" ? JSON.parse(raw) : raw;
+    } catch (e) {
+      return null;
+    }
+  }
+  function pickStats(src) {
+    const out = {};
+    if (!src || typeof src !== "object") return out;
+    for (const k of STATS_FIELDS) if (src[k] !== void 0) out[k] = src[k];
+    return out;
+  }
   function loadConfig() {
     const raw = GM_getValue(STORE_KEY, null);
-    if (!raw) return structuredClone(DEFAULT_CONFIG);
+    if (!raw) return deepMerge(structuredClone(DEFAULT_CONFIG), pickStats(readJson(STATS_KEY)));
     try {
       const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-      return deepMerge(structuredClone(DEFAULT_CONFIG), migrateConfig(parsed));
+      const cfg = deepMerge(structuredClone(DEFAULT_CONFIG), migrateConfig(parsed));
+      return deepMerge(cfg, pickStats(readJson(STATS_KEY)));
     } catch (e) {
       try {
         if (!GM_getValue(STORE_BACKUP_KEY, null)) GM_setValue(STORE_BACKUP_KEY, raw);
@@ -220,22 +240,84 @@
       }
       configRescue.corrupted = true;
       configRescue.raw = raw;
-      return structuredClone(DEFAULT_CONFIG);
+      return deepMerge(structuredClone(DEFAULT_CONFIG), pickStats(readJson(STATS_KEY)));
     }
   }
   var CONFIG = loadConfig();
-  var saveTimer = null;
-  function saveConfig() {
-    if (saveTimer) {
-      clearTimeout(saveTimer);
-      saveTimer = null;
+  var baseSnapshot = {};
+  function stripStats(src) {
+    const out = src && typeof src === "object" ? { ...src } : {};
+    for (const k of STATS_FIELDS) delete out[k];
+    return out;
+  }
+  function snapshotConfig() {
+    return stripStats(structuredClone(CONFIG));
+  }
+  function mergeList(base, mine, theirs) {
+    const keyOf = (x) => typeof x === "string" ? x : x && typeof x === "object" && x.url ? "u:" + String(x.url) : JSON.stringify(x);
+    const baseMap = new Map(base.map((x) => [keyOf(x), x]));
+    const mineMap = new Map(mine.map((x) => [keyOf(x), x]));
+    const removed = new Set([...baseMap.keys()].filter((k) => !mineMap.has(k)));
+    const out = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const x of theirs) {
+      const k = keyOf(x);
+      if (removed.has(k) || seen.has(k)) continue;
+      seen.add(k);
+      const m = mineMap.get(k);
+      const b = baseMap.get(k);
+      out.push(m !== void 0 && b !== void 0 && JSON.stringify(m) !== JSON.stringify(b) ? m : x);
     }
-    GM_setValue(STORE_KEY, JSON.stringify(CONFIG));
+    for (const x of mine) {
+      const k = keyOf(x);
+      if (baseMap.has(k) || seen.has(k)) continue;
+      seen.add(k);
+      out.push(x);
+    }
+    return out;
   }
-  function scheduleSave() {
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveConfig, SAVE_DEBOUNCE_MS);
+  function threeWayMerge(base, mine, theirs) {
+    const out = {};
+    for (const k of /* @__PURE__ */ new Set([...Object.keys(mine || {}), ...Object.keys(theirs || {})])) {
+      if (UNSAFE_KEYS.has(k)) continue;
+      const b = base ? base[k] : void 0;
+      const m = mine ? mine[k] : void 0;
+      const t = theirs ? theirs[k] : void 0;
+      if (Array.isArray(m) && Array.isArray(t)) out[k] = mergeList(Array.isArray(b) ? b : [], m, t);
+      else if (m && typeof m === "object" && !Array.isArray(m) && t && typeof t === "object" && !Array.isArray(t))
+        out[k] = threeWayMerge(b, m, t);
+      else if (m === void 0) {
+        if (b === void 0) out[k] = t;
+      } else if (t === void 0) {
+        if (b === void 0 || JSON.stringify(m) !== JSON.stringify(b)) out[k] = m;
+      } else out[k] = JSON.stringify(m) === JSON.stringify(b) ? t : m;
+    }
+    return out;
   }
+  function saveConfig() {
+    const stored = readJson(STORE_KEY);
+    const mine = snapshotConfig();
+    const merged = stored ? threeWayMerge(baseSnapshot, mine, stripStats(migrateConfig(stored))) : mine;
+    deepMerge(CONFIG, merged);
+    GM_setValue(STORE_KEY, JSON.stringify(merged));
+    baseSnapshot = structuredClone(merged);
+    saveStats();
+  }
+  var statsTimer = null;
+  function saveStats() {
+    if (statsTimer) {
+      clearTimeout(statsTimer);
+      statsTimer = null;
+    }
+    const out = {};
+    for (const k of STATS_FIELDS) out[k] = CONFIG[k];
+    GM_setValue(STATS_KEY, JSON.stringify(out));
+  }
+  function scheduleStatsSave() {
+    if (statsTimer) clearTimeout(statsTimer);
+    statsTimer = setTimeout(saveStats, SAVE_DEBOUNCE_MS);
+  }
+  baseSnapshot = snapshotConfig();
   function installConfigSync(onAdopt) {
     if (typeof GM_addValueChangeListener !== "function") return;
     let syncTimer = null;
@@ -244,14 +326,22 @@
       if (syncTimer) clearTimeout(syncTimer);
       syncTimer = setTimeout(() => {
         syncTimer = null;
-        if (saveTimer) {
-          clearTimeout(saveTimer);
-          saveTimer = null;
-        }
         deepMerge(CONFIG, loadConfig());
+        baseSnapshot = snapshotConfig();
         onAdopt();
       }, SYNC_COALESCE_MS);
     });
+  }
+  function isRuleDisabled(path, line) {
+    const off = CONFIG.disabled[path];
+    return Array.isArray(off) && off.indexOf(line) >= 0;
+  }
+  function setRuleDisabled(path, line, off) {
+    const list = Array.isArray(CONFIG.disabled[path]) ? CONFIG.disabled[path] : CONFIG.disabled[path] = [];
+    const i = list.indexOf(line);
+    if (off && i < 0) list.push(line);
+    else if (!off && i >= 0) list.splice(i, 1);
+    if (!list.length) delete CONFIG.disabled[path];
   }
   var UID_NAMES_MAX = 5e3;
   function setUidName(uid, name) {
@@ -261,7 +351,7 @@
       CONFIG.uidNames[k] = name;
     }
   }
-  var NON_PORTABLE = ["blockedCount", "uidNames", "enabled", "debug", "reviewMode", "subscriptions", "ruleStats", "ruleStatsSince"];
+  var NON_PORTABLE = ["blockedCount", "uidNames", "enabled", "debug", "reviewMode", "subscriptions", "ruleStats", "ruleStatsSince", "disabled"];
   function exportConfig() {
     const c = structuredClone(CONFIG);
     NON_PORTABLE.forEach((k) => delete c[k]);
@@ -480,6 +570,16 @@
       if (FEED_LIKE_RE.test(url)) this.feedLike++;
     }
   };
+  var ready = false;
+  function markHealthReady() {
+    ready = true;
+  }
+  function healthDegraded() {
+    if (!ready) return false;
+    if (health.feedLike > 0 && health.feedMatched === 0) return true;
+    if (health.feedMatched > 0 && health.feedParsed === 0) return true;
+    return pageType() !== "其他" && health.cardsSeen === 0;
+  }
   function healthReport() {
     const w = [];
     if (health.feedLike > 0 && health.feedMatched === 0) {
@@ -612,6 +712,32 @@
       info.isAd = !!card.querySelector(AD_CARD_SELECTOR) || adBadge();
     }
     return info;
+  }
+  function normDynamicItem(it) {
+    if (!it || typeof it !== "object") return null;
+    const mods = it.modules || {};
+    const author = mods.module_author || {};
+    const dyn = mods.module_dynamic || {};
+    const major = dyn.major || {};
+    const av = major.archive || major.pgc || {};
+    const stat = av.stat || {};
+    const title = av.title || dyn.desc && dyn.desc.text || "";
+    const orig = it.orig ? normDynamicItem(it.orig) : null;
+    return {
+      title: String(title || "") + (orig && orig.title ? " " + orig.title : ""),
+      up: author.name || "",
+      uid: author.mid != null ? String(author.mid) : "",
+      partition: "",
+      // 动态接口不返回分区
+      bvid: av.bvid || "",
+      link: av.jump_url || "",
+      duration: parseDuration(av.duration_text),
+      // 动态里的播放数是「10.2万」这类展示串，不是数字
+      views: parseCount(stat.play),
+      likes: null,
+      isLive: it.type === "DYNAMIC_TYPE_LIVE_RCMD" || !!major.live_rcmd,
+      isAd: false
+    };
   }
   function normFeedItem(it) {
     if (!it || typeof it !== "object") return null;
@@ -867,8 +993,12 @@
   var SUB_DIM_SET = new Set(SUB_DIMS);
   var isSubDim = (f) => SUB_DIM_SET.has(f);
   function userAndSubLines(dim, sub) {
-    const own = ruleLines(CONFIG.block[dim]);
+    const own = activeLines("block." + dim, CONFIG.block[dim]);
     return isSubDim(dim) ? own.concat(ruleLines(sub[dim])) : own;
+  }
+  function activeLines(path, lines) {
+    const arr = ruleLines(lines);
+    return CONFIG.disabled[path] ? arr.filter((l) => !isRuleDisabled(path, l)) : arr;
   }
   function compileDualTags(lines) {
     const out = [];
@@ -884,14 +1014,14 @@
     const sub = collectSubRules();
     const u = (dim) => userAndSubLines(dim, sub);
     const blockUidSet = strSet(u("uids"));
-    const allowUidSet = strSet(CONFIG.allow.uids);
+    const allowUidSet = strSet(activeLines("allow.uids", CONFIG.allow.uids));
     const blockTag = compileLines(u("tags"));
     const dualTags = compileDualTags(u("dualTags"));
     const upBio = compileLines(u("upBio"));
     return {
       blockKw: compileScopedKeywords(u("keywords")),
       blockPartition: compileLines(u("partitions")),
-      allowKw: compileScopedKeywords(CONFIG.allow.keywords),
+      allowKw: compileScopedKeywords(activeLines("allow.keywords", CONFIG.allow.keywords)),
       blockTag,
       dualTags,
       upBio,
@@ -899,11 +1029,11 @@
       blockBvidSet: new Set(u("bvids")),
       blockUpNameMap: new Map(ruleLines(u("upNames")).map((x) => [lc(x), x.trim()]).filter(([k]) => k)),
       allowUidSet,
-      allowUpNameSet: lcSet(CONFIG.allow.upNames),
+      allowUpNameSet: lcSet(activeLines("allow.upNames", CONFIG.allow.upNames)),
       // 评论区维度（独立编译）
-      cmtKw: compileLines(CONFIG.comment.keywords),
-      cmtUserKw: compileLines(CONFIG.comment.userNameKeywords),
-      cmtUserSet: lcSet(CONFIG.comment.userNames),
+      cmtKw: compileLines(activeLines("comment.keywords", CONFIG.comment.keywords)),
+      cmtUserKw: compileLines(activeLines("comment.userNameKeywords", CONFIG.comment.userNameKeywords)),
+      cmtUserSet: lcSet(activeLines("comment.userNames", CONFIG.comment.userNames)),
       // 是否存在 UID 规则：决定扫描时要不要为缺 UID 的卡做昂贵的 innerHTML 兜底解析
       needUid: blockUidSet.size > 0 || allowUidSet.size > 0,
       // API 维度是否需要拉取（含订阅并入的规则）：标签 = 仅当有专门的「视频标签」规则；简介 = 有简介词。
@@ -1058,13 +1188,16 @@
     const sub = collectSubRules();
     const seen = /* @__PURE__ */ new Set();
     for (const field of Object.keys(REASON_RULE_FIELD).map((d) => REASON_RULE_FIELD[d])) {
-      const active = !API_FIELDS.has(field) || !!CONFIG.apiFilters;
+      const dimOn = !API_FIELDS.has(field) || !!CONFIG.apiFilters;
+      const path = "block." + field;
       const own = new Set(ruleLines(CONFIG.block[field]));
-      for (const line of userAndSubLines(field, sub)) {
+      for (const line of ruleLines(CONFIG.block[field]).concat(isSubDim(field) ? ruleLines(sub[field]) : [])) {
         const key = ruleKeyOf(field, line);
         if (!key || seen.has(key)) continue;
         seen.add(key);
-        out.push({ key, dim: FIELD_REASON_DIM[field], field, line, own: own.has(line), active });
+        const isOwn = own.has(line);
+        const disabled = isOwn && isRuleDisabled(path, line);
+        out.push({ key, dim: FIELD_REASON_DIM[field], field, line, own: isOwn, active: dimOn && !disabled, disabled });
       }
     }
     return out;
@@ -1167,7 +1300,7 @@
         onRecorded();
       } catch (e) {
       }
-      scheduleSave();
+      scheduleStatsSave();
     });
   }
   function recordBlock(reason, info, src) {
@@ -1197,7 +1330,11 @@
         }
         return d.result;
       }
-    }
+    },
+    // 动态流（t.bilibili.com）。此前这是唯一一个完全靠 DOM 兜底的主要页面——DOM 层只能在卡片
+    // 画出来之后再隐藏，且抠不到 UID 这类权威字段。接到拦截层后与首页同源同判。
+    // 只删 data.items 里的项，不动 offset/has_more：分页游标由 B 站维护，改它会打乱后续加载。
+    { re: /\/x\/polymer\/web-dynamic\/v1\/feed\/(all|space)/, get: (d) => d && Array.isArray(d.items) ? d.items : null, norm: normDynamicItem }
   ];
   var memoUrl = null;
   var memoHook = null;
@@ -1228,7 +1365,7 @@
     let removed = 0;
     for (let i = arr.length - 1; i >= 0; i--) {
       try {
-        const info = normFeedItem(arr[i]);
+        const info = (hook.norm || normFeedItem)(arr[i]);
         if (!info) continue;
         const reason = matchRule(info);
         if (reason) {
@@ -1445,7 +1582,10 @@
       document.body.appendChild(b);
     }
     b.classList.toggle("off", !CONFIG.enabled);
-    b.textContent = CONFIG.enabled ? `🛡 已拦截 ${sessionBlocked}（共${CONFIG.blockedCount}）` : "🛡 已暂停";
+    const degraded = CONFIG.enabled && healthDegraded();
+    b.classList.toggle("warn", degraded);
+    b.title = degraded ? "⚠ 拦截可能已失效，点开看「工具 → 🩺 运行自检」" : "点击打开设置";
+    b.textContent = CONFIG.enabled ? `${degraded ? "⚠" : "🛡"} 已拦截 ${sessionBlocked}（共${CONFIG.blockedCount}）` : "🛡 已暂停";
   }
   function toastContainer() {
     let c = document.getElementById("bfb-toasts");
@@ -1647,10 +1787,19 @@
     if (cc.hideEmojiOnly && clean.replace(EMOJI_RE, "").trim() === "") return "纯表情评论";
     return null;
   }
+  function renderPlaceholder(ph, host, reason) {
+    const expanded = !!host.__bfbCmtExpanded;
+    const txt = ph.querySelector(".bfb-ph-txt");
+    const act = ph.querySelector(".bfb-ph-act");
+    if (txt) txt.textContent = (expanded ? "已展开 · 命中：" : "已折叠 · 命中：") + reason;
+    if (act) act.textContent = expanded ? "点击收起 ▴" : "点击展开 ▾";
+    ph.style.opacity = expanded ? ".6" : "";
+    if (expanded) host.style.removeProperty("display");
+    else host.style.setProperty("display", "none", "important");
+  }
   function collapseComment(host, reason) {
     if (host.__bfbCmtPh && host.__bfbCmtPh.isConnected) {
-      const t = host.__bfbCmtPh.querySelector(".bfb-ph-txt");
-      if (t) t.textContent = "已折叠 · 命中：" + reason;
+      renderPlaceholder(host.__bfbCmtPh, host, reason);
       return;
     }
     const parent = host.parentNode;
@@ -1661,16 +1810,14 @@
     const ph = document.createElement("div");
     ph.className = "bfb-cmt-ph";
     ph.style.cssText = "display:flex;align-items:center;gap:8px;margin:4px 0;padding:6px 10px;border-radius:8px;background:rgba(251,114,153,.08);border:1px dashed rgba(251,114,153,.45);font-size:12px;color:#9499a0;cursor:pointer;user-select:none;line-height:1.5";
-    ph.innerHTML = '<span class="bfb-ph-txt" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">已折叠 · 命中：' + escapeHtml(reason) + '</span><span style="color:#fb7299;flex:none">点击展开 ▾</span>';
+    ph.innerHTML = '<span class="bfb-ph-txt" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span><span class="bfb-ph-act" style="color:#fb7299;flex:none"></span>';
     ph.addEventListener("click", function() {
-      ph.remove();
-      host.style.removeProperty("display");
-      host.__bfbCmtPh = null;
-      host.__bfbCmtExpanded = true;
+      host.__bfbCmtExpanded = !host.__bfbCmtExpanded;
+      renderPlaceholder(ph, host, reason);
     });
     parent.insertBefore(ph, host);
     host.__bfbCmtPh = ph;
-    host.style.setProperty("display", "none", "important");
+    renderPlaceholder(ph, host, reason);
   }
   function removeCmtPlaceholder(host) {
     if (host.__bfbCmtPh) {
@@ -1693,7 +1840,7 @@
         host.style.setProperty("outline", "2px solid #fb7299", "important");
         host.title = "[biliHoyoFairy] 命中：" + reason;
         host.style.removeProperty("display");
-      } else if (CONFIG.comment.collapse && !host.__bfbCmtExpanded) {
+      } else if (CONFIG.comment.collapse) {
         collapseComment(host, reason);
       } else if (host.__bfbCmtExpanded) {
         removeCmtPlaceholder(host);
@@ -1905,7 +2052,7 @@
     cachedGet(API.view, VIEW_CACHE_MAX, "v:", bvid, "https://api.bilibili.com/x/web-interface/view?bvid=" + encodeURIComponent(bvid), (j) => j.data, (d) => {
       if (d && d.owner && d.owner.mid && d.owner.name && CONFIG.uidNames[String(d.owner.mid)] === void 0) {
         setUidName(d.owner.mid, d.owner.name);
-        scheduleSave();
+        scheduleStatsSave();
       }
       cb(d);
     });
@@ -1959,6 +2106,20 @@
       saveConfig();
       emitRulesChanged();
     }
+  }
+  function restoreToList(arr, value, at) {
+    const v = (value ? String(value) : "").trim();
+    if (!v || arr.map(String).includes(v)) return;
+    arr.splice(at >= 0 && at <= arr.length ? at : arr.length, 0, v);
+    saveConfig();
+    emitRulesChanged();
+  }
+  function toggleRuleDisabled(path, line) {
+    const off = !isRuleDisabled(path, line);
+    setRuleDisabled(path, line, off);
+    saveConfig();
+    emitRulesChanged();
+    return off;
   }
 
   // src/dom.ts
@@ -2876,6 +3037,7 @@
     .bfb-tag button{border:none;border-radius:6px;background:#fff;color:#1b7a3d;font-size:11px;padding:2px 6px;cursor:pointer;white-space:nowrap}
     #bfb-badge{position:fixed;right:18px;bottom:18px;z-index:99999;background:#fb7299;color:#fff;border-radius:24px;padding:8px 14px;font-size:13px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.2);font-family:system-ui,Arial;user-select:none}
     #bfb-badge.off{background:#999}
+    #bfb-badge.warn{background:#e67e22}
     #bfb-ctxmenu{position:fixed;z-index:100002;background:#fff;border:1px solid #ffd5e2;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.22);overflow:hidden;min-width:210px;font-family:system-ui,Arial}
     .bfb-ctx-item{padding:10px 14px;font-size:13px;color:#333;cursor:pointer;white-space:nowrap}
     .bfb-ctx-item:hover{background:#fff0f5;color:#fb7299}
@@ -2918,6 +3080,10 @@
     #bfb-panel .chip{display:inline-flex;align-items:center;gap:6px;background:#fff0f5;color:#c2185b;border:1px solid #ffd5e2;border-radius:14px;padding:3px 10px;font-size:12px}
     #bfb-panel .sec.allow .chip{background:#eafaef;color:#1b7a3d;border-color:#c6ecd0}
     #bfb-panel .chip b{cursor:pointer;font-weight:700;opacity:.6}
+    /* 停用态：留在名单里但不生效。删除线 + 去色，一眼能看出「它在这儿，只是没在干活」 */
+    #bfb-panel .chip.off{background:#f2f2f4;color:#8a8a8a;border-color:#e0e0e4;text-decoration:line-through}
+    #bfb-panel .sec.allow .chip.off{background:#f2f2f4;color:#8a8a8a;border-color:#e0e0e4}
+    #bfb-panel .chip .chip-toggle{text-decoration:none;font-size:10px}
     #bfb-panel .chip b:hover{opacity:1}
     #bfb-panel .empty{font-size:11px;color:#767676;margin-top:6px}
     #bfb-panel input[type=number]{width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:6px}
@@ -3019,6 +3185,8 @@
       #bfb-panel .chip{background:rgba(251,114,153,.16);color:#ff9ebc;border-color:rgba(251,114,153,.35)}
       #bfb-panel .sec.allow .chip{background:rgba(39,174,96,.16);color:#6ee7a0;border-color:rgba(39,174,96,.35)}
       #bfb-panel .chip.group{background:rgba(124,92,255,.18);color:#c4b5fd;border-color:rgba(124,92,255,.4)}
+      #bfb-panel .chip.off{background:rgba(255,255,255,.07);color:#8b8b93;border-color:rgba(255,255,255,.14)}
+      #bfb-panel .sec.allow .chip.off{background:rgba(255,255,255,.07);color:#8b8b93;border-color:rgba(255,255,255,.14)}
       #bfb-panel .chip.sel{background:rgba(251,114,153,.3)}
       #bfb-panel .sec.allow .chip.sel{background:rgba(39,174,96,.3)}
       #bfb-panel .field .chips{background:#232328;border-color:#34343a}
@@ -3222,12 +3390,35 @@
             renderChips();
           };
         } else {
+          if (entry.path) {
+            const off = isRuleDisabled(entry.path, entry.value);
+            if (off) chip.classList.add("off");
+            const t = document.createElement("b");
+            t.className = "chip-toggle";
+            t.textContent = off ? "▶" : "⏸";
+            t.title = off ? "重新启用这条规则" : "暂时停用这条规则（保留在名单里，不参与匹配）";
+            t.onclick = (ev) => {
+              ev.stopPropagation();
+              toggleRuleDisabled(entry.path, entry.value);
+              renderChips();
+            };
+            chip.appendChild(t);
+          }
           const x = document.createElement("b");
           x.textContent = "✕";
           x.title = "删除";
           x.onclick = () => {
-            removeFromList(entry.arr, entry.value);
+            const { arr, value } = entry;
+            const at = arr.indexOf(value);
+            removeFromList(arr, value);
             renderChips();
+            toast(`已删除：${value}`, "info", {
+              label: "撤销",
+              onClick: () => {
+                restoreToList(arr, value, at);
+                renderChips();
+              }
+            });
           };
           chip.appendChild(x);
         }
@@ -3262,10 +3453,10 @@
     renderChips();
     host.appendChild(sec);
   }
-  function chipModel(arr, groupMode = false) {
+  function chipModel(arr, groupMode = false, path) {
     return {
       count: () => arr.length,
-      entries: () => arr.map((v) => ({ key: v, value: v, arr })),
+      entries: () => arr.map((v) => ({ key: v, value: v, arr, path })),
       clear: () => {
         arr.length = 0;
       },
@@ -3299,10 +3490,10 @@
       texts: (entry) => groupMode ? [String(entry.value), String(entry.value).split("+").join(" & ")] : [String(entry.value)]
     };
   }
-  function upModel(names, uids) {
+  function upModel(names, uids, namePath, uidPath) {
     return {
       count: () => names.length + uids.length,
-      entries: () => names.map((v) => ({ key: "n:" + v, value: v, arr: names, uid: false })).concat(uids.map((v) => ({ key: "u:" + v, value: v, arr: uids, uid: true }))),
+      entries: () => names.map((v) => ({ key: "n:" + v, value: v, arr: names, uid: false, path: namePath })).concat(uids.map((v) => ({ key: "u:" + v, value: v, arr: uids, uid: true, path: uidPath }))),
       clear: () => {
         names.length = 0;
         uids.length = 0;
@@ -3368,7 +3559,7 @@
           hint: f.hint,
           placeholder: "输入 UP 名 或 UID（纯数字自动识别）",
           inputTitle: "可一次粘贴多条，用逗号或换行分隔；纯数字按 UID，其余按 UP 名",
-          model: upModel(CONFIG.block.upNames, CONFIG.block.uids)
+          model: upModel(CONFIG.block.upNames, CONFIG.block.uids, "block.upNames", "block.uids")
         });
         return;
       }
@@ -3379,7 +3570,7 @@
         placeholder: f.placeholder,
         isAllow: f.scope === "allow",
         inputTitle: f.groupMode ? "输入一组标签，用空格或逗号分隔，表示同时含这些标签才拦" : "可一次粘贴多条，用逗号或换行分隔",
-        model: chipModel(arr, f.groupMode)
+        model: chipModel(arr, f.groupMode, `${f.scope === "allow" ? "allow" : "block"}.${f.key}`)
       });
     });
   }
@@ -3560,19 +3751,19 @@
         label: "🚫 评论关键词",
         placeholder: "如：引战词 或 /.../",
         hint: "评论正文命中即隐藏。普通词为包含匹配，/.../ 为正则。与视频关键词相互独立。",
-        model: chipModel(CONFIG.comment.keywords)
+        model: chipModel(CONFIG.comment.keywords, false, "comment.keywords")
       });
       renderListField(host, {
         label: "🚫 评论用户名（精确）",
         placeholder: "精确用户名",
         hint: "按评论者用户名精确隐藏其评论。可在评论区右键用户名快捷加入。",
-        model: chipModel(CONFIG.comment.userNames)
+        model: chipModel(CONFIG.comment.userNames, false, "comment.userNames")
       });
       renderListField(host, {
         label: "🚫 用户名关键词",
         placeholder: "如：营销 或 /.../",
         hint: "按评论者昵称关键词隐藏。普通词为包含匹配，/.../ 为正则。",
-        model: chipModel(CONFIG.comment.userNameKeywords)
+        model: chipModel(CONFIG.comment.userNameKeywords, false, "comment.userNameKeywords")
       });
     }
   };
@@ -4180,16 +4371,18 @@
     const byKey = new Map(refs.map((r) => [r.key, r]));
     const since = CONFIG.ruleStatsSince || 0;
     const days = since ? Math.floor((Date.now() - since) / DAY) : 0;
-    const ready = !!since && days >= OBSERVE_DAYS;
+    const ready2 = !!since && days >= OBSERVE_DAYS;
     const hot = Object.keys(stats).map((key) => ({ key, n: stats[key], ref: byKey.get(key) || null })).filter((x) => x.n > 0).sort((a, b) => b.n - a.n);
     const dead = [];
     const inactive = [];
+    const disabled = [];
     for (const r of refs) {
       if (!r.own || stats[r.key]) continue;
-      if (!r.active) inactive.push(r);
-      else if (ready) dead.push(r);
+      if (r.disabled) disabled.push(r);
+      else if (!r.active) inactive.push(r);
+      else if (ready2) dead.push(r);
     }
-    return { days, ready, hot, dead, inactive };
+    return { days, ready: ready2, hot, dead, inactive, disabled };
   }
   function pruneRuleStats() {
     const stats = CONFIG.ruleStats;
@@ -4202,7 +4395,7 @@
         n++;
       }
     }
-    if (n) scheduleSave();
+    if (n) scheduleStatsSave();
     return n;
   }
 
@@ -4228,6 +4421,12 @@
         hotEl.innerHTML = h.hot.length ? "最常命中：" + h.hot.slice(0, HOT_N).map((x) => `<span title="命中越多越可能写得过宽">${escapeHtml(x.key)}×${x.n}</span>`).join("  ") : "";
         hotEl.style.display = h.hot.length ? "" : "none";
         deadEl.innerHTML = "";
+        if (h.disabled.length) {
+          const n = document.createElement("div");
+          n.className = "hint";
+          n.textContent = `⏸ ${h.disabled.length} 条规则被你停用中（仍在名单里，不参与匹配）：${h.disabled.map((r) => r.line).join("、")}`;
+          deadEl.appendChild(n);
+        }
         if (h.inactive.length) {
           const n = document.createElement("div");
           n.className = "hint";
@@ -4263,6 +4462,16 @@
           tx.innerHTML = `<span class="log-rs">[${escapeHtml(r.dim)}]</span> ${escapeHtml(r.line)}`;
           tx.title = r.line;
           row.appendChild(tx);
+          const off = document.createElement("button");
+          off.className = "log-pass";
+          off.textContent = "⏸停用";
+          off.title = "暂时停用这条规则（保留在名单里，随时可在对应名单里重新启用）";
+          off.onclick = () => {
+            toggleRuleDisabled("block." + r.field, r.line);
+            toast(`已停用规则：${r.line}（在「${r.dim}」名单里可重新启用）`);
+            ctx.rerender();
+          };
+          row.appendChild(off);
           const del = document.createElement("button");
           del.className = "log-pass";
           del.textContent = "✂删";
@@ -4275,8 +4484,16 @@ ${r.line}`, {
               danger: true
             }).then((ok) => {
               if (!ok) return;
-              removeFromList(CONFIG.block[r.field], r.line);
-              toast(`已删除规则：${r.line}`);
+              const arr = CONFIG.block[r.field];
+              const at = arr.indexOf(r.line);
+              removeFromList(arr, r.line);
+              toast(`已删除规则：${r.line}`, "info", {
+                label: "撤销",
+                onClick: () => {
+                  restoreToList(arr, r.line, at);
+                  ctx.rerender();
+                }
+              });
               ctx.rerender();
             });
           };
@@ -4359,8 +4576,16 @@ ${r.line}`, {
             del.onclick = () => {
               confirmModal(`删除规则「${loc.line}」？此后它不再屏蔽任何视频。`, { title: "删除规则", okText: "删除", danger: true }).then((ok) => {
                 if (!ok) return;
-                removeFromList(CONFIG.block[loc.field], loc.line);
-                toast(`已删除规则：${loc.line}`);
+                const arr = CONFIG.block[loc.field];
+                const at = arr.indexOf(loc.line);
+                removeFromList(arr, loc.line);
+                toast(`已删除规则：${loc.line}`, "info", {
+                  label: "撤销",
+                  onClick: () => {
+                    restoreToList(arr, loc.line, at);
+                    refreshPanelIfOpen();
+                  }
+                });
                 refreshPanelIfOpen();
               });
             };
@@ -4630,6 +4855,8 @@ ${r.line}`, {
       document.addEventListener("mouseover", safe("onCardHover", onCardHover), true);
       document.addEventListener("scroll", safe("hideHoverBtn", hideHoverBtn), true);
       setTimeout(() => {
+        markHealthReady();
+        updateBadge();
         if (!CONFIG.enabled) return;
         for (const w of healthReport()) logErr("运行自检", w);
         if (sessionBlocked <= 0) return;

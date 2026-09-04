@@ -1,6 +1,6 @@
 // 规则列表增删的统一入口：去重 + 存盘 + 通知规则变更。供右键菜单、设置面板、审查放行共用。
 // 通过 events seam 通知（而非直接 import dom），以打断 dom ↔ rules 循环依赖。
-import { saveConfig } from './config';
+import { isRuleDisabled, saveConfig, setRuleDisabled } from './config';
 import { emitRulesChanged } from './events';
 
 // 向规则数组追加一条（去重）。返回是否真正新增。
@@ -38,4 +38,24 @@ export function removeFromList(arr: string[], value: unknown): void {
     saveConfig();
     emitRulesChanged();
   }
+}
+
+// 撤销删除：插回**原来的位置**而不是追加到末尾——名单顺序是用户自己攒出来的，
+// 撤销的语义是「刚才那下不算」，不该顺手把顺序打乱。at 越界或重复则退化为追加/不动作。
+export function restoreToList(arr: string[], value: unknown, at: number): void {
+  const v = (value ? String(value) : '').trim();
+  if (!v || arr.map(String).includes(v)) return;
+  arr.splice(at >= 0 && at <= arr.length ? at : arr.length, 0, v);
+  saveConfig();
+  emitRulesChanged();
+}
+
+// 停用 / 启用一条规则（保留在名单里，只是不参与编译）。与增删共用同一条存盘+重扫链路，
+// 因为对页面来说「这条规则不再生效」和「这条规则被删了」是同一件事。
+export function toggleRuleDisabled(path: string, line: string): boolean {
+  const off = !isRuleDisabled(path, line);
+  setRuleDisabled(path, line, off);
+  saveConfig();
+  emitRulesChanged();
+  return off;
 }

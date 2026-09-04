@@ -1,6 +1,7 @@
 // 角标与轻提示（UI 基元）。被 api / blacklist / dom / 面板等广泛使用，故置于低层。
 // 角标点击需打开面板 → 经 ui/hooks 的 openPanel 注入，避免直接依赖面板模块。
 import { CONFIG } from '../config';
+import { healthDegraded } from '../health';
 import { sessionBlocked } from '../stats';
 import { openPanel } from './hooks';
 
@@ -14,7 +15,12 @@ export function updateBadge(): void {
     document.body.appendChild(b);
   }
   b.classList.toggle('off', !CONFIG.enabled);
-  b.textContent = CONFIG.enabled ? `🛡 已拦截 ${sessionBlocked}（共${CONFIG.blockedCount}）` : '🛡 已暂停';
+  // 拦截管线疑似失效时角标变黄。不弹 toast——误报的代价是骚扰所有人，而变色是零打断的提示：
+  // 平时粉的东西今天黄了，足以让人点开看一眼，这正是「静默失效」最缺的那一环。
+  const degraded = CONFIG.enabled && healthDegraded();
+  b.classList.toggle('warn', degraded);
+  b.title = degraded ? '⚠ 拦截可能已失效，点开看「工具 → 🩺 运行自检」' : '点击打开设置';
+  b.textContent = CONFIG.enabled ? `${degraded ? '⚠' : '🛡'} 已拦截 ${sessionBlocked}（共${CONFIG.blockedCount}）` : '🛡 已暂停';
 }
 
 function toastContainer(): HTMLElement {

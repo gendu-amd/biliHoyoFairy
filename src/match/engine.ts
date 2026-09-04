@@ -1,7 +1,7 @@
 // 规则匹配引擎（白名单优先 + 维度注册表）。拦截层与 DOM 层共用同一套规则，数据源不同、判定一致。
 // M（编译后的匹配器）与 ruleVersion 是共享可变状态，经 rebuildRules 重建；以 ESM 实时绑定导出，
 // 其它模块 import 后读到的是最新值（切勿解构后缓存）。
-import { CONFIG } from '../config';
+import { CONFIG, isRuleDisabled } from '../config';
 import { compileScopedKeywords, compileLines, kwHit, kwWhich, textHit, whichHit, lc, ruleLines, configureFuzzy } from './normalize';
 import type { Matcher, ScopedKw, KwScope } from './normalize';
 import type { CardInfo } from '../cardinfo';
@@ -21,8 +21,15 @@ const isSubDim = (f: RuleListField): f is SubDim & RuleListField => SUB_DIM_SET.
 // 一条维度当前生效的全部规则行 = 用户名单 ∪ 已启用订阅。ruleLines 是唯一入口：
 // 存档/导入/订阅里的字段可能不是数组（甚至是字符串），直接 map 会得到按字符拆开的伪规则。
 function userAndSubLines(dim: RuleListField, sub: SubRules): string[] {
-  const own = ruleLines(CONFIG.block[dim]);
+  const own = activeLines('block.' + dim, CONFIG.block[dim]);
   return isSubDim(dim) ? own.concat(ruleLines(sub[dim])) : own;
+}
+
+// 编译时把被「停用」的行剔掉——停用只影响**编译**，名单里那条依然在，面板照常灰显着，
+// 随时可以再打开。停用不作用于订阅规则：订阅本来就整条可开关，逐条停用没有对应的撤销入口。
+function activeLines(path: string, lines: unknown): string[] {
+  const arr = ruleLines(lines);
+  return CONFIG.disabled[path] ? arr.filter((l) => !isRuleDisabled(path, l)) : arr;
 }
 
 // 编译后的匹配器集合：精确维度预编译成 Set、关键词/正则维度编译成 Matcher，热路径直接复用。
@@ -73,14 +80,14 @@ export function buildMatchers(): Matchers {
   const sub = collectSubRules();
   const u = (dim: RuleListField) => userAndSubLines(dim, sub);
   const blockUidSet = strSet(u('uids'));
-  const allowUidSet = strSet(CONFIG.allow.uids);
+  const allowUidSet = strSet(activeLines('allow.uids', CONFIG.allow.uids));
   const blockTag = compileLines(u('tags'));
   const dualTags = compileDualTags(u('dualTags'));
   const upBio = compileLines(u('upBio'));
   return {
     blockKw: compileScopedKeywords(u('keywords')),
     blockPartition: compileLines(u('partitions')),
-    allowKw: compileScopedKeywords(CONFIG.allow.keywords),
+    allowKw: compileScopedKeywords(activeLines('allow.keywords', CONFIG.allow.keywords)),
     blockTag,
     dualTags,
     upBio,
@@ -88,11 +95,11 @@ export function buildMatchers(): Matchers {
     blockBvidSet: new Set(u('bvids')),
     blockUpNameMap: new Map(ruleLines(u('upNames')).map((x) => [lc(x), x.trim()] as [string, string]).filter(([k]) => k)),
     allowUidSet,
-    allowUpNameSet: lcSet(CONFIG.allow.upNames),
+    allowUpNameSet: lcSet(activeLines('allow.upNames', CONFIG.allow.upNames)),
     // 评论区维度（独立编译）
-    cmtKw: compileLines(CONFIG.comment.keywords),
-    cmtUserKw: compileLines(CONFIG.comment.userNameKeywords),
-    cmtUserSet: lcSet(CONFIG.comment.userNames),
+    cmtKw: compileLines(activeLines('comment.keywords', CONFIG.comment.keywords)),
+    cmtUserKw: compileLines(activeLines('comment.userNameKeywords', CONFIG.comment.userNameKeywords)),
+    cmtUserSet: lcSet(activeLines('comment.userNames', CONFIG.comment.userNames)),
     // 是否存在 UID 规则：决定扫描时要不要为缺 UID 的卡做昂贵的 innerHTML 兜底解析
     needUid: blockUidSet.size > 0 || allowUidSet.size > 0,
     // API 维度是否需要拉取（含订阅并入的规则）：标签 = 仅当有专门的「视频标签」规则；简介 = 有简介词。
@@ -293,7 +300,8 @@ export interface RuleRef {
   field: RuleListField;
   line: string; // 名单里的原行（可直接交给 removeFromList）
   own: boolean; // true=用户自己的名单；false=来自已启用的订阅
-  active: boolean; // 当前配置下这条规则是否有可能命中
+  active: boolean; // 当前配置下这条规则是否有可能命中（停用、或联网维度未开启，都是 false）
+  disabled: boolean; // 被用户显式停用（区别于「联网维度没开」——两者都不会命中，但成因与说法不同）
 }
 
 // 规则行 -> 命中时会产生的原因串。**必须**与各 DIM 的产出字节级一致，否则规则体检会把
@@ -323,14 +331,20 @@ export function enumerateRules(): RuleRef[] {
   const sub = collectSubRules();
   const seen = new Set<string>();
   for (const field of Object.keys(REASON_RULE_FIELD).map((d) => REASON_RULE_FIELD[d])) {
-    const active = !API_FIELDS.has(field) || !!CONFIG.apiFilters;
+    const dimOn = !API_FIELDS.has(field) || !!CONFIG.apiFilters;
+    const path = 'block.' + field;
     const own = new Set(ruleLines(CONFIG.block[field]));
-    for (const line of userAndSubLines(field, sub)) {
+    // 这里**不过滤**停用的规则（与编译路径相反）：体检要能把它们列出来说明「这条你自己关了」，
+    // 而且 pruneRuleStats 拿这份当存活集——过滤掉的话，停用两天就会把它的历史命中数清空，
+    // 重新启用后看起来像条崭新的规则，随即又被报成「从未命中」。
+    for (const line of ruleLines(CONFIG.block[field]).concat(isSubDim(field) ? ruleLines(sub[field]) : [])) {
       const key = ruleKeyOf(field, line);
       // 同一条规则可能同时存在于用户名单与订阅里；只留一条，且以「用户自己的」为准（那份能删）。
       if (!key || seen.has(key)) continue;
       seen.add(key);
-      out.push({ key, dim: FIELD_REASON_DIM[field]!, field, line, own: own.has(line), active });
+      const isOwn = own.has(line);
+      const disabled = isOwn && isRuleDisabled(path, line);
+      out.push({ key, dim: FIELD_REASON_DIM[field]!, field, line, own: isOwn, active: dimOn && !disabled, disabled });
     }
   }
   return out;
