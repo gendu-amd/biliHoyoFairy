@@ -1,7 +1,7 @@
 // DOM 兜底层：处理网络拦截层覆盖不到的部分（首屏 SSR 漏网、需联网取数的进阶维度），命中即安全隐藏整张卡。
 // 单卡处理有错误边界，异形卡不会中断整轮扫描。
 import { CONFIG } from './config';
-import { ATTR_API, ATTR_BLOCKED, PROCESSED } from './constants';
+import { ATTR_API, ATTR_BLOCKED, PROCESSED, GUTTER_RECALC_MS } from './constants';
 import { cellOf, isUnsafeHideTarget, UNPROCESSED_CARD_SELECTOR } from './page';
 import { SWIPE_BANNER } from './selectors';
 import { extractCardInfo, cacheCardInfo } from './cardinfo';
@@ -63,17 +63,21 @@ function markCard(card: HTMLElement, reason: string, info: CardInfo) {
 // 而 display:none **不会重排 nth-child 的序号**：藏掉一项后，后面那项仍按原来的奇偶带着右边距，
 // 宽度差那几像素就挤不进空出来的格子 → 换行 → 留下一个补不上的洞。
 //
-// 修法是把列间距从「子项的奇偶」搬到「容器」上：容器加 column-gap、子项右边距清零，
-// 视觉一致但与位置无关。只在**确实发现这种拼法**时才动手——判据是「有的子项带右边距、有的不带」，
-// 那正是奇偶写法的签名；容器本来就有 gap 的（首页那种 grid）直接跳过。
-const gutterFixed = new WeakSet<Element>();
-function fixParityGutter(box: Element | null): void {
-  if (!box || gutterFixed.has(box)) return;
-  gutterFixed.add(box); // 无论修不修都只判一次：这是每次隐藏都会走的路
+// 修法是把列间距从「子项的奇偶」搬到「容器」上：容器加 column-gap、子项右边距清零。
+// 间距值**实测**而非写死（站点在不同断点常换间距），且窗口尺寸变化时整套重算——
+// 只测一次就冻住的话，跨过响应式断点后间距就错了。
+const gutterBoxes = new Set<HTMLElement>();
+
+// 重新判定并施加/撤销修正。先撤掉自己上一次的手脚，否则读到的 margin 是我们写的 0，
+// 站点自己的规则说不上话（这也是「只测一次」那版没法重算的原因：信息来源被自己砸了）。
+function applyGutterFix(box: HTMLElement): void {
+  box.classList.remove('bfb-gutter-fix');
+  box.style.removeProperty('column-gap');
   try {
-    const cs = getComputedStyle(box as HTMLElement);
+    const cs = getComputedStyle(box);
     if (!cs.display.includes('flex') || cs.flexWrap !== 'wrap') return;
-    if (cs.columnGap && cs.columnGap !== 'normal' && parseFloat(cs.columnGap) > 0) return;
+    if (parseFloat(cs.columnGap) > 0) return; // 站点自己有 gap（首页那种），轮不到我们插手
+    // 判据：有的子项带右边距、有的不带——那正是奇偶写法的签名。整齐划一的不动。
     let gutter = 0;
     let sawZero = false;
     for (const ch of Array.from(box.children)) {
@@ -82,13 +86,38 @@ function fixParityGutter(box: Element | null): void {
       else sawZero = true;
       if (gutter && sawZero) break;
     }
-    if (!gutter || !sawZero) return; // 不是奇偶拼法，别乱动别人的布局
-    (box as HTMLElement).style.columnGap = gutter + 'px';
+    if (!gutter || !sawZero) return;
+    box.style.columnGap = gutter + 'px';
     box.classList.add('bfb-gutter-fix');
     log(() => `列间距改由容器提供（${gutter}px），避免隐藏后 nth-child 奇偶错位`);
   } catch (e) {
-    /* 拿不到计算样式（极早期/异常环境）：放弃修正，不影响隐藏本身 */
+    /* 拿不到计算样式：放弃修正，不影响隐藏本身 */
   }
+}
+
+let gutterResizeArmed = false;
+function armGutterResize(): void {
+  if (gutterResizeArmed) return;
+  gutterResizeArmed = true;
+  let t: ReturnType<typeof setTimeout> | null = null;
+  window.addEventListener('resize', () => {
+    if (t) clearTimeout(t);
+    t = setTimeout(() => {
+      t = null;
+      for (const box of gutterBoxes) {
+        if (!box.isConnected) gutterBoxes.delete(box); // 顺手回收，别攥着已脱离文档的容器
+        else applyGutterFix(box);
+      }
+    }, GUTTER_RECALC_MS);
+  });
+}
+
+function fixParityGutter(box: Element | null): void {
+  if (!box || !(box instanceof HTMLElement)) return;
+  if (gutterBoxes.has(box)) return; // 每个容器只在首次隐藏时判一次；之后交给 resize 重算
+  gutterBoxes.add(box);
+  armGutterResize();
+  applyGutterFix(box);
 }
 
 export function blockVideo(card: HTMLElement, reason: string, info: CardInfo): void {

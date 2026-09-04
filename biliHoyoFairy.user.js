@@ -79,6 +79,7 @@
   var SAVE_DEBOUNCE_MS = 1200;
   var SYNC_COALESCE_MS = 300;
   var STARTUP_SUMMARY_MS = 3500;
+  var GUTTER_RECALC_MS = 200;
   var LIST_SEARCH_MIN = 8;
   var CHIP_RENDER_MAX = 300;
   var NAME_RESOLVE_MAX = 20;
@@ -2443,14 +2444,14 @@
     }
     card.appendChild(tag);
   }
-  var gutterFixed = /* @__PURE__ */ new WeakSet();
-  function fixParityGutter(box) {
-    if (!box || gutterFixed.has(box)) return;
-    gutterFixed.add(box);
+  var gutterBoxes = /* @__PURE__ */ new Set();
+  function applyGutterFix(box) {
+    box.classList.remove("bfb-gutter-fix");
+    box.style.removeProperty("column-gap");
     try {
       const cs = getComputedStyle(box);
       if (!cs.display.includes("flex") || cs.flexWrap !== "wrap") return;
-      if (cs.columnGap && cs.columnGap !== "normal" && parseFloat(cs.columnGap) > 0) return;
+      if (parseFloat(cs.columnGap) > 0) return;
       let gutter = 0;
       let sawZero = false;
       for (const ch of Array.from(box.children)) {
@@ -2465,6 +2466,29 @@
       log(() => `列间距改由容器提供（${gutter}px），避免隐藏后 nth-child 奇偶错位`);
     } catch (e) {
     }
+  }
+  var gutterResizeArmed = false;
+  function armGutterResize() {
+    if (gutterResizeArmed) return;
+    gutterResizeArmed = true;
+    let t = null;
+    window.addEventListener("resize", () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => {
+        t = null;
+        for (const box of gutterBoxes) {
+          if (!box.isConnected) gutterBoxes.delete(box);
+          else applyGutterFix(box);
+        }
+      }, GUTTER_RECALC_MS);
+    });
+  }
+  function fixParityGutter(box) {
+    if (!box || !(box instanceof HTMLElement)) return;
+    if (gutterBoxes.has(box)) return;
+    gutterBoxes.add(box);
+    armGutterResize();
+    applyGutterFix(box);
   }
   function blockVideo(card, reason, info) {
     if (CONFIG.reviewMode) {

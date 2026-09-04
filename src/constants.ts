@@ -51,6 +51,8 @@ export const SAVE_DEBOUNCE_MS = 1200; // 配置存盘防抖
 // 要明显短于 SAVE_DEBOUNCE_MS，否则本页在采纳之前就可能先把旧快照写回去。
 export const SYNC_COALESCE_MS = 300;
 export const STARTUP_SUMMARY_MS = 3500; // 首屏稳定后弹「本次拦截」汇总 + 跑运行自检的延时
+// 窗口尺寸变化后多久重算列间距修正（见 dom.fixParityGutter）。合批即可，不必跟手。
+export const GUTTER_RECALC_MS = 200;
 export const LIST_SEARCH_MIN = 8; // 名单超过这么多条才显示搜索框（三五条时肉眼就够，多一个框只是噪音）
 // 一次最多渲染多少个 chip（名单可达几千条）。截断的只是显示，批量操作仍作用于全部筛选结果。
 export const CHIP_RENDER_MAX = 300;
