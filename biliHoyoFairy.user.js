@@ -2409,13 +2409,13 @@
   // src/dom.ts
   var countedEls = /* @__PURE__ */ new WeakSet();
   function clearVisual(card) {
-    card.style.display = "";
+    card.style.removeProperty("display");
     card.classList.remove("bfb-review");
     const t = card.querySelector(":scope > .bfb-tag");
     if (t) t.remove();
     card.removeAttribute(ATTR_BLOCKED);
     const cell = cellOf(card);
-    if (cell !== card) cell.style.display = "";
+    if (cell !== card) cell.style.removeProperty("display");
   }
   function markCard(card, reason, info) {
     card.classList.add("bfb-review");
@@ -2448,8 +2448,8 @@
       markCard(card, reason, info);
     } else {
       const cell = cellOf(card);
-      if (!isUnsafeHideTarget(cell)) cell.style.display = "none";
-      card.style.display = "none";
+      if (!isUnsafeHideTarget(cell)) cell.style.setProperty("display", "none", "important");
+      card.style.setProperty("display", "none", "important");
     }
     card.setAttribute(ATTR_BLOCKED, "1");
     if (countedEls.has(card)) return;

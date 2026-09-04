@@ -80,6 +80,24 @@
     console.log('   卡片:', desc(c), '| cellOf →', desc(cell), cell === c ? '⚠ 没找到容器，停在卡片本身' : '');
     console.log('   格子是否已隐藏:', hidden ? '是 ✅' : '否 ⚠', '| 护栏判定 isUnsafeHideTarget:', unsafe(cell));
     console.log('   格子尺寸:', Math.round(cell.getBoundingClientRect().width) + '×' + Math.round(cell.getBoundingClientRect().height));
+    // A 现象（卡片没了、位置还空着）的决定性诊断：
+    //   computed display 不是 none → 我们的内联隐藏被 !important 压过了（隐藏根本没生效）
+    //   是 none 但仍有人占位     → 占位的是某个祖先，下面直接把它指出来
+    const cd = getComputedStyle(c).display;
+    const r = c.getBoundingClientRect();
+    console.log('   卡片自身: computed display =', cd, '| 尺寸', Math.round(r.width) + '×' + Math.round(r.height), '| 内联 style =', c.getAttribute('style') || '(无)');
+    if (cd === 'none') {
+      let occ = c.parentElement, depth = 0;
+      while (occ && depth < 5) {
+        const or = occ.getBoundingClientRect();
+        const onlyThis = occ.querySelectorAll(SEL).length <= 1;
+        if (or.height > 0 && onlyThis) { console.log('   ⚠ 占着位置的是祖先:', desc(occ), Math.round(or.width) + '×' + Math.round(or.height), '→ 该把它登记进 CELL_CONTAINERS'); break; }
+        occ = occ.parentElement; depth++;
+      }
+      if (!occ || depth >= 5) console.log('   ✅ 卡片已彻底移出布局，没有祖先在占位（空洞不在这一层）');
+    } else {
+      console.log('   ⚠ 隐藏没生效：computed display 不是 none，多半是 B 站样式带了 !important 压过了内联');
+    }
     if (!hidden) {
       holes.push(cell);
       let e = cell, chain = [];
