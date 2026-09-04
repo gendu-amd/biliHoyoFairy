@@ -2098,6 +2098,35 @@
     host.__bfbCmtPh = ph;
     renderPlaceholder(ph, host, reason);
   }
+  function markComment(host, reason) {
+    let mk = host.__bfbCmtMk;
+    if (mk && mk.isConnected) {
+      const t = mk.querySelector(".tx");
+      if (t) t.textContent = "🔍 审查模式 · 命中：" + reason + "（未隐藏，仅标记）";
+      return;
+    }
+    const parent = host.parentNode;
+    if (!parent) return;
+    mk = document.createElement("div");
+    mk.className = "bfb-cmt-mk";
+    mk.style.cssText = "display:flex;align-items:center;gap:8px;margin:4px 0;padding:5px 10px;border-radius:8px;background:rgba(251,114,153,.14);border:1px solid rgba(251,114,153,.55);font-size:12px;color:#c2185b;line-height:1.5";
+    const tx = document.createElement("span");
+    tx.className = "tx";
+    tx.style.cssText = "flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+    tx.textContent = "🔍 审查模式 · 命中：" + reason + "（未隐藏，仅标记）";
+    mk.appendChild(tx);
+    parent.insertBefore(mk, host);
+    host.__bfbCmtMk = mk;
+  }
+  function removeCmtMark(host) {
+    if (host.__bfbCmtMk) {
+      try {
+        host.__bfbCmtMk.remove();
+      } catch (e) {
+      }
+      host.__bfbCmtMk = null;
+    }
+  }
   function removeCmtPlaceholder(host) {
     if (host.__bfbCmtPh) {
       try {
@@ -2116,16 +2145,18 @@
     if (reason) {
       if (CONFIG.reviewMode) {
         removeCmtPlaceholder(host);
-        host.style.setProperty("outline", "2px solid #fb7299", "important");
-        host.title = "[biliHoyoFairy] 命中：" + reason;
         host.classList.remove("bfb-hidden");
+        markComment(host, reason);
       } else if (CONFIG.comment.collapse) {
+        removeCmtMark(host);
         collapseComment(host, reason);
       } else if (host.__bfbCmtExpanded) {
         removeCmtPlaceholder(host);
+        removeCmtMark(host);
         host.classList.remove("bfb-hidden");
       } else {
         removeCmtPlaceholder(host);
+        removeCmtMark(host);
         host.classList.add("bfb-hidden");
       }
       if (!host.__bfbCmtHit) {
@@ -2134,6 +2165,7 @@
       }
     } else {
       removeCmtPlaceholder(host);
+      removeCmtMark(host);
       host.classList.remove("bfb-hidden");
       host.style.removeProperty("outline");
       host.removeAttribute("title");
@@ -2145,8 +2177,9 @@
     for (const root of shadowRoots) {
       const host = hostOf(root);
       if (!host || !isCommentTag(host.tagName)) continue;
-      if (host.__bfbCmtHit || host.__bfbCmtPh || host.classList.contains("bfb-hidden") || host.style.outline) {
+      if (host.__bfbCmtHit || host.__bfbCmtPh || host.__bfbCmtMk || host.classList.contains("bfb-hidden") || host.style.outline) {
         removeCmtPlaceholder(host);
+        removeCmtMark(host);
         host.classList.remove("bfb-hidden");
         host.style.removeProperty("outline");
         host.removeAttribute("title");

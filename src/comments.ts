@@ -39,6 +39,7 @@ export interface CommentHost extends HTMLElement {
   __upMid?: string | number; // 视频 UP 的 mid（可能缺）
   __user?: { uname?: string }; // 当前登录用户（可能缺）
   __bfbCmtPh?: HTMLElement | null;
+  __bfbCmtMk?: HTMLElement | null; // 审查模式的标记条
   __bfbCmtV?: number;
   __bfbCmtHit?: boolean;
   __bfbCmtExpanded?: boolean;
@@ -166,6 +167,44 @@ function collapseComment(host: CommentHost, reason: string) {
   host.__bfbCmtPh = ph;
   renderPlaceholder(ph, host, reason);
 }
+// 审查模式的标记条：与视频卡对齐——不隐藏，但要**看得见**地说明「这条命中了什么」。
+// 此前只画一条 outline，而评论宿主是 display:inline 的自定义元素，那条边基本看不出来，
+// 于是审查模式下的评论毫无反馈，反倒不如非审查模式的折叠灰条清楚。
+function markComment(host: CommentHost, reason: string) {
+  let mk = host.__bfbCmtMk;
+  if (mk && mk.isConnected) {
+    const t = mk.querySelector('.tx');
+    if (t) t.textContent = '🔍 审查模式 · 命中：' + reason + '（未隐藏，仅标记）';
+    return;
+  }
+  const parent = host.parentNode;
+  if (!parent) return;
+  mk = document.createElement('div');
+  mk.className = 'bfb-cmt-mk';
+  mk.style.cssText =
+    'display:flex;align-items:center;gap:8px;margin:4px 0;padding:5px 10px;border-radius:8px;' +
+    'background:rgba(251,114,153,.14);border:1px solid rgba(251,114,153,.55);' +
+    'font-size:12px;color:#c2185b;line-height:1.5';
+  const tx = document.createElement('span');
+  tx.className = 'tx';
+  tx.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+  tx.textContent = '🔍 审查模式 · 命中：' + reason + '（未隐藏，仅标记）';
+  mk.appendChild(tx);
+  parent.insertBefore(mk, host);
+  host.__bfbCmtMk = mk;
+}
+
+function removeCmtMark(host: CommentHost) {
+  if (host.__bfbCmtMk) {
+    try {
+      host.__bfbCmtMk.remove();
+    } catch (e) {
+      /* 已被 B 站重渲染摘走 */
+    }
+    host.__bfbCmtMk = null;
+  }
+}
+
 function removeCmtPlaceholder(host: CommentHost) {
   if (host.__bfbCmtPh) {
     try {
@@ -189,19 +228,21 @@ const processComment = safe('processComment', function (host: CommentHost, isSub
   if (reason) {
     if (CONFIG.reviewMode) {
       removeCmtPlaceholder(host);
-      host.style.setProperty('outline', '2px solid #fb7299', 'important');
-      host.title = '[biliHoyoFairy] 命中：' + reason;
       host.classList.remove('bfb-hidden');
+      markComment(host, reason); // 与视频卡一致：看得见的标签 + 原因，而不是一条看不见的描边
     } else if (CONFIG.comment.collapse) {
+      removeCmtMark(host);
       // 折叠模式：收起态和用户手动展开态都交给它渲染。展开态也**必须留着**那条灰条，
       // 否则用户就再没有可点的东西把它收回去了。它内部会照 __bfbCmtExpanded 决定显隐。
       collapseComment(host, reason);
     } else if (host.__bfbCmtExpanded) {
       // 非折叠模式下用户展开过：保持可见，不再隐藏
       removeCmtPlaceholder(host);
+      removeCmtMark(host);
       host.classList.remove('bfb-hidden');
     } else {
       removeCmtPlaceholder(host);
+      removeCmtMark(host);
       host.classList.add('bfb-hidden');
     }
     if (!host.__bfbCmtHit) {
@@ -211,6 +252,7 @@ const processComment = safe('processComment', function (host: CommentHost, isSub
   } else {
     // 不命中：撤销之前可能的隐藏/折叠/标记（规则放宽后恢复）
     removeCmtPlaceholder(host);
+    removeCmtMark(host);
     host.classList.remove('bfb-hidden');
     host.style.removeProperty('outline');
     host.removeAttribute('title');
@@ -224,8 +266,9 @@ function revertComments() {
   for (const root of shadowRoots) {
     const host = hostOf(root);
     if (!host || !isCommentTag(host.tagName)) continue;
-    if (host.__bfbCmtHit || host.__bfbCmtPh || host.classList.contains('bfb-hidden') || host.style.outline) {
+    if (host.__bfbCmtHit || host.__bfbCmtPh || host.__bfbCmtMk || host.classList.contains('bfb-hidden') || host.style.outline) {
       removeCmtPlaceholder(host);
+      removeCmtMark(host);
       host.classList.remove('bfb-hidden');
       host.style.removeProperty('outline');
       host.removeAttribute('title');
