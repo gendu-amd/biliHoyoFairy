@@ -18,6 +18,7 @@
 import { scanAll } from './dom';
 import { addShadowRoot, pruneShadowRoots, setShadowRootHandler } from './shadow';
 import { isCommentTag } from './selectors';
+import { scheduleCommentScan } from './comments';
 import { safe } from './logging';
 
 export interface ScanScheduler {
@@ -36,7 +37,7 @@ export interface SchedulerDeps {
 }
 
 export const STEADY_THROTTLE_MS = 250;
-// 失效 shadow root 的回收间隔。纯垃圾回收，不影响功能，取长一点即可。
+// 失效 shadow root 的回收间隔（纯垃圾回收）。
 const PRUNE_ROOTS_MS = 30000;
 
 // 纯策略，依赖注入以便单测用假的 raf/timeout 驱动（node 环境没有真的）。
@@ -91,15 +92,13 @@ export function startScanner(): void {
         touched = true;
         for (const n of m.addedNodes) {
           const el = n as Element;
-          // 插入时就已挂着 shadowRoot 的节点（先 attachShadow 后 append）。
-          // 走 attachShadow 钩子的那一路更常见，这里只是补齐另一种顺序。
+          // 插入时已挂着 shadowRoot 的节点（先 attachShadow 后 append 这种顺序）
           if (n.nodeType === 1 && el.shadowRoot && el.id !== 'bfb-overlay-host') addShadowRoot(el.shadowRoot);
         }
       }
       if (!touched) return;
-      // 这里曾经还会 harvestShadowRoots(document) 全文档扫一遍找 shadow host。删掉了：
-      // attachShadow 已被 hook，新建的 root 一律当场入表，全量采集捞不到任何新东西；
-      // 而「我们注入之前就已存在的 root」由 main 在 DOMContentLoaded 采集一次即可。
+      // 不在这里做全文档 harvest：attachShadow 已被 hook，新建的 root 当场入表；
+      // 注入之前就存在的 root 由 main 在 DOMContentLoaded 采集一次即可。
       scheduler.request();
     })
   );
@@ -108,27 +107,23 @@ export function startScanner(): void {
   // 连 <html> 的插入都看得见——避免「元素还没生成 → 观察器没装上 → DOM 层整层静默失效」。
   observer.observe(document, { childList: true, subtree: true });
 
-  // 每个 shadow root 都要**单独**观察：影子树内部的 DOM 变动不会冒泡到 document 级观察器。
-  // 少了这一步，影子树里新增的卡就永远不触发重扫，只能靠光 DOM 的某次变动偶然捎带——
-  // 表现为「有的拦了有的没拦」「滚一会儿就不拦了」。B 站自己的 shadow 组件、以及把整个界面
-  // 挂进 shadow root 的界面替换类扩展（BewlyCat 等）都吃这个亏。
-  // 注册这一步要在任何采集之前，且 setShadowRootHandler 会对已收集的 root 补跑（main 里的
-  // attachShadow 钩子先于本函数安装，可能已经收到过 root）。
+  // 每个 shadow root 单独观察：影子树内部的变动不冒泡到 document 级观察器，少了这步
+  // 影子树里新增的卡永远不触发重扫（表现为「滚一会儿就不拦了」）。
+  // 注册要在任何采集之前——setShadowRootHandler 会对已收集的 root 补跑。
+  // 评论影子树走自己的观察器：评论里没有视频卡，挂卡片观察器等于它每次懒加载都触发全页重扫；
+  // 但也不能不挂——评论宿主常先入 DOM、数据后到，未渲染的评论要靠下一轮 mutation 才会被评估。
+  const cmtObserver = new MutationObserver(safe('cmtObserver', () => scheduleCommentScan()));
+
   setShadowRootHandler((root) => {
-    // 评论组件的影子树**不挂**卡片观察器：评论里没有视频卡，但它的懒加载、展开楼中楼、
-    // hover 都会持续产生 mutation，每一次都会触发一轮全页卡片重扫（scanAll 要遍历主文档
-    // 加所有 shadow root）。评论有自己的扫描路径（scheduleCommentScan / ruleVersion），
-    // 不需要也不该由卡片观察器来驱动。
-    if (root.host && isCommentTag(root.host.tagName)) return;
+    const target = root.host && isCommentTag(root.host.tagName) ? cmtObserver : observer;
     try {
-      observer.observe(root, { childList: true, subtree: true });
+      target.observe(root, { childList: true, subtree: true });
     } catch (e) {
       /* 个别 root 观察失败不影响其它 */
     }
   });
 
-  // 周期性回收失效的 shadow root。不放在扫描路径里：那条路被 CONFIG.enabled 挡着，
-  // 而「脚本暂停时更不该攥着一堆 detached 子树」恰恰相反。间隔取长一点，纯粹是垃圾回收。
+  // 回收失效 root。不放进扫描路径：那条路被 CONFIG.enabled 挡着，而暂停时更不该攥着 detached 子树。
   setInterval(pruneShadowRoots, PRUNE_ROOTS_MS);
 
   // 装好时可能已经解析出一些卡（脚本注入点之前的那部分 HTML），先扫一遍。

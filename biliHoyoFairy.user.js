@@ -113,9 +113,8 @@
     // 首页「直播推荐」单卡的带宽高占位外层，只隐内层会留黑框
     "div.bili-feed-card",
     // 兜底：无外层 .feed-card 的场景（旧版式/其它信息流）
-    // 放最后：原生选择器优先。BewlyCat 的网格项是 .video-card-container（内层才是 .video-card），
-    // 不登记的话隐藏内层会在它的网格里留下一个空洞。该类名在原生 B 站不存在，无回归风险。
     "div.video-card-container"
+    // BewlyCat 的网格项（内层才是 .video-card）；不登记会留空洞
   ];
   var UNSAFE_HIDE_CONTAINERS = ".container, .feed2, .bili-feed4, #i_cecream, #app, .bili-header";
   var SWIPE_BANNER = ".recommended-swipe";
@@ -162,13 +161,7 @@
   var CARD_MID_ATTR_SELECTOR = "[data-mid],[data-up-mid],[data-user-id]";
   var CARD_MID_ATTRS = ["data-mid", "data-up-mid", "data-user-id"];
   var LIVE_CARD_SELECTOR = '.bili-live-card, [class*="live-card"]';
-  var AD_CARD_SELECTORS = [
-    ".bili-video-card__info--ad",
-    'a[href*="cm.bilibili.com"]',
-    'a[href*="//mall.bilibili.com"]',
-    'a[href*="specialRecommendByOp"]'
-  ];
-  var AD_CARD_SELECTOR = AD_CARD_SELECTORS.join(",");
+  var AD_CARD_SELECTOR = '.bili-video-card__info--ad,a[href*="cm.bilibili.com"],a[href*="//mall.bilibili.com"],a[href*="specialRecommendByOp"]';
   var HOTSEARCH_SELECTORS = [
     ".trending",
     ".search-panel .trending-list",
@@ -1696,6 +1689,7 @@
 
   // src/shadow.ts
   var shadowRoots = /* @__PURE__ */ new Set();
+  var commentRoots = /* @__PURE__ */ new Set();
   var onRoot = () => {
   };
   function setShadowRootHandler(fn) {
@@ -1705,10 +1699,15 @@
   function addShadowRoot(root) {
     if (!root || shadowRoots.has(root)) return;
     shadowRoots.add(root);
+    if (root.host && isCommentTag(root.host.tagName)) commentRoots.add(root);
     onRoot(root);
   }
   function pruneShadowRoots() {
-    for (const r of shadowRoots) if (!r.host || !r.host.isConnected) shadowRoots.delete(r);
+    for (const r of shadowRoots) {
+      if (r.host && r.host.isConnected) continue;
+      shadowRoots.delete(r);
+      commentRoots.delete(r);
+    }
   }
   function harvestShadowRoots(root) {
     if (!root || !root.querySelectorAll) return;
@@ -2049,13 +2048,9 @@
       return;
     }
     let cmtHosts = 0;
-    for (const root of shadowRoots) {
+    for (const root of commentRoots) {
       const host = hostOf(root);
-      if (!host) continue;
-      if (!host.isConnected) {
-        shadowRoots.delete(root);
-        continue;
-      }
+      if (!host || !host.isConnected) continue;
       const isSub = COMMENT_TAGS[host.tagName];
       if (isSub === void 0) continue;
       cmtHosts++;
@@ -2255,38 +2250,24 @@
   }
 
   // src/rules.ts
-  function addToList(arr, value) {
-    const v = (value ? String(value) : "").trim();
-    if (!v) return false;
-    if (arr.map(String).includes(v)) return false;
-    arr.push(v);
-    saveConfig();
-    emitRulesChanged();
-    return true;
-  }
-  function pushUnique(arr, values) {
-    const seen = new Set(arr.map(String));
-    let n = 0;
-    for (const v of values) {
-      const s = String(v);
-      if (!seen.has(s)) {
-        seen.add(s);
-        arr.push(s);
-        n++;
-      }
+  function addEntries(entries) {
+    const byArr = /* @__PURE__ */ new Map();
+    for (const e of entries) {
+      const v = (e.value ? String(e.value) : "").trim();
+      if (!v) continue;
+      const list = byArr.get(e.arr);
+      if (list) list.push(v);
+      else byArr.set(e.arr, [v]);
     }
-    return n;
-  }
-  function removeFromList(arr, value) {
-    const i = arr.map(String).indexOf(String(value));
-    if (i >= 0) {
-      arr.splice(i, 1);
+    let n = 0;
+    for (const [arr, values] of byArr) n += pushUnique(arr, values);
+    if (n) {
       saveConfig();
       emitRulesChanged();
     }
+    return n;
   }
   function removeEntries(entries) {
-    if (!entries.length) return 0;
     const byArr = /* @__PURE__ */ new Map();
     for (const e of entries) {
       let set = byArr.get(e.arr);
@@ -2305,6 +2286,21 @@
     if (n) {
       saveConfig();
       emitRulesChanged();
+    }
+    return n;
+  }
+  var addToList = (arr, value) => addEntries([{ arr, value }]) > 0;
+  var removeFromList = (arr, value) => removeEntries([{ arr, value }]) > 0;
+  function pushUnique(arr, values) {
+    const seen = new Set(arr.map(String));
+    let n = 0;
+    for (const v of values) {
+      const s = String(v);
+      if (!seen.has(s)) {
+        seen.add(s);
+        arr.push(s);
+        n++;
+      }
     }
     return n;
   }
@@ -2387,7 +2383,6 @@
   }
   var processCard = safe("processCard", function(card) {
     if (!CONFIG.enabled) return;
-    if (card.getAttribute(PROCESSED)) return;
     const info = extractCardInfo(card, M.needUid);
     if (!info.title && !info.up && !info.isLive) return;
     card.setAttribute(PROCESSED, "1");
@@ -2451,10 +2446,7 @@
   function queryAllRoots(selector) {
     const out = Array.from(document.querySelectorAll(selector));
     for (const r of shadowRoots) {
-      if (!r.host || !r.host.isConnected) {
-        shadowRoots.delete(r);
-        continue;
-      }
+      if (!r.host || !r.host.isConnected) continue;
       try {
         const found = r.querySelectorAll(selector);
         if (found.length) out.push(...found);
@@ -2468,10 +2460,13 @@
     if (!CONFIG.enabled) return;
     const cards = timed("scan.query", () => queryAllRoots(UNPROCESSED_CARD_SELECTOR));
     if (cards.length > health.cardsSeen) health.cardsSeen = cards.length;
-    cards.forEach((card) => {
-      if (card.closest && card.closest(SWIPE_BANNER)) return;
-      processCard(card);
-    });
+    timed(
+      "scan.cards",
+      () => cards.forEach((card) => {
+        if (card.closest && card.closest(SWIPE_BANNER)) return;
+        processCard(card);
+      })
+    );
   }
   function rescanAfterRuleChange() {
     timed("rules.rebuild", rebuildRules);
@@ -2533,10 +2528,11 @@
       })
     );
     observer.observe(document, { childList: true, subtree: true });
+    const cmtObserver = new MutationObserver(safe("cmtObserver", () => scheduleCommentScan()));
     setShadowRootHandler((root) => {
-      if (root.host && isCommentTag(root.host.tagName)) return;
+      const target = root.host && isCommentTag(root.host.tagName) ? cmtObserver : observer;
       try {
-        observer.observe(root, { childList: true, subtree: true });
+        target.observe(root, { childList: true, subtree: true });
       } catch (e) {
       }
     });
@@ -3270,16 +3266,24 @@
     hidev.style.display = "block";
     hoverCard = card;
   }
+  var pendingHover = null;
+  var hoverRaf = 0;
+  function resolveHover() {
+    hoverRaf = 0;
+    const e = pendingHover;
+    pendingHover = null;
+    if (!e) return;
+    const card = findCard(e);
+    if (!card) hideHoverBtn();
+    else if (card !== hoverCard) positionHoverBtn(card);
+  }
   function onCardHover(e) {
     if (!CONFIG.enabled || !CONFIG.cardHoverBtn) return;
     const t = elementOf(e.target);
     if (t && t === overlayHost) return;
-    const card = findCard(e);
-    if (card) {
-      if (card !== hoverCard) positionHoverBtn(card);
-    } else {
-      hideHoverBtn();
-    }
+    pendingHover = e;
+    if (hoverRaf) return;
+    hoverRaf = typeof requestAnimationFrame === "function" ? requestAnimationFrame(resolveHover) : setTimeout(resolveHover, 16);
   }
 
   // src/ui/panel/ctx.ts
@@ -3779,8 +3783,7 @@
         }
         const parts = splitRuleInput(raw);
         if (!parts.length) return false;
-        let added = 0;
-        for (const v of parts) if (addToList(arr, v)) added++;
+        const added = addEntries(parts.map((v) => ({ arr, value: v })));
         if (added) toast(`已添加 ${added} 条${parts.length > added ? `（${parts.length - added} 条已存在）` : ""}`);
         else toast("均已存在，未重复添加");
         return true;
@@ -3803,8 +3806,7 @@
       add: (raw) => {
         const parts = splitRuleInput(raw);
         if (!parts.length) return false;
-        let added = 0;
-        for (const v of parts) if (addToList(/^\d+$/.test(v) ? uids : names, v)) added++;
+        const added = addEntries(parts.map((v) => ({ arr: /^\d+$/.test(v) ? uids : names, value: v })));
         toast(added ? `已添加 ${added} 条` : "均已存在，未重复添加");
         return true;
       },

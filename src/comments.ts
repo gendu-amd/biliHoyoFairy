@@ -6,7 +6,7 @@ import { CONFIG } from './config';
 import { COMMENT_BOTS, COMMENT_AD_RE } from './constants';
 import { lc, textHit } from './match/normalize';
 import { M, ruleVersion } from './match/engine';
-import { shadowRoots } from './shadow';
+import { commentRoots, shadowRoots } from './shadow';
 import { recordBlock } from './stats';
 import { log, safe } from './logging';
 import { COMMENT_TAGS, isCommentTag } from './selectors';
@@ -245,13 +245,11 @@ export function scanComments(): void {
     return;
   }
   let cmtHosts = 0;
-  for (const root of shadowRoots) {
+  // 只遍历评论 root（注册时已分流），不再每轮扫全部 root 再按标签名过滤。
+  // 失效的 root 跳过即可，回收由 shadow.pruneShadowRoots 的定时器统一负责。
+  for (const root of commentRoots) {
     const host = hostOf(root);
-    if (!host) continue;
-    if (!host.isConnected) {
-      shadowRoots.delete(root);
-      continue;
-    }
+    if (!host || !host.isConnected) continue;
     const isSub = COMMENT_TAGS[host.tagName];
     if (isSub === undefined) continue;
     cmtHosts++;

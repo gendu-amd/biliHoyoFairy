@@ -50,10 +50,8 @@ export const logSection: PanelSection = {
         logList.innerHTML = '<div class="stat">暂无记录</div>';
         return;
       }
-      // 「这个 UID 在不在黑名单里」每行都要判一次。ruleLines 会 filter 出整个 uids 数组的副本，
-      // 100 行就是 100 次全量复制 + 100 次 O(n) 查找——几万条名单下这是单次刷新里最贵的一块。
-      // 建一次 Set 给所有行共用。走 ruleLines 而不是 .map(String)：字段被写坏时 .map 会直接抛，
-      // 把整个屏蔽记录面板打空。
+      // 「这个 UID 在不在黑名单里」每行都要判一次，建一次 Set 给所有行共用。
+      // 走 ruleLines 而不是 .map(String)：字段被写坏时 .map 会直接抛，把整个记录面板打空。
       const blacklisted = new Set(ruleLines(CONFIG.block.uids));
       blockedLog.slice(0, 100).forEach((b) => {
         const row = document.createElement('div');

@@ -26,7 +26,7 @@ export function setSessionBlocked(n: number): void {
 
 // 原因字符串的形态是 `维度` 或 `维度:具体规则`（如 `关键词:原神`、`UP主:某某`）。
 // 冒号前即维度名——注意用半角冒号切，规则本身可能含全角「：」。
-export const reasonDim = (reason: string): string => {
+const reasonDim = (reason: string): string => {
   const i = reason.indexOf(':');
   return i > 0 ? reason.slice(0, i) : reason;
 };
@@ -45,7 +45,7 @@ export function tallyLog(): Record<string, number> {
 
 // 规则级累计命中（持久化）。会话内的 blockedLog 只有 300 条、刷新即清，判不了「这条规则是不是从来没用过」。
 // 只记带具体规则的原因（`维度:规则`）——阈值/开关类维度（时长<、广告卡）没有可体检的规则行。
-export function bumpRuleStat(reason: string): void {
+function bumpRuleStat(reason: string): void {
   if (reason.indexOf(':') <= 0) return;
   if (!CONFIG.ruleStatsSince) CONFIG.ruleStatsSince = Date.now();
   CONFIG.ruleStats[reason] = (CONFIG.ruleStats[reason] || 0) + 1;

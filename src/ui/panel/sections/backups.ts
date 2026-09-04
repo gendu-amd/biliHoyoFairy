@@ -1,7 +1,5 @@
-// 配置备份：自动快照的查看与回滚。
-//
-// 没有 UI 的备份等于没有备份——存在 GM 存储里、用户翻不到的东西，出事时救不了任何人。
-// 这一区把它摊开：什么时候、因为什么备的、当时有多少条规则，以及一个「恢复」按钮。
+// 配置备份：自动快照的查看与回滚。没有 UI 的备份等于没有备份——
+// 存在 GM 存储里、用户翻不到的东西，出事时救不了任何人。
 import { loadBackups, restoreBackup } from '../../../config';
 import type { ConfigBackup } from '../../../config';
 import { rescanAfterRuleChange } from '../../../dom';
@@ -11,7 +9,7 @@ import { confirmModal } from '../../confirm';
 import { q } from '../ctx';
 import type { PanelSection } from '../ctx';
 
-// 备了什么、为什么备，得说人话——「reason: shrink」对用户毫无信息量。
+// 说人话：「reason: shrink」对用户毫无信息量。
 const REASON_TEXT: Record<string, string> = {
   upgrade: '脚本升级前',
   shrink: '⚠ 规则条数骤降前',

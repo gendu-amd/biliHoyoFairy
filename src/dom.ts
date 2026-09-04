@@ -2,7 +2,7 @@
 // 单卡处理有错误边界，异形卡不会中断整轮扫描。
 import { CONFIG } from './config';
 import { ATTR_API, ATTR_BLOCKED, PROCESSED } from './constants';
-import { cellOf, isUnsafeHideTarget, UNPROCESSED_CARD_SELECTOR, VIDEO_CARD_SELECTOR } from './page';
+import { cellOf, isUnsafeHideTarget, UNPROCESSED_CARD_SELECTOR } from './page';
 import { SWIPE_BANNER } from './selectors';
 import { extractCardInfo, cacheCardInfo } from './cardinfo';
 import type { CardInfo } from './cardinfo';
@@ -74,9 +74,8 @@ export function blockVideo(card: HTMLElement, reason: string, info: CardInfo): v
 }
 
 // 单卡处理用错误边界包裹：异形卡导致 extractCardInfo/matchRule 抛错时，只跳过这一张、不中断整轮扫描。
-export const processCard = safe('processCard', function (card: HTMLElement) {
+const processCard = safe('processCard', function (card: HTMLElement) {
   if (!CONFIG.enabled) return;
-  if (card.getAttribute(PROCESSED)) return;
   const info = extractCardInfo(card, M.needUid); // 无 UID 规则时跳过昂贵的 innerHTML 兜底
   if (!info.title && !info.up && !info.isLive) return; // 骨架卡，等填充后再处理（直播卡常无标题，放行交给规则判定）
   card.setAttribute(PROCESSED, '1');
@@ -149,10 +148,7 @@ function evaluateApi(card: HTMLElement, info: CardInfo) {
 function queryAllRoots(selector: string): HTMLElement[] {
   const out: HTMLElement[] = Array.from(document.querySelectorAll<HTMLElement>(selector));
   for (const r of shadowRoots) {
-    if (!r.host || !r.host.isConnected) {
-      shadowRoots.delete(r);
-      continue;
-    }
+    if (!r.host || !r.host.isConnected) continue; // 回收由 shadow.pruneShadowRoots 统一负责
     try {
       const found = r.querySelectorAll<HTMLElement>(selector);
       if (found.length) out.push(...found);
@@ -163,11 +159,6 @@ function queryAllRoots(selector: string): HTMLElement[] {
   return out;
 }
 
-// 普通 DOM 卡片 ∪ 各存活 shadow root 内的卡片。
-export function queryCards(): HTMLElement[] {
-  return queryAllRoots(VIDEO_CARD_SELECTOR);
-}
-
 export function scanAll(): void {
   if (!CONFIG.enabled) return;
   // 只取**未处理**的卡：稳态下页面上绝大多数卡都已处理，把它们全取回来再逐个 getAttribute
@@ -176,15 +167,20 @@ export function scanAll(): void {
   // 自检取的是「一轮里认出过多少张卡」的峰值。首轮全部未处理，峰值照常取到；
   // 之后只增不减，所以「选择器还认不认得出卡片」这个判据不受影响。
   if (cards.length > health.cardsSeen) health.cardsSeen = cards.length;
-  cards.forEach((card) => {
-    if (card.closest && card.closest(SWIPE_BANNER)) return; // 顶部轮播 banner，跳过
-    processCard(card);
-  });
+  // 循环本身单独计时：scan.query 只量了 querySelectorAll，而稳态下 :not([data-bfb-done])
+  // 之后循环里剩的都是「不打标记、每轮重抽」的卡（骨架卡，以及渲染好了但选择器没认出来的），
+  // 持续开销恰恰藏在这里。改 extractCardInfo 之前先看这个数。
+  timed('scan.cards', () =>
+    cards.forEach((card) => {
+      if (card.closest && card.closest(SWIPE_BANNER)) return; // 顶部轮播 banner，跳过
+      processCard(card);
+    })
+  );
 }
 
 export function rescanAfterRuleChange(): void {
   timed('rules.rebuild', rebuildRules);
-  // 必须穿透 shadow：queryCards 会处理 shadow 内的卡，这里就得能把它们的标记一并清掉
+  // 必须穿透 shadow：扫描会处理 shadow 内的卡，这里就得能把它们的标记一并清掉
   queryAllRoots('[' + PROCESSED + ']').forEach((el) => {
     el.removeAttribute(PROCESSED);
     el.removeAttribute(ATTR_API);

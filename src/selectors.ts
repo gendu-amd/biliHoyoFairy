@@ -20,17 +20,12 @@ export const VIDEO_CARD_SELECTORS = [
   'div.bili-dyn-list__item', // 动态信息流（t.bilibili.com）
   'div.floor-card.single-card', // 首页信息流里的「直播推荐」单卡（链向 live.bilibili.com）
 ];
-// 注：BewlyCat（把整个首页换成自己 Vue 界面的扩展）的卡片内层类名恰好也是 `.video-card`，
-// 上面那条「综合热门 / 每周必看」的选择器已经能命中它，不必另加。下面 CARD_* 里几条带
-// BewlyCat 标注的选择器补的是它的字段类名——否则卡认得出、标题和 UP 名却抠不到，
-// 会被 processCard 当成「还没渲染完的骨架卡」，每轮重扫白抠一遍且什么都拦不到。
+// BewlyCat 的卡片内层类名恰好也是 .video-card，上面那条已能命中；下面 CARD_* 里带 BewlyCat
+// 标注的几条补的是它的字段类名（否则卡认得出、标题和 UP 名却抠不到）。
 
-// —— 播放页「当前视频的 UP 主」信息区 ——
-// ⚠ 故意**不**放进 VIDEO_CARD_SELECTORS：那是扫描器的输入，把 UP 信息区当成卡片会被判定、被隐藏。
-// 这一组只服务于右键菜单——播放页上正在看的这个视频的 UP 不属于任何一张卡，右键一直没有反应，
-// 而那正是最想屏蔽的时刻（看到一半发现是营销号）。
-// 定位主要靠「指向 space.bilibili.com 的链接」这个稳定特征，下面两条只用来补 UP 名的显示文本
-// （头像那种链接本身没有文字）。
+// —— 播放页「当前视频的 UP 主」信息区（只服务于右键菜单）——
+// ⚠ 故意不进 VIDEO_CARD_SELECTORS：那是扫描器的输入，混进去会让 UP 信息区被当成卡片隐藏。
+// 定位主要靠「指向 space.bilibili.com 的链接」，下面两条只用来补 UP 名的显示文本。
 export const VIDEO_PAGE_UP_BOX = '.up-info-container, .membersinfo-upcard, .up-detail, .video-info-container';
 export const VIDEO_PAGE_UP_NAME = '.up-name, .up-name__text';
 // 顶栏：里面也有指向 space 的链接（你自己的头像），右键它不该弹屏蔽菜单。
@@ -48,9 +43,7 @@ export const CELL_CONTAINERS = [
   'div.feed-card', // 首页信息流网格项（.container 的直接子元素，必须优先）
   'div.floor-single-card', // 首页「直播推荐」单卡的带宽高占位外层，只隐内层会留黑框
   'div.bili-feed-card', // 兜底：无外层 .feed-card 的场景（旧版式/其它信息流）
-  // 放最后：原生选择器优先。BewlyCat 的网格项是 .video-card-container（内层才是 .video-card），
-  // 不登记的话隐藏内层会在它的网格里留下一个空洞。该类名在原生 B 站不存在，无回归风险。
-  'div.video-card-container',
+  'div.video-card-container', // BewlyCat 的网格项（内层才是 .video-card）；不登记会留空洞
 ];
 // 护栏名单：这些是页面级大容器，隐藏它们会连带删掉无限滚动的加载哨兵。
 export const UNSAFE_HIDE_CONTAINERS = '.container, .feed2, .bili-feed4, #i_cecream, #app, .bili-header';
@@ -84,16 +77,14 @@ export const CARD_DURATION_SELECTORS = [
   '.bili-dyn-card-video__duration',
   '.video-card-cover-stats__item--duration', // BewlyCat
 ];
-// ⚠ 必须带上父级的 cover-stat-* 限定：BewlyCat 的播放/弹幕/点赞/时长四项**共用**
-// .video-card-cover-stats__value 这一个类名，只写子类名会按文档序取到第一个，
-// 谁排在前面全看它的显示设置——「按播放量屏蔽」会时灵时不灵，且不报错。
+// ⚠ 必须带父级 cover-stat-* 限定：BewlyCat 的播放/弹幕/点赞/时长共用 __value 这一个类名，
+// 只写子类名会按文档序取第一个，顺序取决于用户的显示设置。
 export const CARD_VIEWS_SELECTORS = [
   '.bili-video-card__stats--item',
   '.play-text',
   '.cover-stat-view .video-card-cover-stats__value', // BewlyCat
 ];
-// 点赞数（营销号识别用）。接口那一路从 stat.like 拿；DOM 这一路此前完全没有来源，
-// 于是「低赞率」维度在纯 DOM 场景恒不生效。BewlyCat 恰好把它显示在封面上，就接上。
+// 点赞数（营销号识别用）。接口那一路从 stat.like 拿，DOM 这一路只有少数版式显示它。
 export const CARD_LIKES_SELECTORS = ['.cover-stat-like .video-card-cover-stats__value'];
 // UID 兜底：DOM 上可能携带 mid 的自定义属性。
 export const CARD_MID_ATTR_SELECTOR = '[data-mid],[data-up-mid],[data-user-id]';
@@ -101,14 +92,9 @@ export const CARD_MID_ATTRS = ['data-mid', 'data-up-mid', 'data-user-id'];
 // 直播卡特征（服务于「屏蔽直播推荐」，也避免把直播误判成广告）。
 export const LIVE_CARD_SELECTOR = '.bili-live-card, [class*="live-card"]';
 // 广告卡特征：只用稳定标识——官方广告类名 / 投流域名 / 运营推广链接。
-export const AD_CARD_SELECTORS = [
-  '.bili-video-card__info--ad',
-  'a[href*="cm.bilibili.com"]',
-  'a[href*="//mall.bilibili.com"]',
-  'a[href*="specialRecommendByOp"]',
-];
-// 这几条只当「有没有」用（不看优先级），预拼一条供热路径直接 querySelector，避免每张卡都 join 一次。
-export const AD_CARD_SELECTOR = AD_CARD_SELECTORS.join(',');
+// 只当「有没有」用（不看优先级），故直接写成一条，热路径可直接 querySelector。
+export const AD_CARD_SELECTOR =
+  '.bili-video-card__info--ad,a[href*="cm.bilibili.com"],a[href*="//mall.bilibili.com"],a[href*="specialRecommendByOp"]';
 
 // —— 搜索面板热搜榜（用一段 display:none 样式整体隐藏）——
 export const HOTSEARCH_SELECTORS = [

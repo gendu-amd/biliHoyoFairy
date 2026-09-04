@@ -328,11 +328,9 @@ export function blacklistUp(info: BlockSource, cb?: (ok: boolean) => void, cardE
 }
 
 // —— 从账号黑名单导回本地 ——
-//
-// 「拉黑」写两处：B 站账号黑名单（服务端，权威）与本地 block.uids（镜像，只为让 DOM 层也能拦）。
-// 镜像是会丢的——存档损坏、换设备、被别的东西写坏，都可能让本地那份没了，而账号那份还好端端的。
-// 有了这条路，任何时候都能从权威源把名单重建出来，不必手工照着网页一个个抄。
-// 顺带把 UP 名也存进 uidNames：光有一串数字，用户在面板里根本认不出自己拉黑过谁。
+// 「拉黑」写两处：账号黑名单（服务端，权威）与本地 block.uids（镜像，只为让 DOM 层也能拦）。
+// 镜像会丢而权威那份还在，所以要有一条从权威源重建的路。顺带回填 UP 名——
+// 光有一串数字，用户在面板里认不出自己拉黑过谁。
 export interface ImportBlacksResult {
   total: number; // 账号黑名单里的总人数（接口自报）
   fetched: number; // 实际读到的条数
@@ -374,8 +372,7 @@ export function importAccountBlacklist(
 
   const page = (pn: number) => {
     if (pn > BLACKS_MAX_PAGES) return finish(true);
-    // 熔断中先等：旁边的批量拉黑一直是这么做的，这条新路当初漏了检查——
-    // 结果是第 5 页触发风控后，第 6…60 页照旧一头撞上去，把退避窗口撑得更长。
+    // 熔断中先等：不然第 5 页触发风控后，第 6…60 页会照旧撞上去，把退避窗口撑得更长。
     if (riskGuard.blocked()) {
       onProgress?.(uids.length, total, true);
       setTimeout(() => page(pn), riskGuard.remaining() + 50);
@@ -395,8 +392,7 @@ export function importAccountBlacklist(
         }
         const code = j && typeof j.code === 'number' ? j.code : null;
         riskGuard.note(code);
-        // 风控码是**可重试**的，不是「这次导入失败了」。已经读到的几十页不该因为撞上一次退避
-        // 就整批扔掉——等退避结束重试同一页即可，riskGuard 会自己指数退避。
+        // 风控码是可重试的，不是「这次导入失败了」：等退避结束重试同一页，别把已读到的几十页扔掉。
         if (code !== null && RISK_CODES.has(code)) {
           if (++retries > BLACKS_RETRY_MAX) return finish(true); // 反复撞墙：带着已读到的部分收工
           onProgress?.(uids.length, total, true);

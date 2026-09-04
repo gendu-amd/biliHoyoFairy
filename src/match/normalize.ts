@@ -28,11 +28,9 @@ export function configureFuzzy(fn: () => boolean): void {
   getFuzzy = fn;
 }
 
-// 匹配前对文本的归一：全角→半角 + 小写 + 去隐形（+ fuzzy 时去分隔符）。普通词编译时用同一套，保证两侧一致。
-//
-// 单格 memo：kwHit 对同一段文本要调两次（无前缀词 + 带前缀词各一次），一张卡的标题/UP名/分区
-// 加起来 6~8 次，而每次都是三到四遍全串扫描。缓存 key 必须带上 fuzzy 开关——它一变归一结果就变，
-// 否则改完开关会继续用旧结果匹配（静默失效）。单格足够：调用点天然是「对同一段文本连着问几次」。
+// 匹配前对文本的归一：全角→半角 + 小写 + 去隐形（+ fuzzy 时去分隔符）。普通词编译时用同一套，两侧一致。
+// 单格 memo：kwHit 对同一段文本要归一两次，一张卡 6~8 次。key 必须带 fuzzy 开关，
+// 否则拨了开关会继续用旧结果匹配。
 let memoSrc: unknown;
 let memoFuzzy: boolean | undefined;
 let memoOut = '';
@@ -70,9 +68,8 @@ function looksCatastrophic(src: string): boolean {
   return /\((?:[^()]*[*+]|[^()]*\{\d+,\}?)[^()]*\)\s*(?:[*+]|\{\d+,\}?)/.test(src);
 }
 
-// 「这条 /正则/ 会被规则引擎拒收吗」——拒收理由，可直接展示给用户；null = 会被正常编译。
-// 单点判据：compileLines 用它决定丢不丢，正则测试器用它提示。否则测试器会对一条
-// 引擎其实不收的正则报「✅ 命中」，用户照抄进名单后它一次都不生效，且没有任何提示。
+// 「这条 /正则/ 会被规则引擎拒收吗」——理由可直接展示给用户；null = 会被正常编译。
+// compileLines 与正则测试器共用这一个判据，否则测试器会对引擎不收的正则报「命中」。
 export function regexRejectReason(body: string): string | null {
   if (body.length > MAX_REGEX_LEN) return `模式体超过 ${MAX_REGEX_LEN} 字符`;
   if (looksCatastrophic(body)) return '疑似灾难性回溯（量词套在含无界量词的分组上，如 (a+)+），可能卡死页面';
@@ -164,8 +161,7 @@ export function whichHit(text: unknown, matcher: Matcher | null | undefined): st
 
 // 关键词作用域：行首可加 title: / up: / part: 前缀，限定只匹配 标题/UP名/分区；
 // 不写前缀 = 全字段（保持历史行为）。形如 title:/正则/ 也支持（前缀剥离后仍交给 compileLines）。
-export const KW_SCOPES = ['title', 'up', 'part'] as const;
-export type KwScope = (typeof KW_SCOPES)[number];
+export type KwScope = 'title' | 'up' | 'part';
 
 export interface ScopedKw {
   all: Matcher;

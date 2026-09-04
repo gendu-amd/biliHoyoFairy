@@ -89,9 +89,7 @@ export const nameListSection: PanelSection = {
       });
     };
 
-    // 「拉黑」写两处：B 站账号黑名单（服务端，权威）与本地 block.uids（镜像）。镜像会丢——
-    // 存档损坏、换设备、被别的东西写坏都可能——而账号那份还好端端的。这个按钮就是从权威源
-    // 把本地名单重建出来，不必对着网页一个个手抄。
+    // 从权威源（账号黑名单）重建本地名单，不必对着官方网页一个个手抄。
     q(listSec, '#bfb-list-account').onclick = () => {
       const btn = q<HTMLButtonElement>(listSec, '#bfb-list-account');
       btn.disabled = true;
@@ -99,14 +97,13 @@ export const nameListSection: PanelSection = {
       importAccountBlacklist(
         (r) => {
           btn.disabled = false;
-          // 拿不到 ≠ 你的黑名单是空的。这两件事必须分清楚，否则用户会以为账号那边也没了。
+          // 拿不到 ≠ 你的黑名单是空的：混为一谈会让用户以为账号那边也没了。
           if (!r) {
             listStatus.textContent = '❌ 读取失败：可能未登录、网络异常或触发了风控，稍后再试。你的账号黑名单本身不受影响。';
             toast('读取账号黑名单失败（未登录 / 网络 / 风控）', 'error');
             return;
           }
-          // 如实拆成三个数：账号里有多少、这次读到多少、本地新增多少。合并成一句话看着简洁，
-          // 但「读到的比账号里少」这种情况就被抹掉了，而那恰恰是最需要被看见的。
+          // 如实拆成三个数：合成一句话的话，「读到的比账号里少」这种最该被看见的情况就被抹掉了。
           const dup = r.fetched - r.added;
           listStatus.textContent =
             `✅ 账号黑名单共 ${r.total} 人，本次读到 ${r.fetched} 条，本地新增 ${r.added} 条` +

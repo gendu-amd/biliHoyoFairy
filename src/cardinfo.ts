@@ -107,8 +107,7 @@ export function extractCardInfo(card: Element, deepUid = true): CardInfo {
     }
   }
 
-  // 点赞数：只有少数版式会在卡面上显示它（如 BewlyCat 的封面统计条）。取不到就保持 null，
-  // 营销号维度自己会跳过——那条规则的语义本来就是「拿得到点赞数时才判」。
+  // 点赞数：只有少数版式会在卡面上显示。取不到保持 null，营销号维度自会跳过。
   for (const sel of CARD_LIKES_SELECTORS) {
     const el = card.querySelector(sel);
     if (el) {
@@ -126,12 +125,9 @@ export function extractCardInfo(card: Element, deepUid = true): CardInfo {
   const text = card.textContent || '';
   info.isLive = !!(card.querySelector('a[href*="live.bilibili.com"]') || card.querySelector(LIVE_CARD_SELECTOR) || /直播中|正在直播/.test(text));
 
-  // innerHTML 兜底会把整张卡序列化成字符串，是本函数最贵的一步，所以放到最后并加两道闸：
-  //   1) 只序列化一次（原先两条正则各读了一遍 innerHTML，等于白做两倍功）；
-  //   2) 骨架卡（整张卡一个字都没有 = 还没渲染出内容）直接跳过。判据用「有没有文本」而不是
-  //      「有没有标题/UP」：某个版式的标题选择器没覆盖到时，卡其实是渲染好的，不该被当成空壳。
-  //      这一闸很关键——processCard 对骨架卡**不打 PROCESSED 标记**（要等它填充后再判），
-  //      于是每轮扫描都会重抽一遍；不跳过的话，一屏骨架卡就是每 250ms 两次全卡序列化 × N。
+  // innerHTML 兜底要序列化整张卡，是本函数最贵的一步：只读一次，且骨架卡直接跳过。
+  // 骨架卡不打 PROCESSED（要等填充后再判），每轮扫描都会重抽——不跳过就是每 250ms 一次全卡序列化 × N。
+  // 判据用「一个字都没有」而非「有没有标题/UP」：标题选择器没覆盖到的版式其实是渲染好的。
   if (!info.uid && deepUid && text.trim()) {
     const html = card.innerHTML;
     info.uid = (html.match(/space\.bilibili\.com\/(\d+)/) || [])[1] || '';
@@ -155,12 +151,9 @@ export function extractCardInfo(card: Element, deepUid = true): CardInfo {
   return info;
 }
 
-// 动态流（t.bilibili.com，/x/polymer/web-dynamic/…）的列表项归一。
-//
-// 单独一个函数而不是往 normFeedItem 里加分支：动态的字段全埋在 modules 下，与推荐流那套扁平
-// 结构没有一处重合，混在一起会让 normFeedItem 变成谁都不敢改的大杂烩。
-// 动态不只有视频（还有图文、转发、直播），非视频项归一后没有 bvid/title 也无妨——
-// 关键词与 UP/UID 维度照样能判，这正是我们想拦的（比如某个 UP 的所有动态）。
+// 动态流（t.bilibili.com）的列表项归一。单独一个函数而不是塞进 normFeedItem：
+// 动态的字段全埋在 modules 下，与推荐流那套扁平结构没有一处重合。
+// 非视频项（图文/转发）归一后没有 bvid/title 也无妨，关键词与 UP/UID 维度照样能判。
 export function normDynamicItem(it: any): CardInfo | null {
   if (!it || typeof it !== 'object') return null;
   const mods = it.modules || {};

@@ -30,19 +30,14 @@ export const health = {
   },
 };
 
-// 首屏稳定之前，各计数天然都是 0，任何「没接住/没识别到」的判断都是误报。
-// 由 main 在启动汇总那一刻置位，之后 healthDegraded 才开始作数。
+// 首屏稳定前各计数天然是 0，任何判断都是误报。由 main 在启动汇总那一刻置位。
 let ready = false;
 export function markHealthReady(): void {
   ready = true;
 }
 
-// 「拦截管线是不是断了」——供角标变色用。
-//
-// 静默失效是这类脚本的头号故障，而此前唯一的报警渠道是控制台——可会看控制台的人本来就能排查，
-// 真正需要被告知的人永远看不到。角标变色是零误报成本的可见性：不弹窗、不打断，
-// 但「它平时是粉的，今天是黄的」足以让人点开自检看一眼。
-// 只认**管线断了**这两类，不含 signedSkipped——那是「某个开关不生效」，不是脚本坏了。
+// 「拦截管线是不是断了」——供角标变色用。控制台报警只有会排查的人看得到，而变色是零打断的提示。
+// 只认管线断了这几类，不含 signedSkipped（那是某个开关不生效，不是脚本坏了）。
 export function healthDegraded(): boolean {
   if (!ready) return false;
   if (health.feedLike > 0 && health.feedMatched === 0) return true;
@@ -51,20 +46,14 @@ export function healthDegraded(): boolean {
 }
 
 // —— 耗时采样（仅 debug 模式）——
-//
-// 上面那组计数回答「还活着吗」，这组回答「花了多少」。加它的动机很直接：
-// 这类脚本的性能问题几乎都是**写放大与二次复杂度**（一次删除牵出全量存盘+全页重扫、
-// 一行记录牵出一次全名单扫描），靠读代码能推断出量级，但「改完到底快了多少」只能测。
-// 没有它，后续每一个微优化都是在拍脑袋。
-//
-// 只在 debug 打开时记账：performance.now() 本身很便宜，但热路径上每张卡两次调用 + 一次
-// Map 查找并非零成本，而绝大多数用户永远不会看这组数字。
+// 上面那组计数回答「还活着吗」，这组回答「花了多少」：性能问题几乎都是写放大与二次复杂度，
+// 读代码能推断量级，但改完快了多少只能测。关时零开销——它埋在热路径上。
 export interface TimingStat {
   n: number;
   ms: number;
   max: number;
 }
-export const timings = new Map<string, TimingStat>();
+const timings = new Map<string, TimingStat>();
 let timingOn = false;
 export function setTimingEnabled(on: boolean): void {
   timingOn = on;

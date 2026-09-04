@@ -52,7 +52,7 @@ import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
   });
   // 规则变更 seam：rules / subscriptions 发事件，这里落到 DOM 层的重建+重扫（打断 dom↔rules 环）。
   setRulesChangedHandler(() => rescanAfterRuleChange());
-  // 配置层的告警口子（规则骤降等）。config 是底层模块，不能自己弹 toast，由这里接出来。
+  // 配置层的告警口子（规则骤降等）：config 是底层模块，不能自己弹 toast。
   setConfigNotifier((msg) => {
     logErr('配置告警', msg);
     if (document.body) toast(msg, 'warn', undefined, 12000);
@@ -61,8 +61,7 @@ import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
   installConfigSync(() => {
     rescanAfterRuleChange();
     if (document.body) updateBadge();
-    // 正在面板里打字时不重渲：refreshPanelIfOpen 会重建整个面板，把用户没提交完的输入清掉。
-    // 配置本身已经采纳（规则已生效），少刷新一次面板只是显示滞后，下一次交互就会补上。
+    // 正在面板里打字时不重渲：会把没提交完的输入清掉。配置已采纳，少刷一次只是显示滞后。
     const ae = document.activeElement;
     const typing = !!(ae && ae.closest('#bfb-panel') && ae.matches('input, textarea, select'));
     if (!typing) refreshPanelIfOpen();
@@ -103,9 +102,8 @@ import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
       BADGE + ';font-weight:bold',
       'color:#fb7299'
     );
-    // 存档损坏：配置已回落到默认值，原始内容被另存了一份。这件事必须当场说——
-    // 用户看到的是「所有设置一夜之间回到出厂」，不说的话他只会以为脚本坏了或自己记错了。
-    // 不受 CONFIG.enabled 限制（配置本身就没读出来，这个开关的值也不作数）。
+    // 存档损坏：配置已回落默认值、原文另存了一份，必须当场说——否则用户只会以为脚本坏了。
+    // 不受 CONFIG.enabled 限制（配置本身就没读出来，那个开关的值也不作数）。
     if (configRescue.corrupted) {
       logErr('配置存档损坏', `已回落到默认配置；原始内容存于 GM 存储键 ${configRescue.backupKey}，原文见下一行`);
       logErr('配置存档损坏（原始内容）', configRescue.raw);
@@ -128,7 +126,7 @@ import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
 
     // 首屏稳定后弹一次「本次拦截」汇总：让你确认脚本真的在干活（区别于 B 站随机换批）
     setTimeout(() => {
-      // 先开闸再判断：此前的计数天然都是 0，提前判定全是误报。
+      // 先开闸再判断：此前计数天然是 0，提前判定全是误报。
       markHealthReady();
       updateBadge(); // 管线疑似失效时角标在这一刻变黄
       if (!CONFIG.enabled) return;

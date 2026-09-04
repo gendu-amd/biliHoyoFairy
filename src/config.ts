@@ -210,10 +210,8 @@ export const configRescue = {
   raw: null as unknown, // 原始内容，供报错时打进控制台（备份键在 GM 存储里，用户自己翻不到）
 };
 
-// —— 高频后台字段（见 constants.STATS_KEY）——
-// 内存里它们仍然住在 CONFIG 上（各模块照常读写 CONFIG.blockedCount），只有**持久化**是分开的。
-// 这样既不用改二十个文件，又能让「计数器自增」不再触碰规则那一份存储。
-export const STATS_FIELDS = ['blockedCount', 'uidNames', 'ruleStats', 'ruleStatsSince'] as const;
+// 高频后台字段（见 constants.STATS_KEY）。内存里仍住在 CONFIG 上，只有持久化分开。
+const STATS_FIELDS = ['blockedCount', 'uidNames', 'ruleStats', 'ruleStatsSince'] as const;
 
 function readJson(key: string): any {
   const raw = GM_getValue(key, null);
@@ -243,12 +241,9 @@ export function loadConfig(): AppConfig {
     const cfg = deepMerge(structuredClone(DEFAULT_CONFIG), migrateConfig(parsed)) as AppConfig;
     return deepMerge(cfg, pickStats(readJson(STATS_KEY))) as AppConfig;
   } catch (e) {
-    // 存档读不出来（写入被打断、存储被别的东西改坏、磁盘满…）。
-    // 过去这里直接返回默认配置就算完，可 CONFIG 一旦成了默认值，随后**任何一次** saveConfig
-    // 就把那份也许只是被截断、还能人工抢救的原始内容永久盖掉——而存盘会被拦截计数这类后台
-    // 改动悄悄触发，所以往往几秒内就发生了。用户看到的是「所有设置一夜之间回到出厂」，
-    // 没有任何提示，也没有任何补救余地。
-    // 现在先原样另存一份再走默认值。首次为准：第二次损坏不该覆盖掉第一份还有救的备份。
+    // 存档读不出来（写入被打断、存储被改坏…）。直接回落默认值的话，随后任何一次存盘
+    // 就把那份也许还能抢救的原始内容永久盖掉，而存盘会被后台计数悄悄触发——用户看到的是
+    // 「所有设置一夜回到出厂」且毫无提示。先原样另存一份再回落，首次为准。
     try {
       if (!GM_getValue(STORE_BACKUP_KEY, null)) GM_setValue(STORE_BACKUP_KEY, raw);
     } catch (_) {
@@ -265,18 +260,12 @@ export function loadConfig(): AppConfig {
 export const CONFIG: AppConfig = loadConfig();
 
 // —— 自动备份 ——
-//
-// 上面那套三方合并解决的是「不再被覆盖」，属于**防止事故**。但规则是用户攒了几个月的东西，
-// 光有防护不够——事故真发生了（不管是我们没想到的 bug、还是别的脚本/手滑），也得有救。
-// 所以再加两条兜底，都与「具体是哪个 bug」无关：
-//   1) 检测到脚本版本变了，在本次运行写任何东西**之前**，先把存储里那份原样存一份；
-//      升级是最危险的时刻——旧标签页还跑着旧代码，而用户此刻正在密集操作。
-//   2) 一次写入若让规则总数骤降，把写入前的内容存一份再写。
-// 刻意**不**拒绝写入：清空列表、删除匹配、恢复默认都是正当操作，拦下来只会变成「我删不掉规则」
-// 这种新 bug。备份 + 显式告警既不改变行为，又让任何一次清空都可回滚。
-// 备份的**索引项**。内容（整份配置的字符串）另存一个键，索引里只留摘要。
-// 分开存是必须的：面板每次重渲都会读一遍索引，而备份内容可达数百 KB × 5 份——
-// 混在一起就是「每次开面板都 JSON.parse 几 MB」，纯粹为了显示三行文字。
+// 三方合并防的是事故发生，这两条兜底管的是事故发生之后还有得救，与「具体是哪个 bug」无关：
+//   1) 脚本版本变了 → 写任何东西之前先原样存一份（升级时旧标签页还跑着旧代码，最危险）；
+//   2) 一次写入让规则总数骤降 → 把写入前的内容存一份再写。
+// 刻意不拒绝写入：清空/删除匹配/恢复默认都是正当操作，拦下来只会变成「我删不掉规则」这种新 bug。
+// 备份索引项。内容（整份配置的字符串）另存一个键——面板每次重渲都要读索引，
+// 混在一起就是「为了显示三行文字 JSON.parse 几 MB」。
 export interface ConfigBackup {
   ts: number;
   version: string;
@@ -368,17 +357,10 @@ export function setConfigNotifier(fn: Notify): void {
   notify = fn;
 }
 
-// —— 存盘 ——
-//
-// 规则/开关这一份**不能**整份覆盖写回。CONFIG 是内存单例，本标签页手里那份随时可能已经过期：
-// 别的标签页刚加的规则不在里面，整份写回去就是把它抹掉。这正是「脚本有时候记不住规则」的病根。
-// GM_addValueChangeListener 只把丢失窗口从「标签页的整个生命周期」缩到「一次广播延迟」，
-// 关不掉竞态——两边在同一个窗口内先后写入，先写的那份照样没了。
-//
-// 真正的修法是写时三方合并：写之前先读回存储里**当下**的内容，与「本页上次与存储一致时的样子」
-// （baseSnapshot）逐字段比对，只把本页真正改过的部分盖上去，其余保留存储里的。
-// 于是「谁写得晚」不再决定结果，两个标签页各改各的都能留住。代价是每次存盘多一次读——
-// 规则存盘是低频操作（用户点一下才发生一次），这个代价可以忽略。
+// —— 存盘：写时三方合并，不整份覆盖 ——
+// 本页手里的 CONFIG 随时可能过期（别的标签页刚加的规则不在里面），整份写回去就是把它抹掉。
+// 所以写前先读回存储当下的内容，与 baseSnapshot（本页上次与存储一致时的样子）逐字段比对，
+// 只盖本页真正改过的部分——「谁写得晚」不再决定结果。代价是每次存盘多一次读，而它是低频操作。
 let baseSnapshot: Record<string, any> = {};
 
 function stripStats(src: any): Record<string, any> {
@@ -392,9 +374,8 @@ function snapshotConfig(): Record<string, any> {
   return stripStats(structuredClone(CONFIG));
 }
 
-// 名单数组按**集合**合并，而不是整条替换：本页新增的加进去、本页删掉的删出去，其余保留对面的。
-// 顺序以存储里那份为基准，本页新增的追加在后面。
-// 元素是对象（订阅）时按 url 认同一条——`enabled` 一变 JSON 就变，按整体比对会看成「删一条又加一条」。
+// 名单按**集合**合并：本页新增的加进去、本页删掉的删出去，其余保留对面的（顺序以存储那份为准）。
+// 对象元素（订阅）按 url 认同一条——enabled 一变 JSON 就变，整体比对会看成「删一条又加一条」。
 function mergeList(base: any[], mine: any[], theirs: any[]): any[] {
   const keyOf = (x: any): string =>
     typeof x === 'string' ? x : x && typeof x === 'object' && x.url ? 'u:' + String(x.url) : JSON.stringify(x);
@@ -418,7 +399,7 @@ function mergeList(base: any[], mine: any[], theirs: any[]): any[] {
   }
   for (const x of mine) {
     const k = keyOf(x);
-    // 只追加**本页新增**的。base 里有、对面已删的不再复活——那是对面的删除操作，不是本页的新增。
+    // 只追加本页新增的：base 里有、对面已删的不复活（那是对面的删除，不是本页的新增）。
     if (baseMap.has(k) || seen.has(k)) continue;
     seen.add(k);
     out.push(x);
@@ -438,9 +419,7 @@ function threeWayMerge(base: any, mine: any, theirs: any): Record<string, any> {
     if (Array.isArray(m) && Array.isArray(t)) out[k] = mergeList(Array.isArray(b) ? b : [], m, t);
     else if (m && typeof m === 'object' && !Array.isArray(m) && t && typeof t === 'object' && !Array.isArray(t))
       out[k] = threeWayMerge(b, m, t);
-    // 键的「消失」有两种含义，必须靠 base 区分，否则删除永远同步不出去：
-    //   base 里没有 → 对方新增的，收下；
-    //   base 里有   → 本页把它删了（如停用表里最后一条被取消停用），那就别把它捡回来。
+    // 键的「消失」有两种含义，靠 base 区分：base 里没有 = 对方新增的，收下；base 里有 = 本页删的，别捡回来。
     else if (m === undefined) {
       if (b === undefined) out[k] = t;
     } else if (t === undefined) {
@@ -467,8 +446,7 @@ function saveConfigInner(): void {
   const merged = stored ? threeWayMerge(baseSnapshot, mine, stripStats(migrateConfig(stored))) : mine;
   // 合并结果回灌内存：否则本页看不到刚并进来的、别的标签页加的规则，
   // 而下一次存盘又会拿这份内存去当 base，等于把刚合并好的结果再丢一次。
-  // 规则骤降熔断：写之前比一比条数。任何能悄悄清空规则的 bug（这次这个，或将来某个还没
-  // 被发现的）都会先撞上这道墙——它不阻止写入，但保证写入前那一份留得下来、且有人说一声。
+  // 规则骤降熔断：不阻止写入，但保证写入前那一份留得下来、且有人说一声。
   if (stored) {
     const before = countRules(stored);
     const after = countRules(merged);
@@ -481,9 +459,8 @@ function saveConfigInner(): void {
   deepMerge(CONFIG, merged);
   GM_setValue(STORE_KEY, JSON.stringify(merged));
   baseSnapshot = structuredClone(merged);
-  // 顺带把高频那份也落盘。存储虽然拆成两个键，但对调用方来说「存一下」就该是存全部——
-  // 否则 `CONFIG.blockedCount = 0; saveConfig()`（清空计数）这类写法会静默不生效，
-  // 而这种「改了字段却调错存盘函数」的错误编译期看不出来。saveConfig 是低频路径，多写一次不亏。
+  // 顺带落盘高频那份：存储拆成两个键，但对调用方来说「存一下」就该存全部，
+  // 否则 `CONFIG.blockedCount = 0; saveConfig()` 会静默不生效，而这类错误编译期看不出来。
   saveStats();
 }
 
@@ -511,10 +488,8 @@ export function scheduleStatsSave(): void {
 baseSnapshot = snapshotConfig();
 
 // —— 多标签页同步 ——
-//
-// 存盘已经改成三方合并（见 saveConfig），写入本身不会再冲掉别人的规则。但那只保证**存储**是对的，
-// 不保证**本页看到的**是对的：别的标签页刚加的规则，本页内存里还没有，页面上照旧不拦。
-// 所以仍然需要监听存储变更，把远端的改动及时采纳进内存并让它可见（重扫 + 角标 + 面板）。
+// 三方合并只保证**存储**是对的，不保证**本页看到的**是对的：别的标签页刚加的规则本页内存里还没有。
+// 所以仍要监听存储变更，把远端改动采纳进内存并让它可见。
 export function installConfigSync(onAdopt: () => void): void {
   // 老版本脚本管理器没有这个 API：降级为「不自动采纳」。存盘的合并逻辑不依赖它，规则不会因此丢，
   // 只是本页要等下一次自己存盘（那时会把远端内容合并回来）或刷新才看得到对面的改动。
@@ -537,11 +512,8 @@ export function installConfigSync(onAdopt: () => void): void {
   });
 }
 
-// —— 规则「停用」——
-//
-// 规则只有「增 / 删」两态时，面对一条疑似过宽的规则，用户唯一能做的动作是删掉；而删掉不可逆，
-// 于是大多数人选择放着不管，坏规则在名单里越攒越多。人真正想做的是「先关两天看看有没有变化」，
-// 规则体检把可疑规则列出来之后尤其如此。停用 = 留在名单里、灰显、不参与编译。
+// —— 规则「停用」：留在名单里、灰显、不参与编译 ——
+// 只有增删两态时，面对一条可疑规则用户只能删（而删不可逆），于是大多数人选择放着不管。
 export function isRuleDisabled(path: string, line: string): boolean {
   const off = CONFIG.disabled[path];
   return Array.isArray(off) && off.indexOf(line) >= 0;
@@ -572,9 +544,7 @@ export function setUidName(uid: unknown, name: string): void {
 // 可借导入悄悄塞进会自动联网拉取的订阅 URL（安全风险）。
 // ruleStats/ruleStatsSince 属于个人使用数据而非规则本身：别人的命中次数对你没有意义，
 // 更会让导入者的「死规则」判断建立在别人的浏览历史上。
-// disabled 同理属个人使用状态：别人的「这条我先关两天」对你没有意义，而且导入侧的
-// sanitizeConfigInput 本来就会丢掉它（DEFAULT 里是空对象、无形状可依），列在这里是让导出侧
-// 与导入侧对称——不导出一个对方根本收不下的字段，好过让人以为带上了。
+// disabled 属个人使用状态，且导入侧的 sanitizeConfigInput 本来就会丢掉它；列在这里是让两侧对称。
 export const NON_PORTABLE = ['blockedCount', 'uidNames', 'enabled', 'debug', 'reviewMode', 'subscriptions', 'ruleStats', 'ruleStatsSince', 'disabled'];
 export function exportConfig(): string {
   const c: Record<string, any> = structuredClone(CONFIG);

@@ -25,8 +25,7 @@ function userAndSubLines(dim: RuleListField, sub: SubRules): string[] {
   return isSubDim(dim) ? own.concat(ruleLines(sub[dim])) : own;
 }
 
-// 编译时把被「停用」的行剔掉——停用只影响**编译**，名单里那条依然在，面板照常灰显着，
-// 随时可以再打开。停用不作用于订阅规则：订阅本来就整条可开关，逐条停用没有对应的撤销入口。
+// 编译时剔掉被停用的行。停用不作用于订阅规则——订阅本来就整条可开关，逐条停用没有撤销入口。
 function activeLines(path: string, lines: unknown): string[] {
   const arr = ruleLines(lines);
   return CONFIG.disabled[path] ? arr.filter((l) => !isRuleDisabled(path, l)) : arr;
@@ -271,12 +270,8 @@ export const REASON_RULE_FIELD: Record<string, RuleListField> = {
 
 // 从一条屏蔽原因反查到用户名单里的**那一行**规则（供 UI 一键删除）。
 // 找不到 = 该规则不在用户自己的名单里，多半来自已启用的订阅——此时不能假装能删。
-// 反查索引：`维度:规则` → 名单里的原行。跟着 ruleVersion 失效，规则一变自动重建。
-//
-// 为什么要索引：屏蔽记录面板一次渲染最多 100 行，每行都要调一次 locateRule 判断「能不能删这条规则」，
-// 而它原本是**线性扫描该维度的全部规则行**、每行还 trim 两次 + 跑一次正则。
-// 5 万条 UID 名单 × 100 行 = 单次刷新 500 万次比较，而这在滚首页时会被反复触发。
-// 建一次表是 O(名单长度)，之后每次查询 O(1)。
+// 反查索引：`维度:规则` → 名单里的原行，跟着 ruleVersion 失效。
+// 记录面板一次渲染最多 100 行、每行调一次 locateRule，而它原本要线性扫描该维度的全部规则行。
 let locIndex: Map<string, { field: RuleListField; line: string }> | null = null;
 let locIndexVer = -1;
 
@@ -359,9 +354,8 @@ export function enumerateRules(): RuleRef[] {
     const dimOn = !API_FIELDS.has(field) || !!CONFIG.apiFilters;
     const path = 'block.' + field;
     const own = new Set(ruleLines(CONFIG.block[field]));
-    // 这里**不过滤**停用的规则（与编译路径相反）：体检要能把它们列出来说明「这条你自己关了」，
-    // 而且 pruneRuleStats 拿这份当存活集——过滤掉的话，停用两天就会把它的历史命中数清空，
-    // 重新启用后看起来像条崭新的规则，随即又被报成「从未命中」。
+    // 这里不过滤停用的规则：体检要列出它们，且 pruneRuleStats 拿这份当存活集——
+    // 过滤掉的话，停用两天就会清空它的历史命中数。
     for (const line of ruleLines(CONFIG.block[field]).concat(isSubDim(field) ? ruleLines(sub[field]) : [])) {
       const key = ruleKeyOf(field, line);
       // 同一条规则可能同时存在于用户名单与订阅里；只留一条，且以「用户自己的」为准（那份能删）。

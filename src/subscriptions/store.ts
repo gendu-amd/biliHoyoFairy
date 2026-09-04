@@ -23,7 +23,7 @@ export type SubStore = Record<string, SubStoreEntry>;
 // 订阅的 uids/upNames/bvids 各自上限 5 万条（parse.ts 的 SUB_CAP），多订几个源就是数 MB。
 let cached: SubStore | null = null;
 
-export function invalidateSubStore(): void {
+function invalidateSubStore(): void {
   cached = null;
 }
 

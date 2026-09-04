@@ -59,7 +59,7 @@ export function findFeedHook(url: string | null | undefined): FeedHook | null {
   memoHook = hit;
   return hit;
 }
-export const isFeedUrl = (url: string | null | undefined): boolean => !!findFeedHook(url);
+const isFeedUrl = (url: string | null | undefined): boolean => !!findFeedHook(url);
 
 // 就地过滤一个已解析的 JSON 响应：命中项从 json.data 的数组里原地 splice 删除。
 // 返回删除条数（0 表示未改动），调用方据此决定是否需要重建响应/重序列化。
@@ -103,10 +103,8 @@ type PreFn = (url: string) => string | void;
 type PostFn = (url: string, json: any) => number;
 
 // 「这条请求已带 WBI 签名」的标记。
-//
-// B 站的 wbi 接口把**全部** query 参数按 key 排序后连同 mixin_key 一起 MD5，得出 w_rid。
-// 也就是说签名覆盖每一个参数——签完名再动其中任何一个（哪怕只是把 ps=12 改成 ps=30、
-// 或加个防缓存随机数），服务端校验必然对不上，直接返回 -403 校验失败，该接口这一次就白发了。
+// wbi 接口把全部 query 参数排序后连同 mixin_key 一起 MD5 得出 w_rid，签名覆盖每一个参数——
+// 签完再动任何一个（哪怕只是 ps=12 改成 ps=30），服务端校验必然对不上，直接 -403。
 // 首页推荐早已迁到 wbi 路径（FEED_HOOKS 第一条），所以这不是理论风险。
 //
 // 兜底放在管线出口而不是某个 preFn 里：B 站把接口往 wbi 迁是持续在发生的事，按「有没有

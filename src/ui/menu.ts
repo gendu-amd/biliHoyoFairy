@@ -426,14 +426,27 @@ function positionHoverBtn(card: HTMLElement) {
   hidev.style.display = 'block';
   hoverCard = card;
 }
+// 鼠标划过页面时 mouseover 每秒几十次，而 findCard 要 composedPath()（分配整条祖先路径）
+// 再逐节点 matches()。悬停按钮不需要亚帧响应，且一帧内的连续 mouseover 绝大多数落在同一张卡上，
+// 所以只记下最后一个事件、下一帧算一次。
+let pendingHover: MouseEvent | null = null;
+let hoverRaf = 0;
+
+function resolveHover(): void {
+  hoverRaf = 0;
+  const e = pendingHover;
+  pendingHover = null;
+  if (!e) return;
+  const card = findCard(e);
+  if (!card) hideHoverBtn();
+  else if (card !== hoverCard) positionHoverBtn(card);
+}
+
 export function onCardHover(e: MouseEvent): void {
   if (!CONFIG.enabled || !CONFIG.cardHoverBtn) return;
   const t = elementOf(e.target);
   if (t && t === overlayHost) return; // 事件从 Shadow 浮层冒泡时 target 会重定向为 host，保持显示
-  const card = findCard(e); // 与右键同一套定位（含 shadow DOM 穿透）
-  if (card) {
-    if (card !== hoverCard) positionHoverBtn(card);
-  } else {
-    hideHoverBtn();
-  }
+  pendingHover = e;
+  if (hoverRaf) return;
+  hoverRaf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(resolveHover) : (setTimeout(resolveHover, 16) as unknown as number);
 }

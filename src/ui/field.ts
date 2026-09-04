@@ -1,7 +1,7 @@
 // 通用列表字段组件：折叠头 / 添加行 / 批量管理 / chip 渲染共一套；不同字段（关键词、UP名+UID、组合标签…）
 // 只需提供一个轻量 model 适配器。供设置面板复用。
 import { CONFIG, isRuleDisabled, saveConfig, setUidName } from '../config';
-import { addToList, clearLists, removeEntries, removeFromList, restoreToList, toggleRuleDisabled } from '../rules';
+import { addEntries, addToList, clearLists, removeEntries, removeFromList, restoreToList, toggleRuleDisabled } from '../rules';
 import { splitRuleInput } from '../match/normalize';
 import { fetchCard } from '../api';
 import { toast } from './toast';
@@ -43,16 +43,11 @@ export interface ListFieldOpts {
 // 记住每个字段的折叠状态（renderPanel 重建时保留）。
 const collapseState: Record<string, boolean> = {};
 
-// 本次渲染还能为多少个缺名字的 UID 发请求。renderChips 每次开头重置；upModel.decorate 消费。
-// 放模块级而不是穿参：decorate 的签名是 FieldModel 的公共契约，为一个内部限流去改它不划算。
+// 本次渲染还能为多少个缺名字的 UID 发请求。放模块级而非穿参：decorate 的签名是公共契约。
 let nameBudget = 0;
 
-// 解析出的 UP 名攒批落盘 + 攒批重渲。
-//
-// 曾经是「每收到一个名字就 saveConfig() + rerender()」，而这两件事现在都很贵：saveConfig 是
-// 全量三方合并，rerender 会重建整列 chip。更糟的是重渲会把 nameBudget 重置成满额，
-// 于是为**还在飞行中**的那些 UID 又发一轮请求——一批解析能放大成数百个请求 + 数十次全量存盘。
-// 攒批之后：一批解析 = 一次存盘 + 一次重渲。（请求侧的重复由 api.ts 的 in-flight 表兜底。）
+// 解析出的 UP 名攒批落盘 + 攒批重渲：逐个落盘的话，重渲会把 nameBudget 重置成满额，
+// 为还在飞行中的 UID 再发一轮——一批解析能放大成数百个请求 + 数十次全量存盘。
 let nameFlushTimer: ReturnType<typeof setTimeout> | null = null;
 const NAME_FLUSH_MS = 400;
 function scheduleNameFlush(rerender: () => void): void {
@@ -133,9 +128,8 @@ export function renderListField(host: HTMLElement, o: ListFieldOpts): void {
   // 当前可见条目。**所有**批量操作都走它，不走 model.entries()：搜「原神」筛出 3 条后点
   // 「全选 → 删除所选」，删掉的必须是这 3 条而不是整个名单——按搜索结果操作是这个功能的
   // 全部意义，也是它唯一能酿成大祸的地方。
-  // 一次渲染里 visible() 会被问好几次（renderChips 一次、renderBar 一次、全选/反选各一次），
-  // 而它每次都要 model.entries() 重新分配 N 个条目对象——几千条名单下就是每次渲染一两万个临时对象。
-  // 按渲染轮次缓存：renderChips 开头置空，本轮内共用同一份。
+  // 一次渲染里 visible() 会被问好几次，而它每次都要 model.entries() 重新分配 N 个条目对象。
+  // 按渲染轮次缓存：renderChips 开头置空。
   let visCache: FieldEntry[] | null = null;
   const visible = (): FieldEntry[] => {
     if (!visCache) visCache = filterBy(model.entries(), query, (e) => (model.texts ? model.texts(e) : [String(e.value)]));
@@ -178,8 +172,7 @@ export function renderListField(host: HTMLElement, o: ListFieldOpts): void {
       }
       const byKey: Record<string, FieldEntry> = {};
       model.entries().forEach((e) => (byKey[e.key] = e));
-      // 一次性删完再存盘重扫。逐条 removeFromList 会把「全量存盘 + 重建匹配器 + 全页重扫」
-      // 跑 N 遍，几千条名单下就是秒级冻结。
+      // 一次性删完再存盘重扫：逐条会把「全量存盘 + 重建匹配器 + 全页重扫」跑 N 遍。
       const n = removeEntries([...selected].map((k) => byKey[k]).filter(Boolean));
       selected.clear();
       renderChips();
@@ -214,7 +207,7 @@ export function renderListField(host: HTMLElement, o: ListFieldOpts): void {
       renderChips();
     });
   };
-  // 勾选态变了但名单没变：只把已渲染的 chip 的样式刷一遍 + 更新按钮计数，不重建 DOM。
+  // 勾选态变了但名单没变：只刷已渲染 chip 的样式 + 更新按钮计数，不重建 DOM。
   const syncSelection = () => {
     const nodes = chips.querySelectorAll<HTMLElement>('.chip');
     let i = 0;
@@ -248,9 +241,8 @@ export function renderListField(host: HTMLElement, o: ListFieldOpts): void {
       renderBar();
       return;
     }
-    // 渲染上限：几千条 chip 全量建 DOM 会把面板卡死好几秒。截断的是**显示**，不是数据——
-    // 批量操作照旧作用于全部筛选结果（见下面的提示文案），不能让「看到 300 条、删掉 3000 条」
-    // 这种事发生在用户没被告知的情况下。
+    // 渲染上限：几千条 chip 全量建 DOM 会卡死面板。截断的是显示不是数据——
+    // 批量操作照旧作用于全部筛选结果，并在下面的提示里写明。
     nameBudget = NAME_RESOLVE_MAX;
     const shown = list.slice(0, CHIP_RENDER_MAX);
     shown.forEach((entry) => {
@@ -261,8 +253,7 @@ export function renderListField(host: HTMLElement, o: ListFieldOpts): void {
       if (manage) {
         chip.style.cursor = 'pointer';
         chip.title = '点击勾选 / 取消';
-        // 勾选只切自己的样式 + 更新按钮上的计数。原先每点一下都重建整列 chip
-        // （最多 300 个节点、各带 2~3 个子元素和事件处理器），勾 10 条就是重建 10 次。
+        // 勾选只切自己的样式 + 更新按钮计数：原先每点一下都重建整列（最多 300 个节点）。
         chip.onclick = () => {
           if (selected.has(entry.key)) selected.delete(entry.key);
           else selected.add(entry.key);
@@ -270,8 +261,7 @@ export function renderListField(host: HTMLElement, o: ListFieldOpts): void {
           renderBar();
         };
       } else {
-        // 停用：留在名单里、灰显、不参与编译。删除是不可逆的，而「先关两天看看」才是
-        // 面对一条可疑规则时最常见的诉求——没有这个中间态，用户只能在「忍着」和「删掉」之间二选一。
+        // 停用：留在名单里、灰显、不参与编译。没有这个中间态，用户只能在「忍着」和「删掉」之间二选一。
         if (entry.path) {
           const off = isRuleDisabled(entry.path, entry.value);
           if (off) chip.classList.add('off');
@@ -294,8 +284,7 @@ export function renderListField(host: HTMLElement, o: ListFieldOpts): void {
           const at = arr.indexOf(value);
           removeFromList(arr, value);
           renderChips();
-          // 误删规则比误拉黑常见得多，而拉黑早就有撤销了。原位插回去，不是追加到末尾——
-          // 名单顺序是用户自己攒出来的，撤销不该顺手把它打乱。
+          // 误删规则比误拉黑常见得多，而拉黑早就有撤销了。插回原位，不打乱用户攒出来的顺序。
           toast(`已删除：${value}`, 'info', {
             label: '撤销',
             onClick: () => {
@@ -371,8 +360,7 @@ export function chipModel(arr: string[], groupMode = false, path?: string): Fiel
       }
       const parts = splitRuleInput(raw);
       if (!parts.length) return false;
-      let added = 0;
-      for (const v of parts) if (addToList(arr, v)) added++;
+      const added = addEntries(parts.map((v) => ({ arr, value: v })));
       if (added) toast(`已添加 ${added} 条${parts.length > added ? `（${parts.length - added} 条已存在）` : ''}`);
       else toast('均已存在，未重复添加');
       return true;
@@ -387,7 +375,7 @@ export function chipModel(arr: string[], groupMode = false, path?: string): Fiel
 }
 
 // 「UP 名 + UID」合一：纯数字→uids，否则→names；UID chip 异步解析显示名。
-export function upModel(names: string[], uids: string[], namePath?: string, uidPath?: string): FieldModel {
+function upModel(names: string[], uids: string[], namePath?: string, uidPath?: string): FieldModel {
   return {
     count: () => names.length + uids.length,
     entries: () =>
@@ -400,8 +388,7 @@ export function upModel(names: string[], uids: string[], namePath?: string, uidP
     add: (raw) => {
       const parts = splitRuleInput(raw);
       if (!parts.length) return false;
-      let added = 0;
-      for (const v of parts) if (addToList(/^\d+$/.test(v) ? uids : names, v)) added++;
+      const added = addEntries(parts.map((v) => ({ arr: /^\d+$/.test(v) ? uids : names, value: v })));
       toast(added ? `已添加 ${added} 条` : '均已存在，未重复添加');
       return true;
     },

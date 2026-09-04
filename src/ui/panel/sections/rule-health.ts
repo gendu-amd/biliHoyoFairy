@@ -95,8 +95,7 @@ export const ruleHealthSection: PanelSection = {
         tx.innerHTML = `<span class="log-rs">[${escapeHtml(r.dim)}]</span> ${escapeHtml(r.line)}`;
         tx.title = r.line;
         row.appendChild(tx);
-        // 停用排在删除前面：面对一条「七天没命中」的规则，先关两天看看比直接删掉稳妥得多，
-        // 而删掉是不可逆的。把更保守的选项放在更顺手的位置。
+        // 停用排在删除前面：更保守的选项放在更顺手的位置。
         const off = document.createElement('button');
         off.className = 'log-pass';
         off.textContent = '⏸停用';
