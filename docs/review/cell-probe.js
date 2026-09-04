@@ -36,7 +36,23 @@
   for (const r of roots) all.push(...r.querySelectorAll(SEL));
   const blocked = all.filter((c) => c.hasAttribute('data-bfb-blocked'));
   console.log('%c[空洞探针] 页面:', P, location.pathname, '| 卡片', all.length, '| 已判定拦截', blocked.length);
+  if (document.querySelector('.bfb-review')) {
+    console.warn('[空洞探针] ⚠ 检测到审查模式开着（.bfb-review）。那个模式本来就不隐藏卡片，' +
+      '这次跑不到出问题的状态。请到「基础 → 审查模式」关掉、刷新页面后重跑。');
+  }
   if (!blocked.length) return console.log('这一页还没有被拦下的卡。加一条必然命中的关键词，滚两屏再跑。');
+
+  // 容器的对齐方式：卡片本身就是网格/flex 项时，藏得再对也可能因为容器的 justify-content
+  // 让剩下的项重新分散排列，于是跟上下行对不齐——那是布局问题，不是 cellOf 问题。
+  const box = blocked[0].parentElement;
+  if (box) {
+    const b = getComputedStyle(box);
+    const i = getComputedStyle(blocked[0]);
+    console.log('%c[空洞探针] 容器:', P, desc(box));
+    console.log('   display:', b.display, '| flex-wrap:', b.flexWrap, '| justify-content:', b.justifyContent, '| align-content:', b.alignContent);
+    console.log('   gap:', b.gap, '| grid-template-columns:', b.gridTemplateColumns);
+    console.log('   子项宽度:', i.width, '| flex:', i.flex, '| margin:', i.margin, '| 同容器子项数:', box.children.length);
+  }
 
   // 按左边距分列（同一列的 left 基本相同）
   const cols = new Map();
