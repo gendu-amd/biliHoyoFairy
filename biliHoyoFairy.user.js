@@ -3,7 +3,7 @@
 // @name:zh-CN   B站(bilibili)推荐流净化·屏蔽拉黑去广告 — biliHoyoFairy 抗击黑潮
 // @name:en      biliHoyoFairy — bilibili Feed Cleaner, Blocker & Account Blacklist
 // @namespace    https://github.com/gendu-amd/biliHoyoFairy
-// @version      0.0.8
+// @version      0.0.10
 // @description  B站(bilibili/哔哩哔哩)推荐流净化与屏蔽脚本：屏蔽黑流量、引战视频、商业广告与不想看的 UP 主。支持按 标签/UP主/UID/关键词(可正则)/分区/时长/播放量/BV 精准过滤；覆盖首页/热门/排行榜/搜索/播放页/动态/评论区；白名单优先防误伤；右键一键屏蔽/拉黑(同步账号黑名单)；内置预置关键词库与规则订阅。
 // @description:en  Clean up & block the bilibili recommendation feed: hide clickbait, flame-bait, ads and unwanted UP owners. Filter by tag/UP/UID/keyword(regex)/category/duration/views/BV across home, popular, ranking, search, video, dynamic pages and comments; whitelist priority; one-click block synced to the account blacklist; preset keyword library and rule subscriptions.
 // @author       gendu-amd
@@ -26,6 +26,7 @@
 // @grant        unsafeWindow
 // @run-at       document-start
 // @license      MIT
+// 评论区 IP 属地功能参考：https://greasyfork.org/zh-CN/scripts/448434-b%E7%AB%99%E8%AF%84%E8%AE%BA%E5%8C%BA%E5%BC%80%E7%9B%92
 // ==/UserScript==
 
 "use strict";
@@ -163,6 +164,7 @@
   var CARD_MID_ATTRS = ["data-mid", "data-up-mid", "data-user-id"];
   var LIVE_CARD_SELECTOR = '.bili-live-card, [class*="live-card"]';
   var AD_CARD_SELECTOR = '.bili-video-card__info--ad,a[href*="cm.bilibili.com"],a[href*="//mall.bilibili.com"],a[href*="specialRecommendByOp"]';
+  var FLOOR_BADGE_CARD_SELECTOR = ".floor-single-card:has(.badge)";
   var HOTSEARCH_SELECTORS = [
     ".trending",
     ".search-panel .trending-list",
@@ -409,6 +411,8 @@
     hideAd: false,
     hideLiveCard: false,
     // 屏蔽信息流里的直播推荐卡（首页/动态里链向 live.bilibili.com 的卡）
+    hideFloorBadgeCard: false,
+    // 屏蔽首页带角标的整宽推广单卡（.floor-single-card:has(.badge)）；样式整体隐藏，见 stylehide.ts
     hideHotSearch: false,
     apiFilters: false,
     // 精确过滤总开关（关闭时完全不联网）
@@ -449,6 +453,8 @@
       collapse: true
       // 命中后折叠为一行灰条（点击展开），而非直接隐藏
     },
+    showCmtLocation: false,
+    // 评论区显示 IP 属地（默认关：多数页面 B 站自己就显示，开启只为补全不显示的场景）
     debug: false,
     blockedCount: 0,
     uidNames: {},
@@ -2046,6 +2052,61 @@
     return el.style.getPropertyValue("display") === "none";
   }
 
+  // src/cmtlocation.ts
+  var LOC_ATTR = "data-bfb-loc";
+  var injected = /* @__PURE__ */ new Set();
+  var scanCmtLocation = safe("scanCmtLocation", function() {
+    if (!CONFIG.enabled || !CONFIG.showCmtLocation) {
+      clearCmtLocation();
+      return;
+    }
+    for (const root of shadowRoots) {
+      const host = root.host;
+      if (!host || !host.tagName || !host.tagName.startsWith("BILI-COMMENT")) continue;
+      if (root.querySelector("[" + LOC_ATTR + "]")) continue;
+      for (const anchor of root.querySelectorAll('[id="pubdate"]')) {
+        if (root.textContent && root.textContent.includes("IP属地")) break;
+        injectAfter(anchor);
+      }
+    }
+  });
+  function injectAfter(anchor) {
+    const loc = resolveLocation(anchor);
+    if (!loc) return;
+    const el = document.createElement("span");
+    el.setAttribute(LOC_ATTR, "");
+    el.style.cssText = "display:inline-block;margin-left:12px;font-size:12px;color:#9499a0;vertical-align:middle";
+    el.textContent = loc;
+    anchor.insertAdjacentElement("afterend", el);
+    injected.add(el);
+    if (injected.size > 500) {
+      for (const old of injected) if (!old.isConnected) injected.delete(old);
+    }
+  }
+  function resolveLocation(el) {
+    let n = el;
+    for (let i = 0; i < 6 && n; i++) {
+      const rootNode = n.getRootNode();
+      if (!(rootNode instanceof ShadowRoot)) return "";
+      const host = rootNode.host;
+      const d = host.__data || host.data;
+      const loc = d && d.reply_control && d.reply_control.location;
+      if (typeof loc === "string" && loc) return loc;
+      n = host;
+    }
+    return "";
+  }
+  function clearCmtLocation() {
+    if (!injected.size) return;
+    for (const el of injected) {
+      try {
+        el.remove();
+      } catch (e) {
+      }
+    }
+    injected.clear();
+  }
+
   // src/comments.ts
   function hostOf(root) {
     return root.host;
@@ -2222,6 +2283,7 @@
   }
   var lastCmtDiag = "";
   function scanComments() {
+    scanCmtLocation();
     if (!CONFIG.enabled || !CONFIG.comment.enabled) {
       revertComments();
       return;
@@ -2250,7 +2312,7 @@
   }
   var cmtTimer = null;
   function scheduleCommentScan() {
-    if (!CONFIG.comment.enabled) return;
+    if (!CONFIG.comment.enabled && !CONFIG.showCmtLocation) return;
     if (cmtTimer) return;
     cmtTimer = setTimeout(() => {
       cmtTimer = null;
@@ -2258,19 +2320,25 @@
     }, 300);
   }
 
-  // src/hotsearch.ts
-  function applyHotSearchStyle() {
-    let st = document.getElementById("bfb-hotsearch-style");
-    if (CONFIG.hideHotSearch) {
+  // src/stylehide.ts
+  function toggleStyle(id, css, on) {
+    let st = document.getElementById(id);
+    if (on) {
       if (!st) {
         st = document.createElement("style");
-        st.id = "bfb-hotsearch-style";
+        st.id = id;
         document.head.appendChild(st);
       }
-      st.textContent = HOTSEARCH_SELECTORS.join(",") + "{display:none !important}";
+      st.textContent = css;
     } else if (st) {
       st.remove();
     }
+  }
+  function applyHotSearchStyle() {
+    toggleStyle("bfb-hotsearch-style", HOTSEARCH_SELECTORS.join(",") + "{display:none !important}", CONFIG.hideHotSearch);
+  }
+  function applyFloorBadgeStyle() {
+    toggleStyle("bfb-floorbadge-style", FLOOR_BADGE_CARD_SELECTOR + "{display:none !important}", CONFIG.hideFloorBadgeCard);
   }
 
   // src/api.ts
@@ -2684,6 +2752,7 @@
   }
   function scanAll() {
     if (!CONFIG.enabled) return;
+    scanCmtLocation();
     const cards = timed("scan.query", () => queryAllRoots(UNPROCESSED_CARD_SELECTOR));
     if (cards.length > health.cardsSeen) health.cardsSeen = cards.length;
     timed(
@@ -4189,11 +4258,13 @@
       <label>卡片类型过滤</label>
       <div class="switch"><input type="checkbox" id="bfb-ad"> 屏蔽广告 / 推广卡片</div>
       <div class="switch"><input type="checkbox" id="bfb-live"> 屏蔽信息流中的直播推荐卡</div>
+      <div class="switch"><input type="checkbox" id="bfb-floorbadge"> 屏蔽首页带角标的整宽推广单卡（番剧/课程等活动位）</div>
       <div class="switch"><input type="checkbox" id="bfb-hotsearch"> 屏蔽搜索框热搜词</div>
       <div class="hint">广告为自动识别，偶有误差，可在「屏蔽记录」核对。直播卡指信息流里指向直播间的推荐卡。</div>`;
       host.appendChild(ct);
       bindControl(ct, "bfb-ad", CONFIG, "hideAd", { after: rescanAfterRuleChange });
       bindControl(ct, "bfb-live", CONFIG, "hideLiveCard", { after: rescanAfterRuleChange });
+      bindControl(ct, "bfb-floorbadge", CONFIG, "hideFloorBadgeCard", { after: applyFloorBadgeStyle });
       bindControl(ct, "bfb-hotsearch", CONFIG, "hideHotSearch", { after: applyHotSearchStyle });
     }
   };
@@ -4314,6 +4385,7 @@
       <label>💬 评论区过滤</label>
       <div class="switch"><input type="checkbox" id="bfb-cmt"> <b>启用评论区过滤</b></div>
       <div class="hint">仅在含评论的页面生效；以下规则与视频黑名单相互独立。</div>
+      <div class="switch" style="margin-top:6px"><input type="checkbox" id="bfb-cmt-loc"> 📍 显示评论 IP 属地（B 站部分页面不展示时补全）</div>
       <div id="bfb-cmt-body" style="margin-top:6px">
         <div class="switch" style="font-weight:400">评论者等级低于 <input type="number" id="bfb-cmt-level" min="0" max="6" style="width:56px"> 级则隐藏（0=不启用）</div>
         <div class="switch"><input type="checkbox" id="bfb-cmt-noface"> 隐藏 默认头像且非会员（疑似小号、水军）</div>
@@ -4340,6 +4412,7 @@
           rescanAfterRuleChange();
         }
       });
+      bindControl(cmt, "bfb-cmt-loc", CONFIG, "showCmtLocation", { after: rescanAfterRuleChange });
       bindControl(cmt, "bfb-cmt-level", CONFIG.comment, "minLevel", { number: true, int: true, after: rescanAfterRuleChange });
       bindControl(cmt, "bfb-cmt-noface", CONFIG.comment, "hideNoFace", { after: rescanAfterRuleChange });
       bindControl(cmt, "bfb-cmt-bot", CONFIG.comment, "hideBot", { after: rescanAfterRuleChange });
@@ -5626,6 +5699,7 @@ ${r.line}`, {
       }
       updateBadge();
       applyHotSearchStyle();
+      applyFloorBadgeStyle();
       harvestShadowRoots(document);
       scanAll();
       scanComments();

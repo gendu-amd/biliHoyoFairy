@@ -96,6 +96,11 @@ export const LIVE_CARD_SELECTOR = '.bili-live-card, [class*="live-card"]';
 export const AD_CARD_SELECTOR =
   '.bili-video-card__info--ad,a[href*="cm.bilibili.com"],a[href*="//mall.bilibili.com"],a[href*="specialRecommendByOp"]';
 
+// —— 首页信息流整宽推广单卡（.floor-single-card）——
+// 官方运营位（番剧/课程/活动等整宽大卡），不是视频卡、VIDEO_CARD_SELECTORS 认不出内层，
+// 故与热搜榜一样走整段样式隐藏（见 stylehide.ts）。:has() 需 2023 年底之后的浏览器内核。
+export const FLOOR_BADGE_CARD_SELECTOR = '.floor-single-card:has(.badge)';
+
 // —— 搜索面板热搜榜（用一段 display:none 样式整体隐藏）——
 export const HOTSEARCH_SELECTORS = [
   '.trending',

@@ -11,6 +11,7 @@ import { fetchView, fetchTags, fetchCard } from './api';
 import { recordBlock } from './stats';
 import { shadowRoots } from './shadow';
 import { scanComments } from './comments';
+import { scanCmtLocation } from './cmtlocation';
 import { addToList } from './rules';
 import { log, logErr, safe } from './logging';
 import { health, timed } from './health';
@@ -226,6 +227,9 @@ function queryAllRoots(selector: string): HTMLElement[] {
 
 export function scanAll(): void {
   if (!CONFIG.enabled) return;
+  // 评论组件内层渲染器（非评论标签名）的 shadowRoot 挂在卡片观察器下，其变动只到这里的调度器；
+  // IP 属地的时间节点（#pubdate）常晚于宿主渲染，得靠这条路径补扫（内部自会按开关短路）。
+  scanCmtLocation();
   // 只取**未处理**的卡：稳态下页面上绝大多数卡都已处理，把它们全取回来再逐个 getAttribute
   // 是每 250ms 白做一遍的活。语义不变（已处理的本来就会被跳过），只是让选择器引擎代劳。
   const cards = timed('scan.query', () => queryAllRoots(UNPROCESSED_CARD_SELECTOR));

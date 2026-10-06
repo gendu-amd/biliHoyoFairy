@@ -46,7 +46,7 @@ src/
 ├─ logging.ts           log / logErr / safe（错误边界）+ BADGE（传函数即惰性求值）
 ├─ health.ts            运行自检计数器 + healthReport/healthSummary（识别「静默失效」）
 ├─ cardinfo.ts          卡片信息抽取：DOM(extractCardInfo) 与接口(normFeedItem) 归一成同形 CardInfo
-├─ hotsearch.ts         热搜词屏蔽（注入/移除一段 CSS）
+├─ stylehide.ts         整段样式隐藏开关：热搜榜 / 首页角标推广单卡（注入/移除一段 CSS）
 ├─ stats.ts             拦截计数 + 环形屏蔽记录 + setStatsListener（命中后回调 UI）
 ├─ subscriptions/store.ts   订阅缓存存取 + collectSubRules（汇总启用订阅）
 ├─ api.ts              接口层：风控熔断 riskGuard + 限速并发队列 + fetchView/Tags/Card
@@ -87,7 +87,7 @@ src/
 L0 叶子   constants · util · page · selectors · events · presets · shadow · batch · gm
           match/normalize · subscriptions/parse · ui/hooks · ui/panel.styles · ui/confirm
 L1        config
-L2        logging · health · cardinfo · hotsearch
+L2        logging · health · cardinfo · stylehide
 L3        stats · subscriptions/store
 L4        ui/toast · match/engine
 L5        api · rules · subscriptions/refresh · net · comments · rulehealth

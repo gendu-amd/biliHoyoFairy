@@ -13,3 +13,9 @@ Thumbs.db
 *.log
 .vscode/
 .idea/
+
+# WorkBuddy 项目工作区（本地协作数据，不随仓库发布）
+.workbuddy/
+
+# 本地临时素材（不随仓库发布）
+temp/

@@ -1,7 +1,7 @@
 // 基础分组：常规开关 + 卡片类型过滤。
 import { CONFIG } from '../../../config';
 import { rescanAfterRuleChange } from '../../../dom';
-import { applyHotSearchStyle } from '../../../hotsearch';
+import { applyFloorBadgeStyle, applyHotSearchStyle } from '../../../stylehide';
 import { bindControl } from '../../field';
 import { hideHoverBtn } from '../../menu';
 import { updateBadge } from '../../toast';
@@ -49,11 +49,13 @@ export const baseSection: PanelSection = {
       <label>卡片类型过滤</label>
       <div class="switch"><input type="checkbox" id="bfb-ad"> 屏蔽广告 / 推广卡片</div>
       <div class="switch"><input type="checkbox" id="bfb-live"> 屏蔽信息流中的直播推荐卡</div>
+      <div class="switch"><input type="checkbox" id="bfb-floorbadge"> 屏蔽首页带角标的整宽推广单卡（番剧/课程等活动位）</div>
       <div class="switch"><input type="checkbox" id="bfb-hotsearch"> 屏蔽搜索框热搜词</div>
       <div class="hint">广告为自动识别，偶有误差，可在「屏蔽记录」核对。直播卡指信息流里指向直播间的推荐卡。</div>`;
     host.appendChild(ct);
     bindControl(ct, 'bfb-ad', CONFIG, 'hideAd', { after: rescanAfterRuleChange });
     bindControl(ct, 'bfb-live', CONFIG, 'hideLiveCard', { after: rescanAfterRuleChange });
+    bindControl(ct, 'bfb-floorbadge', CONFIG, 'hideFloorBadgeCard', { after: applyFloorBadgeStyle });
     bindControl(ct, 'bfb-hotsearch', CONFIG, 'hideHotSearch', { after: applyHotSearchStyle });
   },
 };

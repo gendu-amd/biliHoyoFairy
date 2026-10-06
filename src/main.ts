@@ -17,7 +17,7 @@ import { refreshSubscriptions } from './subscriptions/refresh';
 import { setRulesChangedHandler } from './events';
 import { scanComments, scheduleCommentScan } from './comments';
 import { isCommentTag } from './selectors';
-import { applyHotSearchStyle } from './hotsearch';
+import { applyHotSearchStyle, applyFloorBadgeStyle } from './stylehide';
 import { scanAll, rescanAfterRuleChange } from './dom';
 import { startScanner } from './scanner';
 import { onContextMenu, onCardHover, hideHoverBtn, closeCtxMenu } from './ui/menu';
@@ -108,6 +108,7 @@ import { openPanel, refreshPanelIfOpen, refreshStatsIfOpen } from './ui/panel';
     }
     updateBadge();
     applyHotSearchStyle();
+    applyFloorBadgeStyle();
     harvestShadowRoots(document);
     scanAll();
     scanComments();

@@ -2,6 +2,16 @@
 
 本项目遵循语义化版本（pre-release 阶段为 `0.0.x`）。`@version` 单一来源在 `src/meta.js`。
 
+## [0.0.10] - 2026-10-06
+
+### 新增
+- **评论区显示 IP 属地**：新增开关 `showCmtLocation`（评论 → 📍），把评论数据里已有的 `reply_control.location`（"IP属地：xx"）补渲染到 B 站没有显示属地的页面上。合并自 mscststs 的「B站评论区开盒」（ISC），但弃用其「拦截脚本加载 → 拉源码改字符串 → eval」的实现，改走本项目现有的 `__data` 数据通道 + shadow DOM 注入（`src/cmtlocation.ts`），不再 eval、不再挂钩 `insertBefore`/`appendChild`；B 站自己已显示属地的位置不重复注入。旧版 bbComment 原型补丁与 vue-next 过渡架构的两路兼容未搬（已下线/非现行架构）。参考：https://greasyfork.org/zh-CN/scripts/448434-b%E7%AB%99%E8%AF%84%E8%AE%BA%E5%8C%BA%E5%BC%80%E7%9B%92
+
+## [0.0.9] - 2026-10-06
+
+### 新增
+- **屏蔽首页带角标的整宽推广单卡**：新增开关 `hideFloorBadgeCard`（基础 → 卡片类型过滤），命中 `.floor-single-card:has(.badge)` 的官方运营位（番剧/课程等活动大卡）以整段样式隐藏。这类卡不是视频卡、扫描器逐卡判定够不着，故与「屏蔽搜索框热搜词」同一套机制；两处共用的注入/移除逻辑收敛为 `src/stylehide.ts`（原 `hotsearch.ts` 并入）。默认关闭，需在面板勾选。
+
 ## [0.0.8] - 2026-09-05
 
 Phase 3：正确性修复 + 失败可见性 + 结构收敛（无用户可见的规则行为变更，需重新冒烟）。

@@ -78,11 +78,13 @@ export interface AppConfig {
   allow: AllowConfig;
   hideAd: boolean;
   hideLiveCard: boolean;
+  hideFloorBadgeCard: boolean; // 首页信息流带角标的整宽推广单卡（.floor-single-card:has(.badge)）
   hideHotSearch: boolean;
   apiFilters: boolean;
   hideCharging: boolean;
   boostFeedLoad: boolean;
   comment: CommentConfig;
+  showCmtLocation: boolean; // 评论区显示 IP 属地（B 站部分页面不展示时补全；走 __data 里已有的 reply_control.location）
   debug: boolean;
   blockedCount: number;
   uidNames: Record<string, string>;
@@ -130,6 +132,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   allow: { keywords: [], upNames: [], uids: [] },
   hideAd: false,
   hideLiveCard: false, // 屏蔽信息流里的直播推荐卡（首页/动态里链向 live.bilibili.com 的卡）
+  hideFloorBadgeCard: false, // 屏蔽首页带角标的整宽推广单卡（.floor-single-card:has(.badge)）；样式整体隐藏，见 stylehide.ts
   hideHotSearch: false,
   apiFilters: false, // 精确过滤总开关（关闭时完全不联网）
   hideCharging: false, // 充电专属视频（API）
@@ -152,6 +155,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     allowMe: true, // 白名单：自己发布/被 @ 的评论免过滤
     collapse: true, // 命中后折叠为一行灰条（点击展开），而非直接隐藏
   },
+  showCmtLocation: false, // 评论区显示 IP 属地（默认关：多数页面 B 站自己就显示，开启只为补全不显示的场景）
   debug: false,
   blockedCount: 0,
   uidNames: {}, // uid -> UP 名 缓存（仅用于面板按名称展示；拉黑仍用 uid）

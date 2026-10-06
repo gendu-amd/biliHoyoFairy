@@ -1,6 +1,6 @@
 // UserScript 元数据（构建产物的头部）。版本号单一来源在此处维护。
 // scripts/build.mjs 会把 banner 原样 prepend 到打包产物 biliHoyoFairy.user.js。
-export const version = '0.0.8';
+export const version = '0.0.10';
 
 export const banner = `// ==UserScript==
 // @name         B站(bilibili)推荐流净化·屏蔽拉黑去广告 — biliHoyoFairy 抗击黑潮
@@ -30,5 +30,6 @@ export const banner = `// ==UserScript==
 // @grant        unsafeWindow
 // @run-at       document-start
 // @license      MIT
+// 评论区 IP 属地功能参考：https://greasyfork.org/zh-CN/scripts/448434-b%E7%AB%99%E8%AF%84%E8%AE%BA%E5%8C%BA%E5%BC%80%E7%9B%92
 // ==/UserScript==
 `;

@@ -11,6 +11,7 @@ import { hideEl, showEl, isHidden } from './hide';
 import { recordBlock } from './stats';
 import { log, safe } from './logging';
 import { COMMENT_TAGS, isCommentTag } from './selectors';
+import { scanCmtLocation } from './cmtlocation';
 
 // —— B 站挂在宿主上的数据（.__data）——
 // 只声明我们真正读的字段，全部可选：这是别人家的结构，会随改版变，缺字段必须等价于「不命中」而不是抛错。
@@ -282,6 +283,8 @@ function revertComments() {
 }
 let lastCmtDiag = '';
 export function scanComments(): void {
+  // IP 属地展示独立于评论过滤的开关（它只读 __data 渲染，不做任何隐藏）
+  scanCmtLocation();
   if (!CONFIG.enabled || !CONFIG.comment.enabled) {
     revertComments(); // 关闭时恢复曾隐藏的评论
     return;
@@ -314,7 +317,8 @@ export function scanComments(): void {
 // 评论增量很碎（每条评论各自 attachShadow），用节流聚合扫描。
 let cmtTimer: ReturnType<typeof setTimeout> | null = null;
 export function scheduleCommentScan(): void {
-  if (!CONFIG.comment.enabled) return;
+  // 属地展示不依赖评论过滤开关，两个开关任一开着都要扫
+  if (!CONFIG.comment.enabled && !CONFIG.showCmtLocation) return;
   if (cmtTimer) return;
   cmtTimer = setTimeout(() => {
     cmtTimer = null;
