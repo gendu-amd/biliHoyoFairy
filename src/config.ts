@@ -79,6 +79,8 @@ export interface AppConfig {
   hideAd: boolean;
   hideLiveCard: boolean;
   hideHotSearch: boolean;
+  // 角标简洁模式：右下角常驻角标只显示 图标+本次拦截数（完整信息走 title 悬停）。
+  badgeCompact: boolean;
   apiFilters: boolean;
   hideCharging: boolean;
   boostFeedLoad: boolean;
@@ -131,6 +133,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   hideAd: false,
   hideLiveCard: false, // 屏蔽信息流里的直播推荐卡（首页/动态里链向 live.bilibili.com 的卡）
   hideHotSearch: false,
+  badgeCompact: false, // 默认详细：`已拦截 n（共N）`；开了才收成 `🛡 n`
   apiFilters: false, // 精确过滤总开关（关闭时完全不联网）
   hideCharging: false, // 充电专属视频（API）
   boostFeedLoad: false, // 增大首页推荐每次请求的视频数（拦截层删项后仍保持信息流饱满）

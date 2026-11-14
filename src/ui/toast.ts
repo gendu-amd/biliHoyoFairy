@@ -19,8 +19,19 @@ export function updateBadge(): void {
   // 平时粉的东西今天黄了，足以让人点开看一眼，这正是「静默失效」最缺的那一环。
   const degraded = CONFIG.enabled && healthDegraded();
   b.classList.toggle('warn', degraded);
-  b.title = degraded ? '⚠ 拦截可能已失效，点开看「工具 → 🩺 运行自检」' : '点击打开设置';
-  b.textContent = CONFIG.enabled ? `${degraded ? '⚠' : '🛡'} 已拦截 ${sessionBlocked}（共${CONFIG.blockedCount}）` : '🛡 已暂停';
+  b.classList.toggle('compact', CONFIG.badgeCompact);
+  const detail = CONFIG.enabled ? `已拦截 ${sessionBlocked}（共${CONFIG.blockedCount}）` : '已暂停';
+  const warn = '⚠ 拦截可能已失效，点开看「工具 → 🩺 运行自检」';
+  if (CONFIG.badgeCompact) {
+    // 简洁态：文字让位给「图标 + 本次拦截数」，被省掉的明细与状态说明全部挪进 title（悬停即见），
+    // 暂停 / 降级靠换图标表达（灰底 / 黄底仍是原有 class，样式不变）。
+    const icon = !CONFIG.enabled ? '⏸' : degraded ? '⚠' : '🛡';
+    b.textContent = `${icon} ${sessionBlocked}`;
+    b.title = degraded ? `${detail} · ${warn}` : `${detail} · 点击打开设置`;
+  } else {
+    b.title = degraded ? warn : '点击打开设置';
+    b.textContent = CONFIG.enabled ? `${degraded ? '⚠' : '🛡'} ${detail}` : '🛡 已暂停';
+  }
 }
 
 function toastContainer(): HTMLElement {
