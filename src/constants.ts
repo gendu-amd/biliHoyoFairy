@@ -22,6 +22,8 @@ export const SCHEMA_VERSION = 1;
 // 订阅拉取结果缓存：{ [url]: { meta, rules, lastSync, ok, count, error } }
 export const SUB_STORE_KEY = 'bfb_subs_v1';
 export const BLACKLIST_MANAGE_URL = 'https://account.bilibili.com/account/blacklist';
+// 仓库主页（面板标题栏 GitHub 图标跳这里）。与 meta.js 的 @namespace / @updateURL 同源。
+export const REPO_URL = 'https://github.com/gendu-amd/biliHoyoFairy';
 
 // DOM 标记属性（集中常量，避免散落硬编码改一处漏一处）。
 export const ATTR_API = 'data-bfb-api'; // 卡片已发起 API 评估

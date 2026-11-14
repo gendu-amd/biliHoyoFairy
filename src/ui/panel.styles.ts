@@ -6,6 +6,8 @@
     .bfb-tag .rs{white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis}
     .bfb-tag button{border:none;border-radius:6px;background:#fff;color:#1b7a3d;font-size:11px;padding:2px 6px;cursor:pointer;white-space:nowrap}
     #bfb-badge{position:fixed;right:18px;bottom:18px;z-index:99999;background:#fb7299;color:#fff;border-radius:24px;padding:8px 14px;font-size:13px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.2);font-family:system-ui,Arial;user-select:none}
+    /* 简洁模式：只剩「图标+本次拦截数」，收紧内边距与字号，少占页面空间（明细走 title 悬停） */
+    #bfb-badge.compact{padding:6px 10px;font-size:12px}
     #bfb-badge.off{background:#999}
     #bfb-badge.warn{background:#e67e22}
     #bfb-ctxmenu{position:fixed;z-index:100002;background:#fff;border:1px solid #ffd5e2;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.22);overflow:hidden;min-width:210px;font-family:system-ui,Arial}
@@ -36,10 +38,19 @@
     #bfb-panel .bfb-sub-url{font-size:11px;color:#6e6e6e;word-break:break-all;margin-top:4px}
     #bfb-panel .bfb-sub-status{font-size:11px;color:#6e6e6e;margin-top:4px}
     #bfb-panel .bfb-listta{width:100%;box-sizing:border-box;resize:vertical;font-family:monospace;font-size:12px;padding:6px;border:1px solid #ddd;border-radius:6px;background:#fff;color:#222}
-    #bfb-panel{position:fixed;top:0;right:0;width:400px;max-width:94vw;height:100vh;z-index:100000;background:#fff;box-shadow:-4px 0 24px rgba(0,0,0,.2);overflow:auto;overscroll-behavior:contain;font-family:system-ui,Arial;transform:translateX(100%);transition:transform .25s}
+    #bfb-panel{position:fixed;top:0;right:0;width:400px;max-width:94vw;height:100vh;z-index:100000;background:#fff;box-shadow:-4px 0 24px rgba(0,0,0,.2);overflow:auto;overscroll-behavior:contain;font-family:system-ui,Arial;transform:translateX(100%);transition:transform .25s;--bfb-title-h:66px}
     #bfb-panel.open{transform:translateX(0)}
-    #bfb-panel h2{margin:0;padding:14px 16px;background:#fb7299;color:#fff;font-size:16px;position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;z-index:2}
-    #bfb-panel h2 .x{cursor:pointer}
+    /* 标题栏两行。height 与 .tabs 的吸顶偏移都引用 --bfb-title-h——它必须等于
+       padding(14*2) + 第一行(20) + 行间距(2) + 第二行(16) = 66px，改字号/行数时同步改。 */
+    #bfb-panel h2{margin:0;padding:14px 16px;height:var(--bfb-title-h);box-sizing:border-box;background:#fb7299;color:#fff;font-size:16px;position:sticky;top:0;display:flex;flex-direction:column;justify-content:center;gap:2px;z-index:2}
+    #bfb-panel h2 .ttl-row{display:flex;justify-content:space-between;align-items:center;gap:8px;line-height:20px}
+    #bfb-panel h2 .ttl-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    #bfb-panel h2 .ttl-row.sub{justify-content:flex-start;gap:6px;line-height:16px;font-size:12px}
+    #bfb-panel h2 .ttl-row.sub small{font-size:12px;font-weight:normal;opacity:.75}
+    #bfb-panel h2 .x{cursor:pointer;flex:0 0 auto}
+    /* 标题栏 GitHub 图标（跳仓库）：白底粉底都靠 currentColor 走 h2 的 #fff */
+    #bfb-panel h2 .gh{flex:0 0 auto;display:inline-flex;align-items:center;color:#fff;opacity:.85;line-height:0;border-radius:5px}
+    #bfb-panel h2 .gh:hover{opacity:1}
     #bfb-panel .sec{padding:13px 16px;border-bottom:1px solid #f0f0f0}
     #bfb-panel .sec.allow{background:#f3fbf4}
     #bfb-panel label{font-size:13px;color:#444;display:block;margin-bottom:6px;font-weight:600}
@@ -137,7 +148,7 @@
     #bfb-panel .chip.uidchip::before{content:"账号";font-size:9px;background:#6b4dff;color:#fff;border-radius:5px;padding:0 4px;margin-right:2px}
     #bfb-panel .chip.group{background:#ede9fe;color:#5b21b6;border-color:#ddd6fe}
     /* —— 分组 Tab —— */
-    #bfb-panel .tabs{position:sticky;top:48px;z-index:2;display:flex;flex-wrap:wrap;justify-content:center;gap:6px;padding:10px 12px;background:#fff;border-bottom:1px solid #f0f0f0;overscroll-behavior:contain}
+    #bfb-panel .tabs{position:sticky;top:var(--bfb-title-h);z-index:2;display:flex;flex-wrap:wrap;justify-content:center;gap:6px;padding:10px 12px;background:#fff;border-bottom:1px solid #f0f0f0;overscroll-behavior:contain}
     #bfb-panel .tab{flex:0 0 auto;padding:6px 13px;border-radius:16px;background:#f3f3f3;color:#666;font-size:13px;cursor:pointer;border:none;white-space:nowrap;font-weight:600;transition:.15s}
     #bfb-panel .tab:hover{background:#ffe3ec;color:#fb7299}
     #bfb-panel .tab.active{background:linear-gradient(135deg,#fb7299,#ff9bb6);color:#fff;box-shadow:0 2px 8px rgba(251,114,153,.35)}
